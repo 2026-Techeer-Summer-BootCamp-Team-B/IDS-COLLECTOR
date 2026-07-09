@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ids_platform
+      POSTGRES_USER: ids_admin
+      POSTGRES_PASSWORD: devpassword123
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  opensearch:
+    image: opensearchproject/opensearch:2.17.0
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true   # 개발 단계라 보안 플러그인 비활성화, 운영 전환 시 반드시 켤 것
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+
+volumes:
+  redis-data:
+  postgres-data:
+  opensearch-data:
