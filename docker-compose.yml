@@ -26,12 +26,37 @@ services:
       - "9200:9200"
     environment:
       - discovery.type=single-node
-      - DISABLE_SECURITY_PLUGIN=true   # 개발 단계라 보안 플러그인 비활성화, 운영 전환 시 반드시 켤 것
+      - DISABLE_SECURITY_PLUGIN=true
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
+
+  # 신규 - Kafka (Apache 공식 이미지, KRaft 모드로 Zookeeper 불필요)
+  kafka:
+    image: apache/kafka:3.8.0
+    ports:
+      - "9092:9092"       # 외부(호스트)에서 접속할 때 쓰는 포트
+      - "9094:9094"        # 컨테이너 간(Docker 네트워크 내부) 통신용 포트
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_LISTENERS=PLAINTEXT://:9094,CONTROLLER://:9093,EXTERNAL://:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9094,EXTERNAL://localhost:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - CLUSTER_ID=Nk018hRAQFytWskYqtQduw
+      # 단일 노드 클러스터라서, 내부 시스템 토픽들의 복제 계수를 반드시 1로 낮춰야 함
+      # (기본값 3인데, 서버가 1개뿐이라 3으로는 절대 생성이 안 되고 무한 재시도만 함)
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
 
 volumes:
   redis-data:
   postgres-data:
   opensearch-data:
+  kafka-data:
