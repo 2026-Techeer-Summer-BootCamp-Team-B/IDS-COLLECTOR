@@ -13,3 +13,13 @@ backend 역할:
 - 정규화
 - 상관분석
 - DB 저장
+
+커밋될 변경사항
+"refactor(backend): Redis 제거하고 Kafka consumer로 전환"
+
+1. backend/app/config.py — redis 설정 필드 전부 제거, kafka_brokers/kafka_topic/kafka_consumer_group 추가
+2. backend/app/main.py — Redis Stream consumer 삭제 → aiokafka 기반 Kafka consumer로 교체. app-logs 토픽의 otlp_json 
+3. 메시지를 파싱해서 log.source(was/falco/k8s-audit) + body를 뽑아 normalize()로 연결. Redis pub/sub 실시간 알림 코드/TODO도 제거
+4. backend/app/normalizer.py — normalize_falco, normalize_k8s_audit 추가. was 하나만 되던 걸 mysite가 실제로 보내는 3개 로그 소스 전부 커버하도록 확장
+5. backend/requirements.txt — redis 제거, aiokafka==0.12.0 추가
+6. docker-compose.yml — 안 쓰던 redis-data 볼륨 선언 제거
