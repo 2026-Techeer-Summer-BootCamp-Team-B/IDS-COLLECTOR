@@ -72,7 +72,6 @@ services:
       - "traefik.tcp.services.otel-grpc.loadbalancer.server.port=4317"
 
 volumes:
-  redis-data:
   postgres-data:
   opensearch-data:
   kafka-data:
