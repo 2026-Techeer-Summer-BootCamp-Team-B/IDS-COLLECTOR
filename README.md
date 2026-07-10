@@ -23,3 +23,13 @@ backend 역할:
 4. backend/app/normalizer.py — normalize_falco, normalize_k8s_audit 추가. was 하나만 되던 걸 mysite가 실제로 보내는 3개 로그 소스 전부 커버하도록 확장
 5. backend/requirements.txt — redis 제거, aiokafka==0.12.0 추가
 6. docker-compose.yml — 안 쓰던 redis-data 볼륨 선언 제거
+
+대시보드 트러블
+1. weightedPick()을 .find() 콜백 안에서 호출해서, 비교할 때마다 새로 랜덤 국가를 뽑는 꼴이 되어 거의 매칭이 안 됨. 
+2. 그 결과 country가 다음 줄 country.name에서 죽음. 
+3. App.jsx가 모든 탭(Overview/Incidents/ATT&CK/Infrastructure)을 한꺼번에 import하기 때문에, 흰화면
+4.  npm run build가 성공했던 건 이게 import 경로 문제가 아니라 런타임 로직 버그였기 때문입니다.
+
+수정
+1. 랜덤 코드를 먼저 변수로 뽑고 그걸로 찾도록 분리 (attackevents.js)
+2. 겸사겸사 InfrastructureView.jsx의 ./attackEvents import를 실제 파일명 attackevents.js에 맞게 고침 — macOS는 대소문자 구분 안 해서 지금은 안 터지지만 나중에 Docker(Linux)에서 빌드하면 같은 문제가 재발했을 부분
