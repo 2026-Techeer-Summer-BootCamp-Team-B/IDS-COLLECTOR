@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { incidents } from "./incidents";
-import { SeverityBadge, SourceBadge, StatusDot, SEVERITY_META, SOURCE_META } from "./badges";
-import { ATTACK_EVENTS, ATTACK_TYPES, byAttackType, bySource, byIp } from "./attackEvents";
-import { MOCK_NOW } from "./mockLogs";
+import { incidents } from "../data/incidents";
+import { SeverityBadge, SourceBadge, StatusDot, SEVERITY_META, SOURCE_META } from "../components/badges";
+import { ATTACK_EVENTS, ATTACK_TYPES, byAttackType, bySource, byIp } from "../data/attackEvents";
+import { MOCK_NOW } from "../data/mockLogs";
 
 const TOOLTIP_STYLE = { background: "#2B2B36", border: "none", borderRadius: 8, color: "#fff", fontSize: 12 };
 

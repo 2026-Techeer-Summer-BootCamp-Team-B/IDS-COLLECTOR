@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
-import { RULES, byRuleHits } from "./rules";
-import { ATTACK_EVENTS } from "./attackEvents";
+import { RULES, byRuleHits } from "../data/rules";
+import { ATTACK_EVENTS } from "../data/attackEvents";
 
 function RuleRow({ rule, rank }) {
   return (

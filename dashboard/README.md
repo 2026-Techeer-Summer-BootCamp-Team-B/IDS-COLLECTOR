@@ -1,6 +1,6 @@
 # IDS Dashboard (SENTINEL-OPS)
 
-IDS-COLLECTOR가 수집한 로그(WAF / Falco / K8s Audit)를 보여주는 프론트엔드. 지금은 전부 목업 데이터(`src/mockLogs.js`, `src/incidents.js`, `src/attackMatrix.js`)로 동작하며, 실데이터 연동은 백엔드에 조회 API가 추가된 이후 진행 예정.
+IDS-COLLECTOR가 수집한 로그(WAS / Falco / K8s Audit)를 보여주는 프론트엔드. 지금은 전부 목업 데이터(`src/data/`)로 동작하며, 실데이터 연동은 백엔드에 조회 API가 추가된 이후 진행 예정.
 
 ## 실행
 
@@ -10,42 +10,52 @@ npm run dev      # http://localhost:5173
 npm run build    # dist/ 생성
 ```
 
+## 폴더 구조
+
+```
+src/
+├── App.jsx           앱 셸 — 사이드바, 탑바, 탭 전환, 라이브 피드/토스트/크리티컬 팝업 상태
+├── main.jsx           entry point
+├── views/              사이드바 탭 하나당 파일 하나
+│   ├── LogDashboard.jsx    (Overview)
+│   ├── IncidentsView.jsx
+│   ├── AttackMatrixView.jsx
+│   ├── InfrastructureView.jsx
+│   └── AdminAuditView.jsx
+├── components/          여러 화면에서 재사용하는 공용 UI
+│   ├── badges.jsx          SeverityBadge / SourceBadge / StatusDot
+│   ├── LiveTicker.jsx       하단 실시간 이벤트 마퀴
+│   ├── CriticalAlertPopup.jsx  CRITICAL 탐지 시 우상단 팝업
+│   ├── ToastStack.jsx        조치 완료 등 액션 피드백 토스트
+│   └── WorldMap.jsx          GeoIP 공격 발원지 지도
+├── data/                목업 데이터 + 순수 집계 함수 (실데이터 연동 시 이 레이어만 교체)
+│   ├── mockLogs.js, logLevels.js, timeSeries.js   (Overview용)
+│   ├── attackEvents.js                             (SOC 4개 화면이 공유하는 단일 이벤트 소스)
+│   ├── incidents.js, attackMatrix.js, rules.js, auditLog.js
+└── hooks/
+    └── useLiveFeed.js     ATTACK_EVENTS를 재생해 실시간처럼 보이게 하는 훅
+```
+
 ## 화면 구성
 
-좌측 사이드바(`src/App.jsx`)로 화면을 전환하는 구조. 상단 통계바에는 진행중 Incident / 총 Detected / 오픈 Alert / 총 Blocked 수치와 LIVE 시계가 항상 떠 있음.
+좌측 사이드바(`App.jsx`)로 화면을 전환. 상단 통계바에는 진행중 Incident / 총 Detected / 오픈 Alert / 총 Blocked 수치와 LIVE 시계, 하단에는 실시간 이벤트 티커가 항상 떠 있음.
 
-### Overview
-`src/LogDashboard.jsx` (`DashboardContent`)
+### Overview — `views/LogDashboard.jsx`
+- KPI 카드, 기간별(15분~30일) 로그 볼륨 추이, 레벨 분포, Top 소스, 에러율 게이지, 최근 로그 테이블
 
-- KPI 카드: 12시간 총 로그 수 / 에러 수 / 경고 수 / 활성 소스 수
-- 로그 볼륨 추이(이번 주 vs 지난 주), 최근 12시간 레벨 분포, 최근 30일 로그량 라인 차트
-- Top 로그 소스 랭킹, 에러율 게이지
-- 최근 로그 테이블 (레벨/소스/메시지 필터 검색)
+### Incidents — `views/IncidentsView.jsx`
+- 오늘 탐지/차단 수 + Top 공격유형/IP KPI, 공격 유형·탐지 소스 도넛 차트
+- 최근 차단/탐지 로그 테이블 (미차단 건은 그 자리에서 "차단" 처리 가능)
+- 좌측 인시던트 리스트 + 우측 상세(상관 규칙/MITRE 경로/공격 스토리라인 타임라인), "조사완료" 처리 가능
 
-### Incidents
-`src/IncidentsView.jsx`
+### ATT&CK — `views/AttackMatrixView.jsx`
+- MITRE ATT&CK 전술 컬럼 × 기법 카드(탐지 시 mint 강조), 클릭 시 하단에 매칭 로그, 전체 커버리지 표시
 
-- 좌측: 인시던트 리스트. 카드 왼쪽 컬러 바로 심각도(CRITICAL/HIGH/MEDIUM/LOW) 표시, 진행중/조사완료 상태 점 표시
-- 우측: 선택한 인시던트 상세 — 상관 규칙, MITRE ATT&CK 경로, 위험 신호 요약
-- 하단: 공격 스토리라인 — WAF/Falco/K8s Audit 로그를 시간순으로 엮은 타임라인 (오프셋, 소스, MITRE 기법 태그 포함)
+### Infrastructure — `views/InfrastructureView.jsx`
+- Top 공격 대상(namespace/pod) 랭킹, 네임스페이스별 클러스터 구조, GeoIP 공격 발원지 지도(`WorldMap`)
 
-### ATT&CK
-`src/AttackMatrixView.jsx`
-
-- MITRE ATT&CK 전술(Tactic) 13개를 컬럼으로, 각 컬럼 안에 기법(Technique) 카드 배치
-- 실제 탐지된 기법은 mint 색으로 강조 + hit 수 표시, 미탐지 기법은 흐리게
-- 기법 카드를 클릭하면 하단에 해당 기법으로 매칭된 로그 목록이 뜸
-- 상단에 전체 커버리지(탐지된 기법 수 / 전체 기법 수, %) 표시
-
-### Infrastructure / Admin·Audit
-아직 목업이 없어 자리만 잡아둔 화면(`Placeholder` 컴포넌트). 화면 설계가 나오면 채울 예정.
-
-## 공용 컴포넌트
-`src/badges.jsx`
-
-- `SeverityBadge`: CRITICAL/HIGH/MEDIUM/LOW 뱃지
-- `SourceBadge`: WAF/Falco/K8s Audit 소스 뱃지
-- `StatusDot`: 진행중(빨강)/조사완료(초록) 상태 점
+### Admin / Audit — `views/AdminAuditView.jsx`
+- 탐지 룰별 적중 랭킹, Audit Log(누가/언제/어떤 조치를 했는지 — Incidents/Infrastructure에서의 조치가 여기 실시간으로 쌓임)
 
 ## 색상
-`tailwind.config.js`의 `dash.*` 토큰 사용. 원본 팔레트(bg/surface/mint/pink 등)는 참조 팔레트 그대로이고, `critical`/`high`/`medium`/`live`/`waf`는 심각도·소스 구분을 위해 이 프로젝트에서 추가한 색.
+`tailwind.config.js`의 `dash.*` 토큰 사용. 원본 팔레트(bg/surface/mint/pink 등)는 참조 팔레트 그대로이고, `critical`/`high`/`medium`/`live`/`was`는 심각도·소스 구분을 위해 이 프로젝트에서 추가한 색.

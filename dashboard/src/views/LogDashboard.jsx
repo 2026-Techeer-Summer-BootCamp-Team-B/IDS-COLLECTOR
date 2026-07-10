@@ -13,9 +13,9 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, topSourcesFor } from "./mockLogs";
-import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta } from "./logLevels";
-import { RANGE_PRESETS, bucketEvents } from "./timeSeries";
+import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, topSourcesFor } from "../data/mockLogs";
+import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta } from "../data/logLevels";
+import { RANGE_PRESETS, bucketEvents } from "../data/timeSeries";
 
 /**
  * Log Analytics Dashboard — first-pass layout

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { tactics, totalTechniques, detectedTechniques, matchedLogsByTechnique } from "./attackMatrix";
-import { SourceBadge } from "./badges";
+import { tactics, totalTechniques, detectedTechniques, matchedLogsByTechnique } from "../data/attackMatrix";
+import { SourceBadge } from "../components/badges";
 
 function TechniqueCell({ tech, active, onClick }) {
   const detected = tech.hits > 0;

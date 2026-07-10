@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from "react";
-import { DashboardContent } from "./LogDashboard";
-import IncidentsView from "./IncidentsView";
-import AttackMatrixView from "./AttackMatrixView";
-import InfrastructureView from "./InfrastructureView";
-import AdminAuditView from "./AdminAuditView";
-import LiveTicker from "./LiveTicker";
-import CriticalAlertPopup from "./CriticalAlertPopup";
-import ToastStack from "./ToastStack";
-import { useLiveAttackFeed } from "./useLiveFeed";
-import { incidentStats } from "./incidents";
-import { SEED_AUDIT_LOG } from "./auditLog";
+import { DashboardContent } from "./views/LogDashboard";
+import IncidentsView from "./views/IncidentsView";
+import AttackMatrixView from "./views/AttackMatrixView";
+import InfrastructureView from "./views/InfrastructureView";
+import AdminAuditView from "./views/AdminAuditView";
+import LiveTicker from "./components/LiveTicker";
+import CriticalAlertPopup from "./components/CriticalAlertPopup";
+import ToastStack from "./components/ToastStack";
+import { useLiveAttackFeed } from "./hooks/useLiveFeed";
+import { incidentStats } from "./data/incidents";
+import { SEED_AUDIT_LOG } from "./data/auditLog";
 
 /**
  * SENTINEL-OPS app shell — left sidebar switches between screens.

@@ -1,6 +1,6 @@
 import React from "react";
 import { SOURCE_META } from "./badges";
-import { ATTACK_TYPES } from "./attackEvents";
+import { ATTACK_TYPES } from "../data/attackEvents";
 
 function describe(e) {
   const type = ATTACK_TYPES.find((t) => t.key === e.attackType);

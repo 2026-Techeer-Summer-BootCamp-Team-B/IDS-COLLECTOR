@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ATTACK_EVENTS } from "./attackEvents";
+import { ATTACK_EVENTS } from "../data/attackEvents";
  
 /**
  * Simulates a live event stream by replaying ATTACK_EVENTS on an interval

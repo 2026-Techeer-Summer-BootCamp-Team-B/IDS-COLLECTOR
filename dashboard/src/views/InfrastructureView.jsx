@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
-import { ATTACK_EVENTS, byK8sTarget, byCountry } from "./attackevents";
-import WorldMap from "./WorldMap";
+import { ATTACK_EVENTS, byK8sTarget, byCountry } from "../data/attackEvents";
+import WorldMap from "../components/WorldMap";
 
 function intensityColor(count, max) {
   const ratio = max ? count / max : 0;

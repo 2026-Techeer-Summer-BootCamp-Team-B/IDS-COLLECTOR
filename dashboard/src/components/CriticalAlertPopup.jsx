@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ATTACK_TYPES } from "./attackEvents";
+import { ATTACK_TYPES } from "../data/attackEvents";
 import { SOURCE_META } from "./badges";
 
 // Fires whenever useLiveFeed.js reports a new CRITICAL event. Auto-dismisses
