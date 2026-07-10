@@ -1,0 +1,2 @@
+# NOTE: local-dev setup, no SSL/auth on the Data Prepper server API.
+ssl: false

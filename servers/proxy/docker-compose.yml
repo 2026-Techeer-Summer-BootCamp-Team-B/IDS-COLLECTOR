@@ -1,0 +1,21 @@
+networks:
+  siem-net:
+    external: true
+
+# NOTE: local-dev setup. Traefik API/dashboard is exposed without auth.
+services:
+  traefik:
+    image: traefik:v3.7
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    ports:
+      - "4317:4317" # otlp grpc ingress
+      - "80:80"     # http - 프론트엔드(정적 파일) + /api(platform-api) 단일 진입점
+      - "8080:8080" # traefik dashboard (insecure, local dev only)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+    networks:
+      - siem-net

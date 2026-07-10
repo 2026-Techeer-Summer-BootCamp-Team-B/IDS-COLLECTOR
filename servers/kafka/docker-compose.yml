@@ -1,0 +1,71 @@
+networks:
+  siem-net:
+    external: true
+
+# NOTE: local-dev setup. Single-node KRaft broker, PLAINTEXT listeners
+# (no TLS/SASL). Not production-hardened.
+#
+# 리스너 매핑 (기존 트러블슈팅 항목 갱신):
+# - 컨테이너 안(otel-collector, normalizer 등 siem-net 내부)에서는 내부 리스너
+#   BROKER(kafka:9092)를 쓴다.
+# - 컨테이너 밖(로컬 uvicorn 등)에서 붙을 땐 EXTERNAL(localhost:9094)을 쓴다.
+services:
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: BROKER://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: BROKER://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: BROKER:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
+      # 단일 노드 Kafka는 이 3개를 반드시 1로 낮춰야 한다 (기본값 3이면 브로커가 기동 실패).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9094:9094"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - siem-net
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # otel-collector가 "kafka 컨테이너 시작됨"이 아니라 "토픽이 실제로 준비됨"까지
+  # 기다리게 하려고 별도 초기화 컨테이너로 분리 (AUTO_CREATE_TOPICS를 꺼뒀기 때문에
+  # 토픽을 명시적으로 만들어줘야 한다).
+  kafka-init:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - siem-net
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        # 계약 문서 §1 공통 설정: partitions=1, replication=1, retention 24h,
+        # cleanup.policy=delete (retention이 트리밍 정책을 대체 - 별도 정리 job 없음).
+        for topic in events.was events.waf events.falco events.audit events.unknown events.normalized events.dlq; do
+          /opt/kafka/bin/kafka-topics.sh --create \
+            --bootstrap-server kafka:9092 \
+            --topic "$$topic" \
+            --partitions 1 \
+            --replication-factor 1 \
+            --config retention.ms=86400000 \
+            --config cleanup.policy=delete \
+            --if-not-exists
+        done
+
+volumes:
+  kafka-data:

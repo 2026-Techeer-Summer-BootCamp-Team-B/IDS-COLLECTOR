@@ -1,0 +1,58 @@
+networks:
+  siem-net:
+    external: true
+
+services:
+  normalizer:
+    build: ./normalizer
+    container_name: normalizer
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_SOURCE_TOPICS: events.was,events.waf,events.falco,events.audit
+      KAFKA_CONSUMER_GROUP: normalizer-workers
+      KAFKA_NORMALIZED_TOPIC: events.normalized
+      KAFKA_DLQ_TOPIC: events.dlq
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8200:8200"
+    networks:
+      - siem-net
+
+  correlation-engine:
+    build: ./correlation-engine
+    container_name: correlation-engine
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_NORMALIZED_TOPIC: events.normalized
+      KAFKA_CONSUMER_GROUP: correlation-engine
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
+    ports:
+      - "8300:8300"
+    networks:
+      - siem-net
+
+  platform-api:
+    build: ./platform-api
+    container_name: platform-api
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8400:8400" # 로컬 디버깅 편의용 직결 포트 - 실제 진입 경로는 Traefik(:80/api)
+    networks:
+      - siem-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=siem-net"
+      - "traefik.http.routers.platform-api.entrypoints=web"
+      - "traefik.http.routers.platform-api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.platform-api.middlewares=platform-api-stripprefix"
+      - "traefik.http.middlewares.platform-api-stripprefix.stripprefix.prefixes=/api"
+      - "traefik.http.services.platform-api.loadbalancer.server.port=8400"

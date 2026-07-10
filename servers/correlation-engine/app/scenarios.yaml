@@ -1,0 +1,61 @@
+# 시나리오 선언 룰 (P4-1). sequence/threshold 2타입.
+#
+# 아래 stage1/stage2/match 조건, mitre_technique_id는 엔진(sequence/threshold/join_on/
+# 쿨다운/최신 덮어쓰기/PG sync) 동작을 검증하기 위한 예시다 - 실제 공격 체인 정의와
+# MITRE 매핑은 팀 설계 후 이 파일만 교체하면 된다. 엔진 코드는 그대로 둬도 된다.
+#
+# join_on: 엔진 내부 로직/Redis 키 네임스페이스용 식별자 (pod/user_or_sa/source_ip).
+# correlation_key_type: PostgreSQL enum 값 그대로 - Incident.correlation_key_type에
+#   저장되는 값이라 join_on과 반드시 짝이 맞아야 한다 (app/rules.py의 _join_key 참고).
+
+scenarios:
+  # S1 (sequence, join_on=pod): 예시 - 같은 pod에서 audit 고위험 이벤트(RBAC 변경 등,
+  # severity>=4) 이후 falco 침입탐지(severity>=3)가 뒤따르면 발화.
+  - id: S1
+    name: "권한상승 이후 pod 침투 (예시)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [k8s_audit, falco]
+    window_seconds: 300
+    stage1:
+      event_module: k8s_audit
+      min_severity: 4
+    stage2:
+      event_module: falco
+      min_severity: 3
+    severity: 4
+    mitre_technique_id: "T1078"
+
+  # S2 (sequence, join_on=user_or_sa): 예시 - 같은 user/SA가 audit 고위험 이벤트
+  # (자격증명 조회 등, severity>=3) 이후 WAS 요청을 일으키면 발화.
+  - id: S2
+    name: "자격증명 조회 이후 이상행위 (예시)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit, was]
+    window_seconds: 600
+    stage1:
+      event_module: k8s_audit
+      min_severity: 3
+    stage2:
+      event_module: was
+    severity: 3
+    mitre_technique_id: "T1552"
+
+  # S4 (threshold, join_on=source_ip): 예시 - 같은 IP에서 60초 안에 WAF 이벤트가
+  # 5건 이상 발생하면 발화, 발화 후 300초 쿨다운.
+  - id: S4
+    name: "동일 IP WAF 다발 차단 (예시)"
+    type: threshold
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [waf]
+    window_seconds: 60
+    threshold: 5
+    cooldown_seconds: 300
+    match:
+      event_module: waf
+    severity: 3
+    mitre_technique_id: "T1110"

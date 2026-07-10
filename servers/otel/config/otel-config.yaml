@@ -1,0 +1,97 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    timeout: 5s
+    send_batch_size: 8192
+
+# resource attribute `log.source`(was/waf/falco/k8s-audit, Target 쪽 otel-collector가
+# 태깅) 기준으로 소스별 Kafka 토픽에 나눠 적재한다 (P2-1). 매치되는 값이 없으면
+# events.unknown으로 보내서 태깅 누락을 조용히 흘리지 않고 눈에 띄게 한다.
+connectors:
+  routing/by-source:
+    default_pipelines: [logs/unknown]
+    error_mode: ignore
+    table:
+      - statement: route() where resource.attributes["log.source"] == "was"
+        pipelines: [logs/was]
+      - statement: route() where resource.attributes["log.source"] == "waf"
+        pipelines: [logs/waf]
+      - statement: route() where resource.attributes["log.source"] == "falco"
+        pipelines: [logs/falco]
+      - statement: route() where resource.attributes["log.source"] == "k8s-audit"
+        pipelines: [logs/audit]
+
+exporters:
+  debug:
+    verbosity: detailed
+  kafka/was:
+    brokers: ["kafka:9092"]
+    logs:
+      topic: events.was
+      encoding: otlp_json
+    producer:
+      max_message_bytes: 10000000
+  kafka/waf:
+    brokers: ["kafka:9092"]
+    logs:
+      topic: events.waf
+      encoding: otlp_json
+    producer:
+      max_message_bytes: 10000000
+  kafka/falco:
+    brokers: ["kafka:9092"]
+    logs:
+      topic: events.falco
+      encoding: otlp_json
+    producer:
+      max_message_bytes: 10000000
+  kafka/audit:
+    brokers: ["kafka:9092"]
+    logs:
+      topic: events.audit
+      encoding: otlp_json
+    producer:
+      max_message_bytes: 10000000
+  kafka/unknown:
+    brokers: ["kafka:9092"]
+    logs:
+      topic: events.unknown
+      encoding: otlp_json
+    producer:
+      max_message_bytes: 10000000
+
+service:
+  telemetry:
+    logs:
+      level: "info"
+  pipelines:
+    logs/in:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [routing/by-source]
+    logs/was:
+      receivers: [routing/by-source]
+      exporters: [kafka/was, debug]
+    logs/waf:
+      receivers: [routing/by-source]
+      exporters: [kafka/waf, debug]
+    logs/falco:
+      receivers: [routing/by-source]
+      exporters: [kafka/falco, debug]
+    logs/audit:
+      receivers: [routing/by-source]
+      exporters: [kafka/audit, debug]
+    logs/unknown:
+      receivers: [routing/by-source]
+      exporters: [kafka/unknown, debug]

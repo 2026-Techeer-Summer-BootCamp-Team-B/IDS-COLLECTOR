@@ -1,0 +1,22 @@
+networks:
+  siem-net:
+    external: true
+
+# NOTE: local-dev setup. No auth (requirepass 미설정).
+# 용도: normalizer의 dedupe 키(SETNX, TTL 1h)와 correlation-engine의 시나리오
+# 윈도우/쿨다운 상태 저장. 둘 다 짧은 TTL의 휘발성 캐시로만 쓰고, 영속 데이터는
+# 전부 Postgres/OpenSearch 쪽에 있으므로 AOF/RDB 영속성은 필요 없다.
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - siem-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
