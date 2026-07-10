@@ -1,0 +1,57 @@
+# 원본(raw) 사본 - P2-1 소스별 토픽을 그대로 일 단위 인덱스에 적재. 정규화 로직과
+# 무관하게 항상 남는 포렌식/원본 사본이라, normalizer가 죽거나 파서가 바뀌어도 영향받지 않는다.
+otel-logs-raw-pipeline:
+  source:
+    kafka:
+      bootstrap_servers:
+        - "kafka:9092"
+      encryption:
+        type: none
+      topics:
+        - name: "events.was"
+          group_id: "opensearch-raw-consumer-group"
+          serde_format: "json"
+        - name: "events.waf"
+          group_id: "opensearch-raw-consumer-group"
+          serde_format: "json"
+        - name: "events.falco"
+          group_id: "opensearch-raw-consumer-group"
+          serde_format: "json"
+        - name: "events.audit"
+          group_id: "opensearch-raw-consumer-group"
+          serde_format: "json"
+  processor:
+    - date:
+        from_time_received: true
+        destination: "@timestamp"
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        index: "otel-logs-raw-%{yyyy.MM.dd}"
+
+# 정규화된 이벤트 (P6-4) - normalizer가 emit한 events.normalized를 그대로 색인한다.
+# _id=event.id(dedupe 키)라서 재처리로 같은 이벤트가 두 번 들어와도 덮어쓰기만 되고
+# 중복 문서가 생기지 않는다 (P3-7 "중복 색인 방지는 Prepper sink의 _id=dedupe키 설정").
+# 이 워커는 색인 로직을 직접 갖지 않는다 - normalizer의 자체 색인 코드를 대체하는 지점.
+#
+# ⚠️ document_id 표현식에 따옴표를 추가로 감싸면(${"event.id"}) Data Prepper가 이걸
+# 문자열 리터럴로 취급해서 모든 문서의 _id가 정말로 "event.id"라는 글자 그대로가
+# 되어버린다(실측 확인) - 그냥 ${event.id}로 키 참조해야 한다.
+attack-logs-normalized-pipeline:
+  source:
+    kafka:
+      bootstrap_servers:
+        - "kafka:9092"
+      encryption:
+        type: none
+      topics:
+        - name: "events.normalized"
+          group_id: "opensearch-normalized-consumer-group"
+          serde_format: "json"
+  sink:
+    - opensearch:
+        hosts: ["http://opensearch:9200"]
+        index: "attack-logs-%{yyyy.MM.dd}"
+        document_id: "${event.id}"
+        template_type: index-template
+        template_file: "/usr/share/data-prepper/config/attack-logs-template.json"

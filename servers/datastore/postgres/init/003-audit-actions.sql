@@ -1,0 +1,7 @@
+-- audit_action enum에 로그인/로그아웃/알림설정 CRUD 행위 추가 (AuditLog API가 조회할
+-- 실제 행위 종류를 넓힌다). ALTER TYPE ... ADD VALUE는 트랜잭션 밖에서 실행해야 한다.
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'LOGIN';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'LOGOUT';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'ALERT_CONFIG_CREATED';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'ALERT_CONFIG_UPDATED';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'ALERT_CONFIG_DELETED';

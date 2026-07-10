@@ -1,0 +1,67 @@
+# 심각도(event.severity) 매핑 (P3-5). 기능 설계 시트 "심각도매핑"을 그대로 옮긴 것 -
+# 값을 바꿀 땐 이 파일만 고치면 되고, normalizer 코드 재배포 없이 반영하려면
+# app/severity.py의 _load()를 재호출하는 리로드 엔드포인트를 나중에 추가할 것 (지금은
+# 프로세스 기동 시 1회 로드).
+
+was:
+  # WAS raw access log는 판단 없음 -> 항상 1 고정. HTTP 계층의 '판단(alert)'은
+  # WAF 센서의 역할이고, raw access log는 맥락/통계/포렌식용으로만 흐른다.
+  default: 1
+
+waf:
+  # WafAlert 센서 스펙 기준 risk_level 값 그대로(대문자). alert 최소 severity 2.
+  risk_level:
+    LOW: 2
+    MEDIUM: 3
+    CRITICAL: 4
+  default: 2
+
+falco:
+  # Falco 공식 priority 직접 매핑. DEBUG~NOTICE -> 1 / WARNING -> 2 / ERROR,CRITICAL -> 3
+  # / ALERT,EMERGENCY -> 4.
+  priority:
+    Emergency: 4
+    Alert: 4
+    Critical: 3
+    Error: 3
+    Warning: 2
+    Notice: 1
+    Informational: 1
+    Debug: 1
+  # 시트에 default(미매치) 행은 없음 - priority가 없거나 모르는 값을 low(1)로 떨어뜨리면
+  # 이상 신호가 묻힐 수 있어서 medium(2)으로 둔다.
+  default: 2
+
+audit:
+  # verb+resource(+subresource) 매핑, 첫 매치 우선. audit level(RequestResponse 등) 기반
+  # 매핑은 폐기 - level은 '얼마나 자세히 기록할지'이지 '얼마나 위험한지'가 아니라서
+  # RBAC 변경 같은 severity 4가 그 방식으론 영영 안 나온다.
+  rules:
+    # 4 critical: RBAC 변경 = 권한상승의 정점 (S3 stage1 재료)
+    # ⚠️ TBD: verb 범위가 create/patch만 커버 - update/rolebindings 등 다른 조합은
+    # 아직 default(2)로 떨어짐. 시트에 범위 확정되면 이 rule의 verb 목록만 넓히면 됨.
+    - match: { verb: [create, patch], resource: [clusterroles, clusterrolebindings, roles, rolebindings] }
+      severity: 4
+    # 3 high: 자격증명 탈취 (S2 재료)
+    - match: { verb: [get, list], resource: [secrets] }
+      severity: 3
+    # 3 high: 시크릿 생성/변조 - 조회와 동급 이상 (§5 갱신분 신규 추가)
+    - match: { verb: [create, update, patch], resource: [secrets] }
+      severity: 3
+    # 3 high: 실행 중 컨테이너 진입 (S3 stage2 재료)
+    - match: { verb: [create], resource: [pods], subresource: [exec, attach] }
+      severity: 3
+    # 3 high: SA 토큰 발급
+    - match: { verb: [create], resource: [serviceaccounts], subresource: [token] }
+      severity: 3
+    # 3 high: 흔적 삭제·파괴. '대량 delete'의 '대량' 판정은 단건 정규화 단계에서 불가능
+    # 하므로 delete 단건도 일단 3으로 두고, '대량' 집계 판정은 상관 엔진(threshold) 몫.
+    - match: { verb: [delete], resource: [pods, deployments] }
+      severity: 3
+    # 2 medium: 워크로드 변경 맥락
+    - match: { verb: [create, update, patch], resource: [pods, deployments] }
+      severity: 2
+    # 1 low: 일반 조회
+    - match: { verb: [get, list, watch] }
+      severity: 1
+  default: 2

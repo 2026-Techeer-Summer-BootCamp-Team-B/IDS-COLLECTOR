@@ -1,0 +1,21 @@
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    kafka_brokers: str = "kafka:9092"
+    kafka_normalized_topic: str = "events.normalized"
+    kafka_consumer_group: str = "correlation-engine"
+
+    # normalizer의 dedupe와 같은 Redis 인스턴스를 다른 키 네임스페이스(corr:*)로 공유한다.
+    redis_url: str = "redis://redis:6379/0"
+
+    postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
+
+    # scenarios.yaml 경로 - app 패키지 기준 상대경로 (app/main.py에서 resolve).
+    scenarios_config_path: str = "scenarios.yaml"
+
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()

@@ -1,0 +1,28 @@
+networks:
+  siem-net:
+    external: true
+
+# gRPC(4317)는 Traefik의 otlp-grpc 엔트리포인트를 통해서만 들어온다 (h2c preface를
+# HTTP/1.1로 오인하는 문제를 Traefik v3 + loadbalancer.server.scheme=h2c 조합으로
+# 해결 - proxy/traefik/traefik.yml, 아래 labels 참고). HTTP(4318)는 h2c 이슈가 없어서
+# 그대로 직접 포트 노출.
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.156.0
+    container_name: otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel/otel-config.yaml"]
+    volumes:
+      - ./config/otel-config.yaml:/etc/otel/otel-config.yaml:ro
+    ports:
+      - "4318:4318"
+    networks:
+      - siem-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=siem-net"
+      - "traefik.http.routers.otlp-grpc.entrypoints=otlp-grpc"
+      - "traefik.http.routers.otlp-grpc.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.otlp-grpc.service=otlp-grpc"
+      - "traefik.http.services.otlp-grpc.loadbalancer.server.scheme=h2c"
+      - "traefik.http.services.otlp-grpc.loadbalancer.server.port=4317"

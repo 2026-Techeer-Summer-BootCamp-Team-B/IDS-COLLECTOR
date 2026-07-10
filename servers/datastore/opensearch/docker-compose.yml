@@ -1,0 +1,47 @@
+networks:
+  siem-net:
+    external: true
+
+# NOTE: local-dev setup. Security plugin disabled (no TLS/auth) for simplicity.
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.19.6
+    container_name: opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "Whyn0!techeer"
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks:
+      - siem-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 두 파이프라인을 같이 돌린다 (datastore/opensearch/config/data-prepper/pipelines.yaml):
+  # 1) events.was/waf/falco/audit 원본 -> otel-logs-raw-* (포렌식용 사본)
+  # 2) events.normalized -> attack-logs-* (정규화된 문서, _id=event.id) - normalizer의
+  #    자체 색인 코드를 대체하는 지점 (P6-4).
+  data-prepper:
+    image: opensearchproject/data-prepper:2.16.0
+    container_name: data-prepper
+    restart: unless-stopped
+    volumes:
+      - ./config/data-prepper/pipelines.yaml:/usr/share/data-prepper/pipelines/pipelines.yaml:ro
+      - ./config/data-prepper/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml:ro
+      - ./config/data-prepper/attack-logs-template.json:/usr/share/data-prepper/config/attack-logs-template.json:ro
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - siem-net
+
+volumes:
+  opensearch-data:
