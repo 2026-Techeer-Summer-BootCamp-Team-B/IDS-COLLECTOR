@@ -8,7 +8,7 @@ function RuleRow({ rule, rank }) {
       <span className="text-dash-muted text-xs w-4">{String(rank).padStart(2, "0")}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-white text-sm truncate">{rule.name}</p>
+          <p className="text-dash-fg text-sm truncate">{rule.name}</p>
           <span
             className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${
               rule.enabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"
@@ -19,7 +19,7 @@ function RuleRow({ rule, rank }) {
         </div>
         <p className="text-dash-muted text-[11px] truncate">{rule.description}</p>
       </div>
-      <span className="text-white text-sm font-semibold w-14 text-right shrink-0">{rule.hits}건</span>
+      <span className="text-dash-fg text-sm font-semibold w-14 text-right shrink-0">{rule.hits}건</span>
     </div>
   );
 }
@@ -30,7 +30,7 @@ export default function AdminAuditView({ auditLog = [] }) {
   return (
     <div className="space-y-6">
       <div className="bg-dash-surface rounded-2xl p-5">
-        <h3 className="text-white text-sm font-semibold mb-1">탐지 룰별 적중 랭킹</h3>
+        <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹</h3>
         <p className="text-dash-muted text-xs mb-1">최근 7일 · 어느 룰이 제일 많이 걸리는지 · 총 {RULES.length}개 룰</p>
         <div>
           {ranked.map((r, i) => (
@@ -40,7 +40,7 @@ export default function AdminAuditView({ auditLog = [] }) {
       </div>
 
       <div className="bg-dash-surface rounded-2xl p-5">
-        <h3 className="text-white text-sm font-semibold mb-1">Audit Log</h3>
+        <h3 className="text-dash-fg text-sm font-semibold mb-1">Audit Log</h3>
         <p className="text-dash-muted text-xs mb-3">누가 · 언제 · 어떤 룰/조치를 했는지</p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -64,8 +64,8 @@ export default function AdminAuditView({ auditLog = [] }) {
                       minute: "2-digit",
                     })}
                   </td>
-                  <td className="py-2.5 text-white whitespace-nowrap pr-4 text-xs">{log.user}</td>
-                  <td className="py-2.5 text-white pr-4 text-xs">{log.action}</td>
+                  <td className="py-2.5 text-dash-fg whitespace-nowrap pr-4 text-xs">{log.user}</td>
+                  <td className="py-2.5 text-dash-fg pr-4 text-xs">{log.action}</td>
                   <td className="py-2.5 text-dash-muted whitespace-nowrap pr-4 text-xs">{log.target}</td>
                   <td className="py-2.5 text-dash-faint whitespace-nowrap text-xs">{log.ip}</td>
                 </tr>

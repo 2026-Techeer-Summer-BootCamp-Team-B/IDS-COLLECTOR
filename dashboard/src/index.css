@@ -1,3 +1,51 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * dash.* palette as CSS custom properties (R G B triplets, no commas — the
+ * format Tailwind's rgb(var(--x) / <alpha-value>) expects). :root is the
+ * dark theme (default); .light overrides swap every token at once when
+ * ThemeProvider (src/hooks/useTheme.jsx) toggles the class on <html>.
+ *
+ * Light-mode accents are deliberately darker than their dark-mode pastel
+ * counterparts (e.g. mint #A9DFD8 -> #0F8A7A) — the pastel versions read
+ * fine on the near-black dark background but have almost no contrast as
+ * text on a white background.
+ */
+:root {
+  --dash-bg: 23 24 33;
+  --dash-surface: 33 34 45;
+  --dash-surfaceAlt: 43 43 54;
+  --dash-mint: 169 223 216;
+  --dash-pink: 242 200 237;
+  --dash-muted: 135 136 140;
+  --dash-faint: 160 160 160;
+  --dash-fg: 255 255 255;
+  --dash-critical: 242 97 122;
+  --dash-high: 242 166 90;
+  --dash-medium: 232 217 122;
+  --dash-live: 143 227 176;
+  --dash-was: 127 179 232;
+}
+
+:root.light {
+  --dash-bg: 244 244 247;
+  --dash-surface: 255 255 255;
+  --dash-surfaceAlt: 231 231 235;
+  --dash-mint: 15 138 122;
+  --dash-pink: 196 40 130;
+  --dash-muted: 100 101 108;
+  --dash-faint: 138 138 142;
+  --dash-fg: 23 24 33;
+  --dash-critical: 200 40 68;
+  --dash-high: 191 100 20;
+  --dash-medium: 138 108 10;
+  --dash-live: 21 138 76;
+  --dash-was: 30 100 176;
+}
+
+body {
+  background-color: rgb(var(--dash-bg));
+  transition: background-color 0.15s ease;
+}

@@ -1,4 +1,6 @@
 import React from "react";
+import { CHART_COLORS } from "../data/theme";
+import { useTheme } from "../hooks/useTheme";
 
 /**
  * Lightweight, dependency-free world map for GeoIP visualization.
@@ -30,20 +32,22 @@ const CONTINENTS = [
 ];
 
 export default function WorldMap({ points }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   const maxCount = Math.max(...points.map((p) => p.count), 1);
 
   return (
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full h-full">
       {CONTINENTS.map((d, i) => (
-        <path key={i} d={d} fill="#2B2B36" stroke="#171821" strokeWidth="1" />
+        <path key={i} d={d} fill={C.surfaceAlt} stroke={C.bg} strokeWidth="1" />
       ))}
       {points.map((p) => {
         const { x, y } = project(p.lat, p.lon);
         const r = 4 + (p.count / maxCount) * 16;
         return (
           <g key={p.country}>
-            <circle cx={x} cy={y} r={r} fill="#F2617A" fillOpacity="0.22" />
-            <circle cx={x} cy={y} r={Math.max(3, r * 0.4)} fill="#F2617A" />
+            <circle cx={x} cy={y} r={r} fill={C.critical} fillOpacity="0.22" />
+            <circle cx={x} cy={y} r={Math.max(3, r * 0.4)} fill={C.critical} />
             <title>{`${p.country}: ${p.count}건`}</title>
           </g>
         );

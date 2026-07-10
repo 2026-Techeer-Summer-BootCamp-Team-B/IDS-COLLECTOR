@@ -16,7 +16,7 @@ function TechniqueCell({ tech, active, onClick }) {
       }`}
     >
       <p className={`text-[11px] font-semibold ${detected ? "text-dash-mint" : "text-dash-faint"}`}>{tech.id}</p>
-      <p className={`text-[11px] leading-snug ${detected ? "text-white" : "text-dash-muted"}`}>{tech.name}</p>
+      <p className={`text-[11px] leading-snug ${detected ? "text-dash-fg" : "text-dash-muted"}`}>{tech.name}</p>
       {detected && <p className="text-dash-muted text-[10px] mt-1">{tech.hits} hits</p>}
     </button>
   );
@@ -31,12 +31,12 @@ export default function AttackMatrixView() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-white text-base font-semibold mb-1">MITRE ATT&amp;CK 커버리지</h2>
+          <h2 className="text-dash-fg text-base font-semibold mb-1">MITRE ATT&amp;CK 커버리지</h2>
           <p className="text-dash-muted text-xs">실제 공격에서 각 기법으로 탐지된 로그 건수를 표시합니다</p>
         </div>
         <div className="text-right">
           <p className="text-dash-muted text-[11px] mb-1">Technique Coverage</p>
-          <p className="text-white text-lg font-semibold">
+          <p className="text-dash-fg text-lg font-semibold">
             {detectedTechniques}/{totalTechniques} <span className="text-dash-mint text-sm">({coveragePct}%)</span>
           </p>
           <div className="flex gap-3 justify-end mt-1 text-[10px] text-dash-muted">
@@ -77,7 +77,7 @@ export default function AttackMatrixView() {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <span className="text-dash-mint text-xs font-semibold">{selected.id}</span>
-            <span className="text-white text-sm font-medium">{selected.name}</span>
+            <span className="text-dash-fg text-sm font-medium">{selected.name}</span>
           </div>
           <span className="text-dash-muted text-xs">{logs.length} matched logs</span>
         </div>
@@ -88,7 +88,7 @@ export default function AttackMatrixView() {
               <span className="text-dash-faint whitespace-nowrap w-14">{log.time}</span>
               <SourceBadge source={log.source} />
               <div>
-                <p className="text-white font-medium">{log.title}</p>
+                <p className="text-dash-fg font-medium">{log.title}</p>
                 <p className="text-dash-muted font-mono">{log.detail}</p>
               </div>
             </div>

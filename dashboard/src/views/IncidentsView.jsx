@@ -4,14 +4,20 @@ import { incidents } from "../data/incidents";
 import { SeverityBadge, SourceBadge, StatusDot, SEVERITY_META, SOURCE_META } from "../components/badges";
 import { ATTACK_EVENTS, ATTACK_TYPES, byAttackType, bySource, byIp } from "../data/attackEvents";
 import { MOCK_NOW } from "../data/mockLogs";
+import { CHART_COLORS, forTheme } from "../data/theme";
+import { useTheme } from "../hooks/useTheme";
 
-const TOOLTIP_STYLE = { background: "#2B2B36", border: "none", borderRadius: 8, color: "#fff", fontSize: 12 };
+function tooltipStyle(C) {
+  return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
+}
 
 function MiniKpi({ label, value, sub, color }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   return (
     <div className="bg-dash-surface rounded-2xl p-4 flex-1 min-w-[160px]">
       <p className="text-dash-muted text-xs mb-1.5">{label}</p>
-      <p className="text-lg font-semibold truncate" style={{ color: color || "#fff" }}>
+      <p className="text-lg font-semibold truncate" style={{ color: color || C.fg }}>
         {value}
       </p>
       {sub && <p className="text-dash-muted text-[11px] mt-0.5">{sub}</p>}
@@ -21,6 +27,8 @@ function MiniKpi({ label, value, sub, color }) {
 
 // 오늘(최근 24h) 기준 탐지/차단 수 + Top 공격유형 / Top 공격 IP.
 function KpiRow() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   const last24h = useMemo(() => {
     const cutoff = MOCK_NOW.getTime() - 24 * 60 * 60 * 1000;
     return ATTACK_EVENTS.filter((e) => e.timestamp.getTime() > cutoff);
@@ -32,14 +40,14 @@ function KpiRow() {
   return (
     <div className="flex flex-wrap gap-4">
       <MiniKpi label="오늘 탐지 수" value={last24h.length} />
-      <MiniKpi label="오늘 차단 수" value={blockedCount} color="#A9DFD8" />
+      <MiniKpi label="오늘 차단 수" value={blockedCount} color={C.mint} />
       <MiniKpi
         label="Top 공격유형"
         value={topType?.label || "-"}
         sub={topType ? `${topType.count}건` : ""}
-        color={topType?.color}
+        color={forTheme(topType?.color, theme)}
       />
-      <MiniKpi label="Top 공격 IP" value={topIp?.ip || "-"} sub={topIp ? `${topIp.count}건` : ""} color="#F2617A" />
+      <MiniKpi label="Top 공격 IP" value={topIp?.ip || "-"} sub={topIp ? `${topIp.count}건` : ""} color={C.critical} />
     </div>
   );
 }
@@ -47,12 +55,17 @@ function KpiRow() {
 // "누가/무엇을 잡았는지" 요약 — 개별 인시던트(상관분석 결과)와는 다른 층위로,
 // ATTACK_EVENTS(개별 탐지/차단 이벤트) 전체를 집계한 스냅샷.
 function AttackTypeDonut() {
-  const data = useMemo(() => byAttackType(ATTACK_EVENTS).filter((d) => d.count > 0), []);
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const data = useMemo(
+    () => byAttackType(ATTACK_EVENTS).filter((d) => d.count > 0).map((d) => ({ ...d, color: forTheme(d.color, theme) })),
+    [theme]
+  );
   const total = data.reduce((s, d) => s + d.count, 0);
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-white text-sm font-semibold mb-1">공격 유형 분포</h3>
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">공격 유형 분포</h3>
       <p className="text-dash-muted text-xs mb-3">최근 7일 · 총 {total}건</p>
       <div className="flex items-center gap-4">
         <ResponsiveContainer width={130} height={130}>
@@ -62,7 +75,7 @@ function AttackTypeDonut() {
                 <Cell key={d.key} fill={d.color} />
               ))}
             </Pie>
-            <Tooltip contentStyle={TOOLTIP_STYLE} />
+            <Tooltip contentStyle={tooltipStyle(C)} />
           </PieChart>
         </ResponsiveContainer>
         <div className="flex-1 space-y-1.5 text-xs">
@@ -72,7 +85,7 @@ function AttackTypeDonut() {
                 <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
                 {d.label}
               </span>
-              <span className="text-white">{d.count}</span>
+              <span className="text-dash-fg">{d.count}</span>
             </div>
           ))}
         </div>
@@ -83,15 +96,21 @@ function AttackTypeDonut() {
 
 // "누가 잡았는지" — detection_source(WAS/Falco/K8s Audit)별 기여도.
 function SourceDonut() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   const data = useMemo(
-    () => bySource(ATTACK_EVENTS).map((d) => ({ ...d, ...(SOURCE_META[d.source] || { label: d.source, color: "#87888C" }) })),
-    []
+    () =>
+      bySource(ATTACK_EVENTS).map((d) => {
+        const meta = SOURCE_META[d.source] || { label: d.source, color: "#87888C" };
+        return { ...d, ...meta, color: forTheme(meta.color, theme) };
+      }),
+    [theme]
   );
   const total = data.reduce((s, d) => s + d.count, 0);
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-white text-sm font-semibold mb-1">탐지 소스별 분포</h3>
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 소스별 분포</h3>
       <p className="text-dash-muted text-xs mb-3">누가 잡았는지 · 총 {total}건</p>
       <div className="flex items-center gap-4">
         <ResponsiveContainer width={130} height={130}>
@@ -101,7 +120,7 @@ function SourceDonut() {
                 <Cell key={d.source} fill={d.color} />
               ))}
             </Pie>
-            <Tooltip contentStyle={TOOLTIP_STYLE} />
+            <Tooltip contentStyle={tooltipStyle(C)} />
           </PieChart>
         </ResponsiveContainer>
         <div className="flex-1 space-y-1.5 text-xs">
@@ -111,7 +130,7 @@ function SourceDonut() {
                 <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
                 {d.label}
               </span>
-              <span className="text-white">{d.count}</span>
+              <span className="text-dash-fg">{d.count}</span>
             </div>
           ))}
         </div>
@@ -121,6 +140,7 @@ function SourceDonut() {
 }
 
 function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
+  const { theme } = useTheme();
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -137,7 +157,7 @@ function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
     <div className="bg-dash-surface rounded-2xl p-5">
       <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-white text-sm font-semibold">최근 차단/탐지 로그</h3>
+          <h3 className="text-dash-fg text-sm font-semibold">최근 차단/탐지 로그</h3>
           <p className="text-dash-muted text-xs mt-0.5">
             Showing {Math.min(filtered.length, 8)} of {filtered.length}
           </p>
@@ -146,7 +166,7 @@ function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="검색 (메시지/Pod/국가)..."
-          className="bg-dash-bg text-sm text-white placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-52"
+          className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-52"
         />
       </div>
       <div className="overflow-x-auto">
@@ -165,6 +185,7 @@ function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
           <tbody>
             {filtered.slice(0, 8).map((e) => {
               const type = ATTACK_TYPES.find((t) => t.key === e.attackType);
+              const typeColor = forTheme(type.color, theme);
               const manuallyActed = !!actedEventIds[e.id];
               const effectiveBlocked = e.blocked || manuallyActed;
               const label = manuallyActed && !e.blocked ? "조치 완료" : e.action;
@@ -176,7 +197,7 @@ function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
                   <td className="py-2.5 pr-3">
                     <span
                       className="text-xs font-medium px-2 py-1 rounded-md whitespace-nowrap"
-                      style={{ color: type.color, backgroundColor: `${type.color}22` }}
+                      style={{ color: typeColor, backgroundColor: `${typeColor}22` }}
                     >
                       {type.label}
                     </span>
@@ -187,7 +208,7 @@ function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
                   <td className="py-2.5 pr-3">
                     <SourceBadge source={e.source} />
                   </td>
-                  <td className="py-2.5 pr-3 text-white whitespace-nowrap text-xs">
+                  <td className="py-2.5 pr-3 text-dash-fg whitespace-nowrap text-xs">
                     {e.namespace}/{e.pod}
                   </td>
                   <td className="py-2.5 pr-3 text-dash-faint text-xs whitespace-nowrap">
@@ -224,6 +245,7 @@ function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
 }
 
 function IncidentCard({ incident, active, onClick }) {
+  const { theme } = useTheme();
   const meta = SEVERITY_META[incident.severity];
   return (
     <button
@@ -231,7 +253,7 @@ function IncidentCard({ incident, active, onClick }) {
       className={`w-full text-left rounded-xl p-3 border-l-4 transition-colors ${
         active ? "bg-dash-surfaceAlt" : "bg-dash-surface hover:bg-dash-surfaceAlt/60"
       }`}
-      style={{ borderLeftColor: meta.color }}
+      style={{ borderLeftColor: forTheme(meta.color, theme) }}
     >
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-2">
@@ -240,7 +262,7 @@ function IncidentCard({ incident, active, onClick }) {
         </div>
         <StatusDot status={incident.status} />
       </div>
-      <p className="text-white text-sm font-medium mb-1.5">{incident.title}</p>
+      <p className="text-dash-fg text-sm font-medium mb-1.5">{incident.title}</p>
       <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
         {incident.sources.map((s) => (
           <SourceBadge key={s} source={s} />
@@ -265,7 +287,7 @@ function StorylineEntry({ entry, isLast }) {
           <SourceBadge source={entry.source} />
           <span className="text-dash-faint text-[10px]">{entry.mitre}</span>
         </div>
-        <p className="text-white text-sm font-medium mb-1">{entry.title}</p>
+        <p className="text-dash-fg text-sm font-medium mb-1">{entry.title}</p>
         {lines.map((line, i) => (
           <p key={i} className="text-dash-muted text-xs font-mono leading-relaxed">
             {line}
@@ -317,7 +339,7 @@ export default function IncidentsView({
           <div>
             <div className="flex items-center gap-2 mb-1.5">
               <SeverityBadge level={selected.severity} />
-              <h2 className="text-white text-lg font-semibold">{selected.title}</h2>
+              <h2 className="text-dash-fg text-lg font-semibold">{selected.title}</h2>
             </div>
             <p className="text-dash-muted text-xs">
               {selected.id} · 대상 {selected.target} · 출발 {selected.sourceIp} ({selected.sourceCountry}) · 최초탐지{" "}
@@ -341,20 +363,20 @@ export default function IncidentsView({
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-dash-bg rounded-xl p-3">
             <p className="text-dash-muted text-[11px] mb-1">상관 규칙</p>
-            <p className="text-white text-xs">{selected.correlationRule}</p>
+            <p className="text-dash-fg text-xs">{selected.correlationRule}</p>
           </div>
           <div className="bg-dash-bg rounded-xl p-3">
             <p className="text-dash-muted text-[11px] mb-1">MITRE 경로</p>
-            <p className="text-white text-xs">{selected.mitrePath.join(" → ")}</p>
+            <p className="text-dash-fg text-xs">{selected.mitrePath.join(" → ")}</p>
           </div>
           <div className="bg-dash-bg rounded-xl p-3">
             <p className="text-dash-muted text-[11px] mb-1">위험 신호</p>
-            <p className="text-white text-xs">{selected.riskNote}</p>
+            <p className="text-dash-fg text-xs">{selected.riskNote}</p>
           </div>
         </div>
 
         <div className="mb-4">
-          <h3 className="text-white text-sm font-semibold mb-1">공격 스토리라인</h3>
+          <h3 className="text-dash-fg text-sm font-semibold mb-1">공격 스토리라인</h3>
           <p className="text-dash-muted text-xs">
             관련 로그(WAS / Falco / K8s Audit)를 시간순으로 묶어 하나의 사건으로 재구성 · 시간은 로그 원본 기준
           </p>

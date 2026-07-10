@@ -16,6 +16,9 @@ import {
 import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, topSourcesFor } from "../data/mockLogs";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta } from "../data/logLevels";
 import { RANGE_PRESETS, bucketEvents } from "../data/timeSeries";
+import { CHART_COLORS, forTheme } from "../data/theme";
+import { useTheme } from "../hooks/useTheme";
+import SearchDiscoverView from "./SearchDiscoverView";
 
 /**
  * Log Analytics Dashboard — first-pass layout
@@ -27,16 +30,6 @@ import { RANGE_PRESETS, bucketEvents } from "../data/timeSeries";
  * Everything lives in one file on purpose so it's easy to scan; split into
  * components/* whenever you're ready to break it apart.
  */
-
-const C = {
-  bg: "#171821",
-  surface: "#21222D",
-  surfaceAlt: "#2B2B36",
-  mint: "#A9DFD8",
-  pink: "#F2C8ED",
-  muted: "#87888C",
-  faint: "#A0A0A0",
-};
 
 const NAV_ITEMS = [
   { label: "Dashboard", active: true },
@@ -56,7 +49,7 @@ function Sidebar() {
         <div className="w-8 h-8 rounded-lg bg-dash-mint/20 flex items-center justify-center">
           <span className="w-3 h-3 rounded-sm bg-dash-mint" />
         </div>
-        <span className="text-white font-semibold tracking-tight">LogBoard</span>
+        <span className="text-dash-fg font-semibold tracking-tight">LogBoard</span>
       </div>
 
       <nav className="flex-1 space-y-1">
@@ -65,8 +58,8 @@ function Sidebar() {
             key={item.label}
             className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors ${
               item.active
-                ? "bg-dash-surface text-white"
-                : "text-dash-muted hover:bg-dash-surface/60 hover:text-white"
+                ? "bg-dash-surface text-dash-fg"
+                : "text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
             }`}
           >
             {item.label}
@@ -75,13 +68,13 @@ function Sidebar() {
       </nav>
 
       <div className="pt-4 border-t border-dash-surfaceAlt space-y-1">
-        <button className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-dash-muted hover:text-white">
+        <button className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-dash-muted hover:text-dash-fg">
           Favorites
         </button>
-        <button className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-dash-muted hover:text-white">
+        <button className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-dash-muted hover:text-dash-fg">
           History
         </button>
-        <button className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-dash-muted hover:text-white">
+        <button className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-dash-muted hover:text-dash-fg">
           Sign out
         </button>
       </div>
@@ -95,14 +88,14 @@ function Topbar() {
       <div className="flex-1 max-w-md">
         <input
           placeholder="Search logs, sources, traces..."
-          className="w-full bg-dash-surface text-sm text-white placeholder-dash-muted rounded-lg px-4 py-2 outline-none focus:ring-1 focus:ring-dash-mint"
+          className="w-full bg-dash-surface text-sm text-dash-fg placeholder-dash-muted rounded-lg px-4 py-2 outline-none focus:ring-1 focus:ring-dash-mint"
         />
       </div>
       <div className="flex items-center gap-2 ml-auto text-dash-muted text-sm">
         <span className="w-2 h-2 rounded-full bg-dash-pink inline-block" />
         <span>3 active alerts</span>
       </div>
-      <div className="w-9 h-9 rounded-full bg-dash-surfaceAlt flex items-center justify-center text-white text-sm">
+      <div className="w-9 h-9 rounded-full bg-dash-surfaceAlt flex items-center justify-center text-dash-fg text-sm">
         용
       </div>
     </header>
@@ -115,7 +108,7 @@ function Card({ title, subtitle, action, children, className = "" }) {
       {(title || action) && (
         <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
           <div>
-            {title && <h3 className="text-white text-sm font-semibold">{title}</h3>}
+            {title && <h3 className="text-dash-fg text-sm font-semibold">{title}</h3>}
             {subtitle && <p className="text-dash-muted text-xs mt-0.5">{subtitle}</p>}
           </div>
           {action}
@@ -130,7 +123,7 @@ function KpiCard({ label, value, delta, positive = true }) {
   return (
     <div className="bg-dash-surface rounded-2xl p-5 flex-1 min-w-[160px]">
       <p className="text-dash-muted text-xs mb-2">{label}</p>
-      <p className="text-white text-2xl font-semibold">{value}</p>
+      <p className="text-dash-fg text-2xl font-semibold">{value}</p>
       {delta && (
         <p className={`text-xs mt-1 ${positive ? "text-dash-mint" : "text-dash-pink"}`}>
           {positive ? "▲" : "▼"} {delta} vs 이전 구간
@@ -141,11 +134,13 @@ function KpiCard({ label, value, delta, positive = true }) {
 }
 
 function LevelBadge({ level }) {
+  const { theme } = useTheme();
   const meta = getLevelMeta(level);
+  const color = forTheme(meta.color, theme);
   return (
     <span
       className="text-xs font-medium px-2 py-1 rounded-md whitespace-nowrap"
-      style={{ color: meta.color, backgroundColor: `${meta.color}22` }}
+      style={{ color, backgroundColor: `${color}22` }}
     >
       {meta.label}
     </span>
@@ -154,7 +149,11 @@ function LevelBadge({ level }) {
 
 // ---------- charts ----------
 
-function LogVolumeChart({ rangeKey, onRangeChange }) {
+// Time range is picked once, in the search bar at the top of the page
+// (SearchDiscoverView's TimeRangePicker) — this chart just reads rangeKey.
+function LogVolumeChart({ rangeKey }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const data = useMemo(() => {
     const buckets = bucketEvents(RAW_EVENTS, preset, MOCK_NOW.getTime());
@@ -170,21 +169,6 @@ function LogVolumeChart({ rangeKey, onRangeChange }) {
       title="Log Volume"
       subtitle={`지난 ${preset.label} · ${data.length}개 구간`}
       className="h-80"
-      action={
-        <div className="flex flex-wrap gap-1">
-          {RANGE_PRESETS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => onRangeChange(p.key)}
-              className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
-                rangeKey === p.key ? "bg-dash-surfaceAlt text-white" : "text-dash-muted hover:text-white"
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      }
     >
       <ResponsiveContainer width="100%" height="82%">
         <AreaChart data={data}>
@@ -194,16 +178,16 @@ function LogVolumeChart({ rangeKey, onRangeChange }) {
               <stop offset="100%" stopColor={C.mint} stopOpacity={0} />
             </linearGradient>
             <linearGradient id="errorFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#F2617A" stopOpacity={0.5} />
-              <stop offset="100%" stopColor="#F2617A" stopOpacity={0} />
+              <stop offset="0%" stopColor={C.critical} stopOpacity={0.5} />
+              <stop offset="100%" stopColor={C.critical} stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
           <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
           <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-          <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: "#fff" }} />
+          <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
           <Area type="monotone" dataKey="total" stroke={C.mint} fill="url(#volumeFill)" strokeWidth={2} />
-          <Area type="monotone" dataKey="errorish" stroke="#F2617A" fill="url(#errorFill)" strokeWidth={2} />
+          <Area type="monotone" dataKey="errorish" stroke={C.critical} fill="url(#errorFill)" strokeWidth={2} />
         </AreaChart>
       </ResponsiveContainer>
       <div className="flex gap-4 text-xs text-dash-muted mt-2">
@@ -211,7 +195,7 @@ function LogVolumeChart({ rangeKey, onRangeChange }) {
           <span className="w-2 h-2 rounded-full bg-dash-mint inline-block" /> 전체 로그
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: "#F2617A" }} /> Emergency~Major
+          <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: C.critical }} /> Emergency~Major
         </span>
       </div>
     </Card>
@@ -219,12 +203,14 @@ function LogVolumeChart({ rangeKey, onRangeChange }) {
 }
 
 function LevelDistributionChart({ events }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   const dist = levelDistributionFor(events);
   const data = ALL_LEVELS.filter((l) => l.key !== "UNKNOWN" || dist.UNKNOWN).map((l) => ({
     key: l.key,
     level: l.label,
     count: dist[l.key] || 0,
-    color: l.color,
+    color: forTheme(l.color, theme),
   }));
 
   return (
@@ -243,7 +229,7 @@ function LevelDistributionChart({ events }) {
             textAnchor="end"
           />
           <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-          <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: "#fff" }} />
+          <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
           <Bar dataKey="count" radius={[6, 6, 0, 0]}>
             {data.map((d) => (
               <Cell key={d.key} fill={d.color} />
@@ -256,6 +242,8 @@ function LevelDistributionChart({ events }) {
 }
 
 function TopSources({ sources }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
   return (
     <Card title="Top Log Sources" subtitle="선택 구간 기준">
@@ -265,7 +253,7 @@ function TopSources({ sources }) {
             <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
             <div className="flex-1">
               <div className="flex justify-between text-xs mb-1">
-                <span className="text-white">{s.name}</span>
+                <span className="text-dash-fg">{s.name}</span>
                 <span className="text-dash-muted">{s.count}</span>
               </div>
               <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
@@ -287,6 +275,8 @@ function TopSources({ sources }) {
 }
 
 function ErrorRateGauge({ events }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
   const errorCount = events.filter((l) => ERROR_BAND.includes(l.level)).length;
   const rate = events.length ? Math.round((errorCount / events.length) * 1000) / 10 : 0;
   const data = [{ value: rate }, { value: 100 - rate }];
@@ -304,13 +294,13 @@ function ErrorRateGauge({ events }) {
             dataKey="value"
             stroke="none"
           >
-            <Cell fill="#F2617A" />
+            <Cell fill={C.critical} />
             <Cell fill={C.surfaceAlt} />
           </Pie>
         </PieChart>
       </ResponsiveContainer>
       <div className="absolute inset-x-0 bottom-6 flex flex-col items-center">
-        <span className="text-white text-2xl font-semibold">{rate}%</span>
+        <span className="text-dash-fg text-2xl font-semibold">{rate}%</span>
         <span className="text-dash-muted text-xs">
           {errorCount} / {events.length} logs
         </span>
@@ -342,7 +332,7 @@ function RecentLogsTable({ events }) {
           <button
             onClick={() => setLevelFilter("ALL")}
             className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
-              levelFilter === "ALL" ? "bg-dash-surfaceAlt text-white" : "text-dash-muted hover:text-white"
+              levelFilter === "ALL" ? "bg-dash-surfaceAlt text-dash-fg" : "text-dash-muted hover:text-dash-fg"
             }`}
           >
             All
@@ -352,7 +342,7 @@ function RecentLogsTable({ events }) {
               key={l.key}
               onClick={() => setLevelFilter(l.key)}
               className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
-                levelFilter === l.key ? "bg-dash-surfaceAlt text-white" : "text-dash-muted hover:text-white"
+                levelFilter === l.key ? "bg-dash-surfaceAlt text-dash-fg" : "text-dash-muted hover:text-dash-fg"
               }`}
             >
               {l.label}
@@ -365,7 +355,7 @@ function RecentLogsTable({ events }) {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Filter by message or source..."
-        className="w-full bg-dash-bg text-sm text-white placeholder-dash-muted rounded-lg px-3 py-2 mb-3 outline-none focus:ring-1 focus:ring-dash-mint"
+        className="w-full bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-2 mb-3 outline-none focus:ring-1 focus:ring-dash-mint"
       />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -386,7 +376,7 @@ function RecentLogsTable({ events }) {
                 <td className="py-2.5 pr-4">
                   <LevelBadge level={log.level} />
                 </td>
-                <td className="py-2.5 text-white pr-4 whitespace-nowrap">{log.source}</td>
+                <td className="py-2.5 text-dash-fg pr-4 whitespace-nowrap">{log.source}</td>
                 <td className="py-2.5 text-dash-faint">{log.message}</td>
               </tr>
             ))}
@@ -420,6 +410,8 @@ export function DashboardContent() {
 
   return (
     <div className="space-y-6">
+      <SearchDiscoverView rangeKey={rangeKey} onRangeChange={setRangeKey} />
+
       <div className="flex flex-wrap gap-4">
         <KpiCard label={`Total Logs (${preset.label})`} value={rangeEvents.length} delta="8%" positive />
         <KpiCard label="Errors (Emergency~Major)" value={errorCount} delta="12%" positive={false} />
@@ -429,7 +421,7 @@ export function DashboardContent() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2">
-          <LogVolumeChart rangeKey={rangeKey} onRangeChange={setRangeKey} />
+          <LogVolumeChart rangeKey={rangeKey} />
         </div>
         <LevelDistributionChart events={rangeEvents} />
       </div>
