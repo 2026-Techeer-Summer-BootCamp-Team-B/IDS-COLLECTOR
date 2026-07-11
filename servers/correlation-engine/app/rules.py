@@ -32,12 +32,27 @@ def _join_key(event: NormalizedEvent, join_on: str) -> Optional[str]:
     return None
 
 
+def _match_value(actual: Optional[str], allowed: Any) -> bool:
+    if isinstance(allowed, list):
+        return actual in allowed
+    return actual == allowed
+
+
 def _matches(event: NormalizedEvent, pattern: Dict[str, Any]) -> bool:
     """pattern의 조건을 전부 만족하면 True. 지원 키: event_module, event_action,
-    min_severity. 시나리오 정의가 늘어나면 여기에 조건 종류를 추가하면 된다."""
+    audit_verb, orchestrator_resource_type(전부 단일 값 또는 값 리스트 가능 -
+    여러 verb/resource 조합을 하나의 스테이지로 묶을 때 리스트를 쓴다, 예: S2의
+    secrets get/list, S1/S3의 RBAC verb x resource), min_severity. 시나리오
+    정의가 늘어나면 여기에 조건 종류를 추가하면 된다."""
     if "event_module" in pattern and event.event_module != pattern["event_module"]:
         return False
-    if "event_action" in pattern and event.event_action != pattern["event_action"]:
+    if "event_action" in pattern and not _match_value(event.event_action, pattern["event_action"]):
+        return False
+    if "audit_verb" in pattern and not _match_value(event.audit_verb, pattern["audit_verb"]):
+        return False
+    if "orchestrator_resource_type" in pattern and not _match_value(
+        event.orchestrator_resource_type, pattern["orchestrator_resource_type"]
+    ):
         return False
     if "min_severity" in pattern and event.event_severity < pattern["min_severity"]:
         return False
