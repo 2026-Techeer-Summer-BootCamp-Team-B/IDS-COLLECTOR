@@ -16,10 +16,14 @@ scenarios:
   # k8s_audit, 같은 신원 체계라 안전한 조인) 전담하므로 S1은 그 다음 단계인 "exec
   # 권한 사용 -> 실제 악성 행위"만 맡는다.
   #
-  # stage1 = falcosecurity/plugins의 "Attach/Exec Pod" 룰 조건(verb=create,
-  # resource=pods, subresource=[exec, attach]) 그대로. mitre_technique_id는 그 룰의
-  # 태그가 아니라(태그 없음) MITRE 공식 Containers 매트릭스에서 "kubectl exec류
-  # 명령"에 해당하는 T1609(Container Administration Command)를 직접 매칭한 값.
+  # stage1 = falcosecurity/plugins의 "Attach/Exec Pod" 룰 조건(verb=(create 또는
+  # get), resource=pods, subresource=[exec, attach]) 그대로 - 원래 룰 조건이
+  # "(kcreate or kget) and subresource in (exec,attach)"인데 verb=create만
+  # 옮기고 get을 빠뜨렸었다(재확인 후 수정, 2026-07-12) - verb=get으로 기록되는
+  # exec/attach 요청은 create만 보면 이 스테이지가 영원히 안 걸리는 버그였다.
+  # mitre_technique_id는 그 룰의 태그가 아니라(태그 없음) MITRE 공식 Containers
+  # 매트릭스에서 "kubectl exec류 명령"에 해당하는 T1609(Container Administration
+  # Command)를 직접 매칭한 값.
   - id: S1
     name: "Pod Exec 권한 사용 이후 컨테이너 내 이상행동"
     type: sequence
@@ -29,7 +33,13 @@ scenarios:
     window_seconds: 300
     stage1:
       event_module: k8s_audit
-      event_action: ["create pods/exec", "create pods/attach"]
+      event_action:
+        [
+          "create pods/exec",
+          "create pods/attach",
+          "get pods/exec",
+          "get pods/attach",
+        ]
     stage2:
       event_module: falco
       event_action: ["Terminal shell in container", "Contact K8s API Server From Container"]
@@ -84,7 +94,9 @@ scenarios:
   # 같은 이유로 이 프로젝트는 단일 타깃 데모라 예외 없이 전부 잡는다). 정상
   # 운영에서 시스템 네임스페이스에 워크로드를 새로 심는 경우는 드물어서 S6(시스템
   # 네임스페이스 SA 생성)과 같은 급의 신호 - 컨테이너를 실제로 배포하는 행위라
-  # T1610(Deploy Container, Execution)로 분류.
+  # T1610(Deploy Container, Execution)로 분류. 네임스페이스 목록은
+  # ids_shared.k8s_constants.SYSTEM_NAMESPACES와 같은 뜻(rbac.yaml S6,
+  # severity.yaml에도 같은 목록 - 바뀌면 같이 고칠 것).
   - id: S15
     name: "시스템 네임스페이스에 pod 생성"
     type: threshold

@@ -1,16 +1,27 @@
 # RBAC 변경/권한 상승/백도어 계정 시나리오. 엔진 동작(sequence/threshold,
 # join_on/correlation_key_type)과 설계 근거 출처는 ../README.md 참고.
+#
+# 이 파일 안에서 반복되는 roles/clusterroles/rolebindings/clusterrolebindings 조합과
+# kube-system/kube-public 네임스페이스 목록은 ids_shared.k8s_constants(normalizer가
+# 코드에서 참조하는 canonical 목록)와 같은 뜻이다. 같은 목록이 normalizer/app/
+# severity.yaml, workload.yaml(S15, 네임스페이스만), Techeer-12th-b/
+# k3d-audit-policy.yaml(kube-apiserver가 직접 읽어서 Python으로 공유 불가)에도 있으니
+# 바뀌면 전부 같이 고칠 것.
 
 scenarios:
   # S3 (sequence, join_on=user_or_sa): RBAC 상승 이후 같은 신원이 실제로 pod에
   # exec/attach하면 발화. 두 스테이지 다 k8s_audit라 user.name이 항상 신뢰성 있게
   # 채워지고(workload.yaml의 S1처럼 falco의 OS 유저와 신원 체계가 갈리는 문제 없음).
   #
-  # stage1 verb 범위는 K8s API의 RBAC 오브젝트 변경 verb 전체(create/delete/patch/
-  # replace/update)로 severity.yaml과 함께 확정 - 예전 create/patch만 커버하던 좁은
-  # 범위(README RBAC verb TBD)를 대체. falcosecurity/plugins의 실제 룰들
-  # ("ClusterRole With Wildcard Created" 등)은 request body(role.rules.resources/
-  # verbs, binding.role)까지 봐서 더 정교하게 판정하는데, 그건 S12/S13이 담당한다.
+  # stage1 verb 범위는 K8s API의 RBAC 오브젝트 변경 verb 전체(create/delete/
+  # deletecollection/patch/update)로 severity.yaml과 함께 확정 - 예전 create/patch만
+  # 커버하던 좁은 범위(README RBAC verb TBD)를 대체. "replace"는 k8s audit verb에
+  # 실존하지 않아(PUT도 "update"로 남는다) 오탈자였고, 대신 deletecollection(대량
+  # 삭제, 예: kubectl delete clusterroles --all)이 빠져 있던 게 진짜 버그였다 -
+  # 이게 빠지면 대량 RBAC 삭제 이후 pod exec가 와도 S3 stage1이 안 걸린다.
+  # falcosecurity/plugins의 실제 룰들("ClusterRole With Wildcard Created" 등)은
+  # request body(role.rules.resources/verbs, binding.role)까지 봐서 더 정교하게
+  # 판정하는데, 그건 S12/S13이 담당한다.
   - id: S3
     name: "RBAC 권한상승 이후 pod exec"
     type: sequence
@@ -20,11 +31,21 @@ scenarios:
     window_seconds: 300
     stage1:
       event_module: k8s_audit
-      audit_verb: [create, delete, patch, replace, update]
+      audit_verb: [create, delete, deletecollection, patch, update]
       orchestrator_resource_type: [clusterroles, clusterrolebindings, roles, rolebindings]
     stage2:
       event_module: k8s_audit
-      event_action: ["create pods/exec", "create pods/attach"]
+      # falcosecurity/plugins의 "Attach/Exec Pod" 룰 조건이
+      # "(kcreate or kget) and subresource in (exec,attach)"라 verb=get으로
+      # 기록되는 exec/attach 요청도 실제로 있다(재확인 완료, 2026-07-12) -
+      # create만 보면 그 케이스를 놓치는 게 버그였다. severity.yaml도 같이 수정.
+      event_action:
+        [
+          "create pods/exec",
+          "create pods/attach",
+          "get pods/exec",
+          "get pods/attach",
+        ]
     severity: 4
     mitre_technique_id: "T1609"
 

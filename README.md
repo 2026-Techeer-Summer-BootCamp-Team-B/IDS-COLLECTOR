@@ -209,11 +209,17 @@ servers/
     redis/       - dedupe(P3) + 상관분석 윈도우/쿨다운(P4) + pub/sub 공용
     opensearch/  - OpenSearch + Data Prepper (raw 사본 + 정규화 사본 2개 파이프라인)
     clickhouse/  - ClickHouse (events.normalized 직결, JSONExtract 구조화 컬럼)
+  shared/              - normalizer/correlation-engine이 공유하는 pip 패키지(ids_shared) -
+                          NormalizedEvent 스키마 정의가 유일한 원본이라 두 서비스 다 이걸
+                          설치해서 쓴다(수동 복제 금지, 아래 참고)
   normalizer/         - Kafka 컨슈머 + dedupe + 파서 4종 + 정규화 + enrichment + emit
   correlation-engine/  - 시나리오 룰 엔진(sequence/threshold) + 인시던트 생명주기
   platform-api/        - 인시던트 API + 인증 스텁 + 알림 + AI 리포트 스텁 + WebSocket 릴레이
                           (프론트엔드가 Traefik 경유로 붙는 유일한 연동 지점)
-  docker-compose.yml   - normalizer/correlation-engine/platform-api 3개 서비스 정의
+  docker-compose.yml   - normalizer/correlation-engine/platform-api 3개 서비스 정의.
+                          normalizer/correlation-engine은 shared/를 이미지에 넣어야 해서
+                          빌드 컨텍스트가 servers/ 루트다(각자 폴더가 아님) - build.context: .,
+                          build.dockerfile: <service>/Dockerfile
 ```
 
 ## Running locally
@@ -339,4 +345,6 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   "정규화") §4-4에 반영 완료. 원본 48개 룰 중 request body가 필요했던 것은 이제
   거의 다 구현됨(남은 건 Ingress without TLS 정도, 낮은 우선순위)
 - RBAC verb 범위(severity.yaml): K8s API의 RBAC 오브젝트 변경 verb 전체(create/
-  delete/patch/replace/update)로 확정 완료
+  delete/deletecollection/patch/update)로 확정 완료. "replace"는 k8s audit verb에
+  실존하지 않고(PUT도 "update"로 남음) 대신 deletecollection(대량 삭제)이 빠져있던
+  게 버그였음 - severity.yaml/rbac.yaml(S3) 수정 완료(2026-07-12)

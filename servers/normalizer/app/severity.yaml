@@ -38,16 +38,26 @@ audit:
   # RBAC 변경 같은 severity 4가 그 방식으론 영영 안 나온다.
   rules:
     # 4 critical: RBAC 변경 = 권한상승의 정점 (S3 stage1 재료). verb 범위는 K8s API의
-    # RBAC 오브젝트 변경 verb 전체(create/delete/patch/replace/update)로 확정 -
-    # RBAC verb TBD 갭 해소. (falcosecurity/plugins의 실제 k8s_audit_rules.yaml은
+    # RBAC 오브젝트 변경 verb 전체(create/delete/deletecollection/patch/update)로 확정 -
+    # RBAC verb TBD 갭 해소. "replace"는 k8s audit verb에 실존하지 않는다(PUT도
+    # "update"로 남는다) - 오탈자였다. 대신 deletecollection(kubectl delete
+    # clusterroles --all 같은 대량 삭제)이 빠져 있어서 severity가 default(2)로
+    # 떨어지는 게 진짜 버그였다. (falcosecurity/plugins의 실제 k8s_audit_rules.yaml은
     # 여기서 더 나아가 role.rules의 wildcard/write 권한, cluster-admin 바인딩까지
     # request body로 판정하지만, 그건 normalize_audit()의 body 파싱 확장이 필요함.)
-    - match: { verb: [create, delete, patch, replace, update], resource: [clusterroles, clusterrolebindings, roles, rolebindings] }
+    # resource 목록(roles/clusterroles/rolebindings/clusterrolebindings)은
+    # ids_shared.k8s_constants.RBAC_ALL_RESOURCES와 같은 뜻 - Python 상수를 YAML에
+    # 자동 주입하진 않으므로(이 파일은 사람이 직접 값만 보고 고치는 걸 우선한다),
+    # 그 목록이 바뀌면 여기도 같이 고칠 것. 같은 목록이 correlation-engine/app/
+    # scenarios/rbac.yaml(S3/S11/S12/S13)과 Techeer-12th-b/k3d-audit-policy.yaml에도 있다.
+    - match: { verb: [create, delete, deletecollection, patch, update], resource: [clusterroles, clusterrolebindings, roles, rolebindings] }
       severity: 4
     # 4 critical: 시스템 네임스페이스(kube-system/kube-public)에 서비스어카운트 생성
     # (S6 재료) - falcosecurity/plugins의 "Service Account Created in Kube Namespace"
     # 룰과 동일 판정. subresource: ""로 SA 토큰 발급(subresource=token, 아래 규칙)과
-    # 구분 - 이건 SA "오브젝트 자체"의 생성만 잡는다.
+    # 구분 - 이건 SA "오브젝트 자체"의 생성만 잡는다. namespace 목록은
+    # ids_shared.k8s_constants.SYSTEM_NAMESPACES와 같은 뜻(rbac.yaml S6, workload.yaml
+    # S15에도 같은 목록이 있다 - 바뀌면 같이 고칠 것).
     - match: { verb: [create], resource: [serviceaccounts], subresource: "", namespace: [kube-system, kube-public] }
       severity: 4
     # 3 high: 자격증명 탈취 (S2 재료)
@@ -56,8 +66,12 @@ audit:
     # 3 high: 시크릿 생성/변조 - 조회와 동급 이상 (§5 갱신분 신규 추가)
     - match: { verb: [create, update, patch], resource: [secrets] }
       severity: 3
-    # 3 high: 실행 중 컨테이너 진입 (S3 stage2 재료)
-    - match: { verb: [create], resource: [pods], subresource: [exec, attach] }
+    # 3 high: 실행 중 컨테이너 진입 (S1/S3 재료). verb는 create만이 아니라 get도
+    # 포함 - falcosecurity/plugins의 "Attach/Exec Pod" 룰 조건이
+    # "(kcreate or kget) and subresource in (exec,attach)"라 실제로 verb=get으로
+    # 기록되는 exec/attach 요청도 있다(재확인 완료, 2026-07-12). create만 보면
+    # 그런 이벤트가 severity 3이 아니라 default(2)로 떨어지는 게 버그였다.
+    - match: { verb: [create, get], resource: [pods], subresource: [exec, attach] }
       severity: 3
     # 3 high: SA 토큰 발급
     - match: { verb: [create], resource: [serviceaccounts], subresource: [token] }
@@ -66,6 +80,29 @@ audit:
     # 하므로 delete 단건도 일단 3으로 두고, '대량' 집계 판정은 상관 엔진(threshold) 몫.
     - match: { verb: [delete], resource: [pods, deployments] }
       severity: 3
+    # 4 critical: 네임스페이스 삭제 (S8 재료) - 그 안의 모든 리소스가 통째로 사라지는
+    # 파괴적 행위라 T1485(Data Destruction)급. 이전엔 이 리소스에 대응하는 규칙이
+    # 없어서 default(2)로 남아 S8이 severity 4로 발화해도 원본 이벤트 심각도가 안
+    # 맞는 게 버그였다.
+    - match: { verb: [delete], resource: [namespaces] }
+      severity: 4
+    # 4 critical: 컨테이너 이스케이프 벡터를 가진 pod 생성 (S16 재료) - privileged/
+    # hostNetwork/hostPID/hostIPC/hostPath 마운트 중 하나라도 있으면 4. request body
+    # 기반 조건이라 pod_security_flags_any로 매칭(normalize_audit()이 이미 계산해둔
+    # pod_security_flags를 get_severity()에 넘겨준다) - 아래 "워크로드 변경 맥락"
+    # 규칙보다 반드시 먼저 와야 한다(첫 매치 우선이라 안 그러면 이 규칙까지 안 옴).
+    - match: { verb: [create], resource: [pods], pod_security_flags_any: [privileged, host_network, host_pid, host_ipc, host_path_volume] }
+      severity: 4
+    # 3 high: NodePort Service 노출 (S17 재료) - 클러스터 밖에서 직접 접근 가능한
+    # 경로가 새로 생기는/바뀌는 것이라 일반 서비스 변경보다 위험하다. audit_service_type이
+    # request body 기반이라 service_type으로 매칭.
+    - match: { verb: [create, update, patch], resource: [services], service_type: NodePort }
+      severity: 3
+    # 4 critical: ConfigMap에 평문 자격증명 노출 (S18 재료) - Secret과 달리 암호화
+    # 없이 저장되므로 자격증명 유출 그 자체다. configmap_has_credentials가 request
+    # body 기반이라 그 값으로 매칭.
+    - match: { verb: [create, update, patch], resource: [configmaps], configmap_has_credentials: true }
+      severity: 4
     # 2 medium: 워크로드 변경 맥락
     - match: { verb: [create, update, patch], resource: [pods, deployments] }
       severity: 2

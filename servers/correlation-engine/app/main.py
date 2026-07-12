@@ -25,10 +25,11 @@ import yaml
 from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI
 
-from app import incidents, mitre_mapping
+from app import incidents
 from app.config import settings
 from app.rules import ScenarioEngine
-from app.schemas import NormalizedEvent
+from ids_shared import mitre_mapping
+from ids_shared.schemas import NormalizedEvent
 
 app = FastAPI(title="IDS Correlation Engine")
 
@@ -94,6 +95,16 @@ async def _consume_loop():
 
     await incidents.start()
     await incidents.sync_scenario_rules(scenarios)
+
+    # platform-api의 PATCH /scenarios/{id}/enabled 토글은 Redis 키
+    # scenario:enabled:{id}로 실시간 반영된다(ScenarioEngine.evaluate() 참고) -
+    # 엔진이 뜰 때마다 Postgres의 현재 값으로 그 키들을 다시 시드해서, Redis가
+    # 재시작/플러시돼 토글 상태를 잃어버려도 Postgres 기준으로 자가 복구되게 한다.
+    enabled_map = await incidents.fetch_enabled_map()
+    for scenario in scenarios:
+        enabled = enabled_map.get(scenario["db_id"], True)
+        await _redis.set(f"scenario:enabled:{scenario['db_id']}", "1" if enabled else "0")
+
     print(f"[correlation] 시작 - topic={settings.kafka_normalized_topic}")
 
     try:

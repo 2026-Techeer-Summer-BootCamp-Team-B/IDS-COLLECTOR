@@ -9,13 +9,17 @@ from app.db import pool
 
 
 async def _gather_stats(days: int) -> List[Dict[str, Any]]:
+    """incidents.scenario_id는 존재하지 않는 컬럼이다(실제 컬럼명은
+    matched_scenario_rule_id, 001-schema.sql 참고) - 이 쿼리가 그 이름으로 조회해서
+    /reports/trend가 호출될 때마다 500이 나던 버그였다."""
     async with pool().acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT scenario_id, count(*) AS incident_count, max(severity) AS max_severity
+            SELECT matched_scenario_rule_id AS scenario_id, count(*) AS incident_count,
+                   max(severity) AS max_severity
             FROM incidents
             WHERE created_at >= now() - ($1 || ' days')::interval
-            GROUP BY scenario_id
+            GROUP BY matched_scenario_rule_id
             ORDER BY incident_count DESC
             """,
             str(days),

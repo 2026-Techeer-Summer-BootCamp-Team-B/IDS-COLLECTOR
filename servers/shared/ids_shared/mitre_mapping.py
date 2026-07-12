@@ -1,25 +1,28 @@
 """MITRE ATT&CK technique -> tactic/name 매핑.
 
 DetectionRule.mitre_technique_id / ScenarioRule.mitre_technique_id와 같은 값 체계를
-쓴다. 두 단계로 나뉜다:
+쓴다. correlation-engine(시나리오 발화 시 mitre_tactics 계산)과 platform-api
+(app/attck_api.py의 ATT&CK 커버리지 API)가 같이 참조하는 canonical 카탈로그라
+ids_shared로 뽑아뒀다 - schemas.py와 같은 이유(각 서비스가 따로 복사해서 쓰면
+드리프트 난다). 두 단계로 나뉜다:
 
 1. CONTAINERS_MATRIX: https://attack.mitre.org/matrices/enterprise/containers/ 의
    공식 Containers 매트릭스 카탈로그(technique_id -> name/tactics) 전체를 미리 채워둔
    참조 테이블 - Enterprise/Mobile/ICS 전체(600개+)는 대부분 컨테이너 환경과 무관해서
    제외했다. sub-technique(T1078.001 등)도 안 담는다 - 이 프로젝트가 실제로 쓰는
    technique_id는 전부 부모 technique 단위라서. "우리 시나리오가 Containers 매트릭스의
-   몇 %를 커버하는가" 같은 ATT&CK 커버리지 API/대시보드(README "아직 안 된 것" 참고)를
-   만들 때도 이 카탈로그를 그대로 쓸 수 있다.
+   몇 %를 커버하는가" 같은 ATT&CK 커버리지 API(platform-api/app/attck_api.py)도 이
+   카탈로그를 그대로 쓴다.
 2. SCENARIO_TACTIC_OVERRIDE: 특정 시나리오 맥락에서 MITRE 공식 다중 전술 중 일부만
    보여주고 싶을 때만 좁혀서 적는다 (예: 공식적으로 여러 전술에 걸치는 기법을 특정
    시나리오 맥락 하나로 좁히고 싶을 때). 여기 없는 technique_id는 CONTAINERS_MATRIX의
    공식 전술을 그대로 쓴다 - 새 시나리오를 짤 때마다 매핑을 안 채워도 되는 이유.
-   지금 app/scenarios/*.yaml이 쓰는 기법(S1/S3/S14=T1609, S2/S18=T1552, S4/S5=T1190,
-   S6=T1136, S8=T1485, S10=T1613, S11=T1685, S15=T1610, S16=T1611)은
-   CONTAINERS_MATRIX에서 단일 전술이라 비어있다. S7/S12/S13=T1098, S9/S17=T1133만
-   공식적으로 여러 전술에 걸치는데, 둘 다 시나리오 의미(S7/S12/S13: 계정·역할에
-   위험한 권한을 몰아줌 - Persistence/Privilege Escalation 둘 다 해당, S9/S17:
-   클러스터 경계 밖에서 접근 가능한 새 경로가 생김 - Initial Access/Persistence
+   지금 correlation-engine/app/scenarios/*.yaml이 쓰는 기법(S1/S3/S14=T1609,
+   S2/S18=T1552, S4/S5=T1190, S6=T1136, S8=T1485, S10=T1613, S11=T1685, S15=T1610,
+   S16=T1611)은 CONTAINERS_MATRIX에서 단일 전술이라 비어있다. S7/S12/S13=T1098,
+   S9/S17=T1133만 공식적으로 여러 전술에 걸치는데, 둘 다 시나리오 의미(S7/S12/S13:
+   계정·역할에 위험한 권한을 몰아줌 - Persistence/Privilege Escalation 둘 다 해당,
+   S9/S17: 클러스터 경계 밖에서 접근 가능한 새 경로가 생김 - Initial Access/Persistence
    둘 다 해당)와 맞아서 좁히지 않고 그대로 둔다.
 """
 from typing import Dict, List, Optional, TypedDict

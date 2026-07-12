@@ -39,14 +39,18 @@ scenarios:
     severity: 4
     mitre_technique_id: "T1190"
 
-  # S17 (threshold, threshold=1): NodePort Service가 생성되면 발화 -
-  # falcosecurity/plugins의 "Create NodePort Service" 룰과 동일 판정. 그 룰의
-  # 제외 조건 user_known_node_port_service 매크로는 원본에서도 "(k8s_audit_never_true)"
-  # 로 정의돼 있어 사실상 항상 거짓이다 - 즉 원본 룰 자체가 예외 없이 모든
-  # NodePort 생성을 잡는다(우리가 예외를 뺀 게 아니라 원본이 그렇다). NodePort는
-  # 클러스터 밖에서 모든 노드의 고정 포트로 직접 접근 가능한 경로를 새로 만드는
-  # 것이라 T1133(External Remote Services, rbac.yaml의 S9와 동일 기법) 재사용 -
-  # 둘 다 "클러스터 경계 밖에서 접근 가능한 새 경로가 생겼다"는 같은 위협.
+  # S17 (threshold, threshold=1): NodePort Service가 생성되거나 기존 Service가
+  # NodePort로 바뀌면 발화 - falcosecurity/plugins의 "Create NodePort Service" 룰과
+  # 동일 판정에 더해, ClusterIP로 만든 뒤 patch/update로 NodePort로 바꾸는 경로까지
+  # 잡는다(k3d-audit-policy.yaml이 services의 update/patch도 Request 레벨로 남기도록
+  # 확장됨, 2026-07-12 - spec.type은 pod의 hostNetwork류와 달리 생성 후에도 바뀔 수
+  # 있는 필드라 create만 보면 놓쳤다). 그 룰의 제외 조건 user_known_node_port_service
+  # 매크로는 원본에서도 "(k8s_audit_never_true)"로 정의돼 있어 사실상 항상 거짓이다 -
+  # 즉 원본 룰 자체가 예외 없이 모든 NodePort 생성을 잡는다(우리가 예외를 뺀 게
+  # 아니라 원본이 그렇다). NodePort는 클러스터 밖에서 모든 노드의 고정 포트로 직접
+  # 접근 가능한 경로를 새로 만드는 것이라 T1133(External Remote Services, rbac.yaml의
+  # S9와 동일 기법) 재사용 - 둘 다 "클러스터 경계 밖에서 접근 가능한 새 경로가
+  # 생겼다"는 같은 위협.
   - id: S17
     name: "NodePort Service 노출"
     type: threshold
@@ -58,7 +62,7 @@ scenarios:
     cooldown_seconds: 600
     match:
       event_module: k8s_audit
-      audit_verb: create
+      audit_verb: [create, update, patch]
       orchestrator_resource_type: services
       audit_service_type: NodePort
     severity: 3

@@ -17,9 +17,9 @@ join_key=Incident의 correlation_key_type/correlation_key_value, events=Incident
 행들).
 """
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from app.schemas import NormalizedEvent
+from ids_shared.schemas import NormalizedEvent
 
 
 def _join_key(event: NormalizedEvent, join_on: str) -> Optional[str]:
@@ -32,6 +32,12 @@ def _join_key(event: NormalizedEvent, join_on: str) -> Optional[str]:
     return None
 
 
+# 인자 순서는 항상 (actual, expected/allowed) - normalizer/app/severity.py의 동명 함수와
+# 반드시 맞출 것(그쪽도 이 순서로 통일함). NormalizedEvent 스키마는 ids_shared 패키지로
+# 공유하지만, 이 매칭 로직은 severity.py가 raw payload(dict)를 보고 여기는
+# NormalizedEvent(pydantic 모델)를 보는 거라 입력 형태가 달라 그대로 복제해서 쓴다 -
+# 인자 순서가 서로 다르면 한쪽 코드를 보고 다른 쪽에 옮겨 적을 때 순서를 반대로 넣는
+# 실수가 나기 쉽다.
 def _match_value(actual: Optional[str], allowed: Any) -> bool:
     if isinstance(allowed, list):
         return actual in allowed
@@ -40,72 +46,57 @@ def _match_value(actual: Optional[str], allowed: Any) -> bool:
 
 def _match_any_flag(actual_flags: Optional[List[str]], wanted: Any) -> bool:
     """actual_flags(리스트 필드) 중 wanted에 있는 값이 하나라도 있으면 True.
-    audit_role_rule_flags_any/audit_pod_security_flags_any가 공유하는 로직."""
+    audit_role_rule_flags_any/audit_pod_security_flags_any가 공유하는 로직.
+    normalizer/app/severity.py의 동명 함수와 인자 순서를 반드시 맞출 것."""
     flags = actual_flags or []
     wanted = wanted if isinstance(wanted, list) else [wanted]
     return any(flag in flags for flag in wanted)
 
 
+def _match_prefix(actual: Optional[str], prefix: str) -> bool:
+    return (actual or "").startswith(prefix)
+
+
+def _match_min_severity(actual: int, minimum: int) -> bool:
+    return actual >= minimum
+
+
+# (pattern 키, NormalizedEvent 속성명, 매처) 테이블. 시나리오에 새 조건이 필요하면
+# _matches()를 고칠 필요 없이 여기에 행 하나만 추가하면 된다 - 매처 3종류:
+#   _match_value    단일 값 또는 값 리스트(둘 다 pattern 쪽에 올 수 있음, 예: S2의
+#                   secrets get/list, S1/S3의 RBAC verb x resource)
+#   _match_any_flag 이벤트 쪽이 리스트 필드일 때, pattern에 있는 값이 하나라도
+#                   있으면 매치(audit_*_any 이름이 붙은 것 + requestObject가 JSON
+#                   Patch 배열이라 리스트로 나오는 audit_binding_role_name/
+#                   audit_service_type)
+#   _match_prefix/_match_min_severity  각각 S11(system: 프리픽스 룰 변조), 최소
+#                   심각도 필터용 단일 목적 매처
+_MATCHERS: List[Tuple[str, str, Callable[[Any, Any], bool]]] = [
+    ("event_module", "event_module", _match_value),
+    ("event_action", "event_action", _match_value),
+    ("audit_verb", "audit_verb", _match_value),
+    ("orchestrator_resource_type", "orchestrator_resource_type", _match_value),
+    ("orchestrator_namespace", "orchestrator_namespace", _match_value),
+    ("user_name", "user_name", _match_value),
+    ("event_outcome", "event_outcome", _match_value),
+    ("orchestrator_resource_name_prefix", "orchestrator_resource_name", _match_prefix),
+    ("audit_role_rule_flags_any", "audit_role_rule_flags", _match_any_flag),
+    ("audit_binding_role_name", "audit_binding_role_name", _match_any_flag),
+    ("audit_pod_security_flags_any", "audit_pod_security_flags", _match_any_flag),
+    ("audit_service_type", "audit_service_type", _match_any_flag),
+    ("audit_configmap_has_credentials", "audit_configmap_has_credentials", _match_value),
+    ("min_severity", "event_severity", _match_min_severity),
+]
+
+
 def _matches(event: NormalizedEvent, pattern: Dict[str, Any]) -> bool:
-    """pattern의 조건을 전부 만족하면 True. 지원 키: event_module, event_action,
-    audit_verb, orchestrator_resource_type, orchestrator_namespace, user_name,
-    event_outcome(전부 단일 값 또는 값 리스트 가능 - 여러 verb/resource 조합을 하나의
-    스테이지로 묶을 때 리스트를 쓴다, 예: S2의 secrets get/list, S1/S3의 RBAC verb x
-    resource, S6/S7의 시스템 네임스페이스 SA 생성, S9의 익명 요청 성공),
-    orchestrator_resource_name_prefix(리스트 불가, 단일 접두어 문자열만 - S11의
-    system: 프리픽스 룰 변조 감지), audit_role_rule_flags_any(event.audit_role_rule_flags
-    리스트 중 하나라도 있으면 True - S12의 위험한 RBAC 룰 생성 감지),
-    audit_binding_role_name(단일 값 또는 리스트 - S13의 cluster-admin 바인딩 감지),
-    audit_pod_security_flags_any(event.audit_pod_security_flags 리스트 중 하나라도
-    있으면 True - S16의 pod 탈옥 벡터 감지), audit_service_type(단일 값 또는 리스트 -
-    S17의 NodePort Service 노출 감지), audit_configmap_has_credentials(불리언 -
-    S18의 평문 자격증명 감지), min_severity. 시나리오 정의가 늘어나면 여기에 조건
-    종류를 추가하면 된다."""
-    if "event_module" in pattern and event.event_module != pattern["event_module"]:
-        return False
-    if "event_action" in pattern and not _match_value(event.event_action, pattern["event_action"]):
-        return False
-    if "audit_verb" in pattern and not _match_value(event.audit_verb, pattern["audit_verb"]):
-        return False
-    if "orchestrator_resource_type" in pattern and not _match_value(
-        event.orchestrator_resource_type, pattern["orchestrator_resource_type"]
-    ):
-        return False
-    if "orchestrator_namespace" in pattern and not _match_value(
-        event.orchestrator_namespace, pattern["orchestrator_namespace"]
-    ):
-        return False
-    if "user_name" in pattern and not _match_value(event.user_name, pattern["user_name"]):
-        return False
-    if "event_outcome" in pattern and not _match_value(event.event_outcome, pattern["event_outcome"]):
-        return False
-    if "orchestrator_resource_name_prefix" in pattern and not (
-        event.orchestrator_resource_name or ""
-    ).startswith(pattern["orchestrator_resource_name_prefix"]):
-        return False
-    if "audit_role_rule_flags_any" in pattern and not _match_any_flag(
-        event.audit_role_rule_flags, pattern["audit_role_rule_flags_any"]
-    ):
-        return False
-    if "audit_binding_role_name" in pattern and not _match_value(
-        event.audit_binding_role_name, pattern["audit_binding_role_name"]
-    ):
-        return False
-    if "audit_pod_security_flags_any" in pattern and not _match_any_flag(
-        event.audit_pod_security_flags, pattern["audit_pod_security_flags_any"]
-    ):
-        return False
-    if "audit_service_type" in pattern and not _match_value(
-        event.audit_service_type, pattern["audit_service_type"]
-    ):
-        return False
-    if "audit_configmap_has_credentials" in pattern and not _match_value(
-        event.audit_configmap_has_credentials, pattern["audit_configmap_has_credentials"]
-    ):
-        return False
-    if "min_severity" in pattern and event.event_severity < pattern["min_severity"]:
-        return False
-    return True
+    """pattern에 있는 키의 조건을 전부 만족하면 True(pattern에 없는 키는 검사하지
+    않음). 지원 키/매칭 방식은 _MATCHERS 참고."""
+    return all(
+        matcher(getattr(event, event_attr), pattern[pattern_key])
+        for pattern_key, event_attr, matcher in _MATCHERS
+        if pattern_key in pattern
+    )
 
 
 class ScenarioEngine:
@@ -117,9 +108,29 @@ class ScenarioEngine:
         self.missing_join_count = 0
 
     async def evaluate(self, event: NormalizedEvent) -> List[Dict[str, Any]]:
-        """이 이벤트로 새로 발화하는 인시던트 목록을 반환 (없으면 빈 리스트)."""
+        """이 이벤트로 새로 발화하는 인시던트 목록을 반환 (없으면 빈 리스트).
+
+        scenario["required_modules"]에 이 이벤트의 event_module이 없으면 애초에
+        무관한 시나리오라 _matches()까지 가지 않고 건너뛴다 - 예전엔 이 필터가
+        없어서 was/waf/falco 이벤트도 k8s_audit 전용 시나리오(S12 등)의 match
+        조건까지 평가했다. NormalizedEvent에 그 시나리오가 쓰는 필드(예:
+        audit_role_rule_flags)가 없던 시절엔 이게 매 이벤트마다 AttributeError로
+        evaluate() 전체를 죽이는 사고로 이어졌다 - 스키마 드리프트가 고쳐진 지금도
+        애초에 관련 없는 시나리오를 평가하는 건 낭비라 필터는 남겨둔다.
+
+        Redis 키 scenario:enabled:{db_id}가 정확히 "0"이면 이 시나리오는 건너뛴다 -
+        platform-api의 PATCH /scenarios/{id}/enabled가 Postgres와 함께 이 키를
+        SET한다(app/main.py가 엔진 기동 시 Postgres 값으로 시드도 함). 키가 없거나
+        "1"이면 평가 진행 - 새로 추가된 시나리오가 기본 활성 상태인 것과 같은
+        fail-open 기본값이다."""
         fired = []
         for scenario in self._scenarios:
+            if event.event_module not in scenario["required_modules"]:
+                continue
+
+            if await self._redis.get(f"scenario:enabled:{scenario['db_id']}") == "0":
+                continue
+
             join_key = _join_key(event, scenario["join_on"])
             if join_key is None:
                 self.missing_join_count += 1

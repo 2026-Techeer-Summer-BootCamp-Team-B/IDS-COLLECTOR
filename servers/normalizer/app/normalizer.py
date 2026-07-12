@@ -15,10 +15,11 @@ orchestrator.namespace/resource.type/resource.name의 was/waf 쪽 정적 매핑(
 동적으로 나오므로 여기서 채운다).
 """
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from app.schemas import NormalizedEvent
 from app.severity import get_severity
+from ids_shared.k8s_constants import RBAC_BINDING_RESOURCES, RBAC_ROLE_RESOURCES
+from ids_shared.schemas import NormalizedEvent
 
 
 def _now_utc() -> datetime:
@@ -178,43 +179,64 @@ def normalize_falco(payload: Dict[str, Any], event_id: str, original: str) -> No
 # K8s Audit
 # ---------------------------------------------------------------------------
 
-_ROLE_RESOURCE_TYPES = ("roles", "clusterroles")
-_BINDING_RESOURCE_TYPES = ("rolebindings", "clusterrolebindings")
 _RBAC_WRITE_VERBS = {"create", "update", "patch", "delete", "deletecollection"}
 
 
-def _audit_role_rule_flags(payload: Dict[str, Any], resource: str) -> Any:
+def _audit_request_objects(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """requestObject는 보통 단일 dict지만, kubectl patch --type=json으로 온 요청은
+    body 자체가 JSON Patch 연산 배열이라 dict가 아니다 - 예전엔 이 경우
+    request_object.get(...)이 AttributeError를 던져서 main.py가 이벤트 전체를
+    DLQ로 흘려보내고 원본 RBAC 변경이 통째로 유실됐다. 배열이면 안의 dict 원소를
+    각각 하나의 감사 대상으로 보고 아래 _audit_* 함수들이 전부 순회하며 결과를
+    합치게 한다 - dict가 아닌 원소(문자열 등)만 조용히 걸러낸다."""
+    request_object = payload.get("requestObject")
+    if isinstance(request_object, dict):
+        return [request_object]
+    if isinstance(request_object, list):
+        return [item for item in request_object if isinstance(item, dict)]
+    return []
+
+
+def _audit_role_rule_flags(payload: Dict[str, Any]) -> Any:
     """role/clusterrole의 request body(rules)를 훑어서 위험한 권한 부여를 태깅.
 
     k3d-audit-policy.yaml이 roles/clusterroles의 create/update/patch/delete만
     RequestResponse 레벨로 남겨서 requestObject가 실제로 들어온다 - pods 등
     나머지 리소스는 Metadata 레벨이라 requestObject 자체가 없어서 이 함수를
-    아예 안 부른다(호출부의 resource 분기 참고).
+    아예 안 부른다(호출부의 resource 분기 참고). requestObject가 JSON Patch
+    배열인 경우 배열 안의 모든 dict 원소에서 나온 플래그를 합집합으로 반환한다.
     """
-    request_object = payload.get("requestObject") or {}
-    rules = request_object.get("rules") or []
-
     flags = set()
-    for rule in rules:
-        resources = rule.get("resources") or []
-        verbs = rule.get("verbs") or []
-        if "*" in resources:
-            flags.add("wildcard_resource")
-        if "*" in verbs:
-            flags.add("wildcard_verb")
-        if _RBAC_WRITE_VERBS.intersection(verbs):
-            flags.add("write_verb")
-        if "pods/exec" in resources:
-            flags.add("pods_exec")
+    for request_object in _audit_request_objects(payload):
+        rules = request_object.get("rules") or []
+        for rule in rules:
+            resources = rule.get("resources") or []
+            verbs = rule.get("verbs") or []
+            if "*" in resources:
+                flags.add("wildcard_resource")
+            if "*" in verbs:
+                flags.add("wildcard_verb")
+            if _RBAC_WRITE_VERBS.intersection(verbs):
+                flags.add("write_verb")
+            if "pods/exec" in resources:
+                flags.add("pods_exec")
 
     return sorted(flags) if flags else None
 
 
 def _audit_binding_role_name(payload: Dict[str, Any]) -> Any:
     """rolebinding/clusterrolebinding의 request body에서 roleRef.name을 뽑는다
-    (예: "cluster-admin"에 바인딩했는지 판단하는 재료)."""
-    request_object = payload.get("requestObject") or {}
-    return (request_object.get("roleRef") or {}).get("name")
+    (예: "cluster-admin"에 바인딩했는지 판단하는 재료). requestObject가 JSON
+    Patch 배열이면 배열 안의 모든 dict 원소에서 나온 이름을 리스트로 합쳐서
+    반환한다(스키마도 Optional[List[str]] - correlation-engine은 _match_any_flag로
+    매칭한다)."""
+    names = set()
+    for request_object in _audit_request_objects(payload):
+        name = (request_object.get("roleRef") or {}).get("name")
+        if name:
+            names.add(name)
+
+    return sorted(names) if names else None
 
 
 def _audit_pod_security_flags(payload: Dict[str, Any]) -> Any:
@@ -224,37 +246,47 @@ def _audit_pod_security_flags(payload: Dict[str, Any]) -> Any:
     k3d-audit-policy.yaml이 pods의 create만 Request 레벨로 남겨서 requestObject가
     들어온다(2026-07-12) - update/patch 등 다른 verb는 여전히 Metadata라 이 함수를
     호출부에서 verb=="create"일 때만 부른다. 전부 생성 이후 바뀔 수 없는 불변
-    필드라 create 시점 한 번만 보면 충분하다.
+    필드라 create 시점 한 번만 보면 충분하다. requestObject가 JSON Patch 배열인
+    경우 배열 안의 모든 dict 원소에서 나온 플래그를 합집합으로 반환한다.
     """
-    request_object = payload.get("requestObject") or {}
-    spec = request_object.get("spec") or {}
-
     flags = set()
-    if spec.get("hostNetwork"):
-        flags.add("host_network")
-    if spec.get("hostPID"):
-        flags.add("host_pid")
-    if spec.get("hostIPC"):
-        flags.add("host_ipc")
+    for request_object in _audit_request_objects(payload):
+        spec = request_object.get("spec") or {}
 
-    containers = (spec.get("containers") or []) + (spec.get("initContainers") or [])
-    for container in containers:
-        security_context = container.get("securityContext") or {}
-        if security_context.get("privileged"):
-            flags.add("privileged")
+        if spec.get("hostNetwork"):
+            flags.add("host_network")
+        if spec.get("hostPID"):
+            flags.add("host_pid")
+        if spec.get("hostIPC"):
+            flags.add("host_ipc")
 
-    for volume in spec.get("volumes") or []:
-        if "hostPath" in volume:
-            flags.add("host_path_volume")
+        containers = (spec.get("containers") or []) + (spec.get("initContainers") or [])
+        for container in containers:
+            security_context = container.get("securityContext") or {}
+            if security_context.get("privileged"):
+                flags.add("privileged")
+
+        for volume in spec.get("volumes") or []:
+            if "hostPath" in volume:
+                flags.add("host_path_volume")
 
     return sorted(flags) if flags else None
 
 
 def _audit_service_type(payload: Dict[str, Any]) -> Any:
-    """새로 생성되는 service의 request body에서 spec.type을 뽑는다
-    (NodePort면 클러스터 밖으로 새로 노출되는 경로가 생겼다는 뜻)."""
-    request_object = payload.get("requestObject") or {}
-    return (request_object.get("spec") or {}).get("type")
+    """service의 request body에서 spec.type을 뽑는다 (NodePort면 클러스터 밖으로
+    새로 노출되는 경로가 생겼다는 뜻). pod의 hostNetwork류와 달리 spec.type은
+    생성 후에도 patch/update로 바뀔 수 있어서 호출부는 create뿐 아니라 update/patch
+    verb에서도 이 함수를 부른다. requestObject가 JSON Patch 배열이면 배열 안의 모든
+    dict 원소에서 나온 타입을 리스트로 합쳐서 반환한다(스키마도 Optional[List[str]] -
+    correlation-engine은 _match_any_flag로 매칭한다)."""
+    types_ = set()
+    for request_object in _audit_request_objects(payload):
+        service_type = (request_object.get("spec") or {}).get("type")
+        if service_type:
+            types_.add(service_type)
+
+    return sorted(types_) if types_ else None
 
 
 # falcosecurity/plugins의 contains_private_credentials 매크로 그대로 - configmap
@@ -273,19 +305,32 @@ _CREDENTIAL_MARKERS = (
 def _audit_configmap_has_credentials(payload: Dict[str, Any]) -> Any:
     """configmap의 request body(data/binaryData)에 평문 자격증명으로 보이는
     문자열이 있는지 검사한다. Secret과 달리 ConfigMap은 암호화/난독화 없이
-    저장되므로 이런 실수가 실제 자격증명 노출로 이어진다."""
-    request_object = payload.get("requestObject") or {}
-    data = request_object.get("data") or {}
-    binary_data = request_object.get("binaryData") or {}
+    저장되므로 이런 실수가 실제 자격증명 노출로 이어진다. requestObject가
+    JSON Patch 배열이면 배열 안의 dict 원소 중 하나라도 자격증명으로 보이면
+    True를 반환한다.
 
-    haystack = " ".join(str(k) for k in data.keys())
-    haystack += " ".join(str(v) for v in data.values())
-    haystack += " ".join(str(k) for k in binary_data.keys())
+    각 조각을 공백으로 구분해서 합친다 - 예전엔 그룹끼리(키 전체/값 전체) 구분자
+    없이 이어붙여서 마지막 키와 첫 값이 붙어버렸다(예: 키 "...pass" + 값
+    "word..." -> "...password..." 오탐). binaryData는 키만 보고 값(base64 인코딩된
+    바이트)은 아예 안 봤는데, data와 동일하게 값도 haystack에 포함시킨다."""
+    for request_object in _audit_request_objects(payload):
+        data = request_object.get("data") or {}
+        binary_data = request_object.get("binaryData") or {}
 
-    if not haystack:
-        return None
+        haystack = " ".join(
+            str(item)
+            for item in (
+                list(data.keys())
+                + list(data.values())
+                + list(binary_data.keys())
+                + list(binary_data.values())
+            )
+        )
 
-    return any(marker in haystack for marker in _CREDENTIAL_MARKERS) or None
+        if haystack and any(marker in haystack for marker in _CREDENTIAL_MARKERS):
+            return True
+
+    return None
 
 
 def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> NormalizedEvent:
@@ -306,10 +351,14 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
     # event.action에는 subresource까지 붙여서 "create pods/exec"처럼 남긴다.
     resource_full = f"{resource}/{subresource}" if subresource else resource
 
-    role_rule_flags = _audit_role_rule_flags(payload, resource) if resource in _ROLE_RESOURCE_TYPES else None
-    binding_role_name = _audit_binding_role_name(payload) if resource in _BINDING_RESOURCE_TYPES else None
+    role_rule_flags = _audit_role_rule_flags(payload) if resource in RBAC_ROLE_RESOURCES else None
+    binding_role_name = _audit_binding_role_name(payload) if resource in RBAC_BINDING_RESOURCES else None
     pod_security_flags = _audit_pod_security_flags(payload) if (resource == "pods" and verb == "create") else None
-    service_type = _audit_service_type(payload) if (resource == "services" and verb == "create") else None
+    service_type = (
+        _audit_service_type(payload)
+        if (resource == "services" and verb in ("create", "update", "patch"))
+        else None
+    )
     configmap_has_credentials = (
         _audit_configmap_has_credentials(payload)
         if (resource == "configmaps" and verb in ("create", "update", "patch"))
@@ -328,7 +377,15 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "event.kind": "event",
             "event.action": f"{verb} {resource_full}".strip(),
             "event.outcome": "success" if (status_code and status_code < 400) else "failure",
-            "event.severity": get_severity("audit", payload),
+            "event.severity": get_severity(
+                "audit",
+                payload,
+                audit_flags={
+                    "pod_security_flags": pod_security_flags,
+                    "service_type": service_type,
+                    "configmap_has_credentials": configmap_has_credentials,
+                },
+            ),
             "event.original": original,
             "source.ip": source_ips[0] if source_ips else None,
             "user.name": user.get("username"),

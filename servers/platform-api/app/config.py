@@ -7,18 +7,29 @@ class Settings(BaseSettings):
     opensearch_url: str = "http://opensearch:9200"
     attack_log_index_pattern: str = "attack-logs-*"
 
+    # 개별 이벤트 실시간 스트림 (app/event_stream.py) - events.normalized를 직접
+    # tail해서 /ws/events로 릴레이한다. correlation-engine/normalizer와 값은 같지만
+    # (kafka/docker-compose.yml 리스너 매핑 참고) platform-api는 이 토픽을 "쓰지"
+    # 않고 별도 컨슈머 그룹으로 "읽기"만 하므로 그쪽 처리 경로와 완전히 독립적이다.
+    kafka_brokers: str = "kafka:9092"
+    kafka_normalized_topic: str = "events.normalized"
+    kafka_event_stream_group: str = "platform-api-event-stream"
+
+    # ClickHouse (P6-3) - servers/datastore/clickhouse/init/001-kafka-engine.sql의
+    # Kafka 엔진 테이블이 events.normalized를 직접 구독해서 security_events_analytics
+    # (컬럼형 MergeTree)에 실시간 적재해둔다. app/analytics_api.py가 이 테이블을 조회해서
+    # 시계열/GeoIP/K8s타겟/Top IP 집계를 낸다 - OpenSearch(app/stats_api.py)는 검색/역인덱스
+    # 용, ClickHouse는 대량 컬럼형 집계용으로 역할이 나뉜다(README 참고). 크리덴셜은
+    # servers/datastore/clickhouse/docker-compose.yml의 dev 기본값 그대로.
+    clickhouse_host: str = "clickhouse"
+    clickhouse_port: int = 8123
+    clickhouse_user: str = "admin"
+    clickhouse_password: str = "mypassword"
+
     # 인증 (P5-2) - 스펙 미설계. Target에서 이관될 실제 역할 모델이 정해지기 전까지
     # 단일 관리자 계정 스텁으로만 동작.
     admin_username: str = "admin"
     admin_password: str = "changeme"
-
-    # 알림 채널 (P5-3) - 비어있으면 발송 안 하고 로그만 남긴다.
-    # TODO: alert_configs 테이블(app/alert_configs_api.py로 CRUD)이 이미 있으니
-    # notifications.py가 이 고정 환경변수 대신 그 테이블을 읽도록 바꿀 것 (나중에 API
-    # 작업 때 같이 진행 - 지금은 크래시만 막아둔 상태).
-    slack_webhook_url: str = ""
-    discord_webhook_url: str = ""
-    critical_severity_threshold: int = 4
 
     # AI 트렌드 리포트 (P5-4) - 비어있으면 "미설정" 응답만 반환.
     anthropic_api_key: str = ""
