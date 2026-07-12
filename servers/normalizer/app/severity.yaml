@@ -37,10 +37,18 @@ audit:
   # 매핑은 폐기 - level은 '얼마나 자세히 기록할지'이지 '얼마나 위험한지'가 아니라서
   # RBAC 변경 같은 severity 4가 그 방식으론 영영 안 나온다.
   rules:
-    # 4 critical: RBAC 변경 = 권한상승의 정점 (S3 stage1 재료)
-    # ⚠️ TBD: verb 범위가 create/patch만 커버 - update/rolebindings 등 다른 조합은
-    # 아직 default(2)로 떨어짐. 시트에 범위 확정되면 이 rule의 verb 목록만 넓히면 됨.
-    - match: { verb: [create, patch], resource: [clusterroles, clusterrolebindings, roles, rolebindings] }
+    # 4 critical: RBAC 변경 = 권한상승의 정점 (S3 stage1 재료). verb 범위는 K8s API의
+    # RBAC 오브젝트 변경 verb 전체(create/delete/patch/replace/update)로 확정 -
+    # RBAC verb TBD 갭 해소. (falcosecurity/plugins의 실제 k8s_audit_rules.yaml은
+    # 여기서 더 나아가 role.rules의 wildcard/write 권한, cluster-admin 바인딩까지
+    # request body로 판정하지만, 그건 normalize_audit()의 body 파싱 확장이 필요함.)
+    - match: { verb: [create, delete, patch, replace, update], resource: [clusterroles, clusterrolebindings, roles, rolebindings] }
+      severity: 4
+    # 4 critical: 시스템 네임스페이스(kube-system/kube-public)에 서비스어카운트 생성
+    # (S6 재료) - falcosecurity/plugins의 "Service Account Created in Kube Namespace"
+    # 룰과 동일 판정. subresource: ""로 SA 토큰 발급(subresource=token, 아래 규칙)과
+    # 구분 - 이건 SA "오브젝트 자체"의 생성만 잡는다.
+    - match: { verb: [create], resource: [serviceaccounts], subresource: "", namespace: [kube-system, kube-public] }
       severity: 4
     # 3 high: 자격증명 탈취 (S2 재료)
     - match: { verb: [get, list], resource: [secrets] }

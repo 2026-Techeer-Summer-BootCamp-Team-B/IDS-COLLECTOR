@@ -178,6 +178,115 @@ def normalize_falco(payload: Dict[str, Any], event_id: str, original: str) -> No
 # K8s Audit
 # ---------------------------------------------------------------------------
 
+_ROLE_RESOURCE_TYPES = ("roles", "clusterroles")
+_BINDING_RESOURCE_TYPES = ("rolebindings", "clusterrolebindings")
+_RBAC_WRITE_VERBS = {"create", "update", "patch", "delete", "deletecollection"}
+
+
+def _audit_role_rule_flags(payload: Dict[str, Any], resource: str) -> Any:
+    """role/clusterrole의 request body(rules)를 훑어서 위험한 권한 부여를 태깅.
+
+    k3d-audit-policy.yaml이 roles/clusterroles의 create/update/patch/delete만
+    RequestResponse 레벨로 남겨서 requestObject가 실제로 들어온다 - pods 등
+    나머지 리소스는 Metadata 레벨이라 requestObject 자체가 없어서 이 함수를
+    아예 안 부른다(호출부의 resource 분기 참고).
+    """
+    request_object = payload.get("requestObject") or {}
+    rules = request_object.get("rules") or []
+
+    flags = set()
+    for rule in rules:
+        resources = rule.get("resources") or []
+        verbs = rule.get("verbs") or []
+        if "*" in resources:
+            flags.add("wildcard_resource")
+        if "*" in verbs:
+            flags.add("wildcard_verb")
+        if _RBAC_WRITE_VERBS.intersection(verbs):
+            flags.add("write_verb")
+        if "pods/exec" in resources:
+            flags.add("pods_exec")
+
+    return sorted(flags) if flags else None
+
+
+def _audit_binding_role_name(payload: Dict[str, Any]) -> Any:
+    """rolebinding/clusterrolebinding의 request body에서 roleRef.name을 뽑는다
+    (예: "cluster-admin"에 바인딩했는지 판단하는 재료)."""
+    request_object = payload.get("requestObject") or {}
+    return (request_object.get("roleRef") or {}).get("name")
+
+
+def _audit_pod_security_flags(payload: Dict[str, Any]) -> Any:
+    """새로 생성되는 pod의 request body(spec)를 훑어서 컨테이너 이스케이프
+    벡터를 태깅한다 (privileged/hostNetwork/hostPID/hostIPC/hostPath 마운트).
+
+    k3d-audit-policy.yaml이 pods의 create만 Request 레벨로 남겨서 requestObject가
+    들어온다(2026-07-12) - update/patch 등 다른 verb는 여전히 Metadata라 이 함수를
+    호출부에서 verb=="create"일 때만 부른다. 전부 생성 이후 바뀔 수 없는 불변
+    필드라 create 시점 한 번만 보면 충분하다.
+    """
+    request_object = payload.get("requestObject") or {}
+    spec = request_object.get("spec") or {}
+
+    flags = set()
+    if spec.get("hostNetwork"):
+        flags.add("host_network")
+    if spec.get("hostPID"):
+        flags.add("host_pid")
+    if spec.get("hostIPC"):
+        flags.add("host_ipc")
+
+    containers = (spec.get("containers") or []) + (spec.get("initContainers") or [])
+    for container in containers:
+        security_context = container.get("securityContext") or {}
+        if security_context.get("privileged"):
+            flags.add("privileged")
+
+    for volume in spec.get("volumes") or []:
+        if "hostPath" in volume:
+            flags.add("host_path_volume")
+
+    return sorted(flags) if flags else None
+
+
+def _audit_service_type(payload: Dict[str, Any]) -> Any:
+    """새로 생성되는 service의 request body에서 spec.type을 뽑는다
+    (NodePort면 클러스터 밖으로 새로 노출되는 경로가 생겼다는 뜻)."""
+    request_object = payload.get("requestObject") or {}
+    return (request_object.get("spec") or {}).get("type")
+
+
+# falcosecurity/plugins의 contains_private_credentials 매크로 그대로 - configmap
+# 객체 전체(문자열화 기준)에 이 문자열 중 하나라도 있으면 자격증명으로 간주.
+# 대소문자 구분 없음 처리는 원본 매크로에 없으므로 그대로 대소문자 구분 유지.
+_CREDENTIAL_MARKERS = (
+    "aws_access_key_id",
+    "aws-access-key-id",
+    "aws_s3_access_key_id",
+    "aws-s3-access-key-id",
+    "password",
+    "passphrase",
+)
+
+
+def _audit_configmap_has_credentials(payload: Dict[str, Any]) -> Any:
+    """configmap의 request body(data/binaryData)에 평문 자격증명으로 보이는
+    문자열이 있는지 검사한다. Secret과 달리 ConfigMap은 암호화/난독화 없이
+    저장되므로 이런 실수가 실제 자격증명 노출로 이어진다."""
+    request_object = payload.get("requestObject") or {}
+    data = request_object.get("data") or {}
+    binary_data = request_object.get("binaryData") or {}
+
+    haystack = " ".join(str(k) for k in data.keys())
+    haystack += " ".join(str(v) for v in data.values())
+    haystack += " ".join(str(k) for k in binary_data.keys())
+
+    if not haystack:
+        return None
+
+    return any(marker in haystack for marker in _CREDENTIAL_MARKERS) or None
+
 
 def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> NormalizedEvent:
     """kube-apiserver audit 로그(audit.k8s.io/v1 Event JSON) 한 줄을 NormalizedEvent로 변환.
@@ -196,6 +305,16 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
 
     # event.action에는 subresource까지 붙여서 "create pods/exec"처럼 남긴다.
     resource_full = f"{resource}/{subresource}" if subresource else resource
+
+    role_rule_flags = _audit_role_rule_flags(payload, resource) if resource in _ROLE_RESOURCE_TYPES else None
+    binding_role_name = _audit_binding_role_name(payload) if resource in _BINDING_RESOURCE_TYPES else None
+    pod_security_flags = _audit_pod_security_flags(payload) if (resource == "pods" and verb == "create") else None
+    service_type = _audit_service_type(payload) if (resource == "services" and verb == "create") else None
+    configmap_has_credentials = (
+        _audit_configmap_has_credentials(payload)
+        if (resource == "configmaps" and verb in ("create", "update", "patch"))
+        else None
+    )
 
     return NormalizedEvent(
         **{
@@ -219,6 +338,11 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "kubernetes.audit.stage": payload.get("stage"),
             "kubernetes.audit.verb": verb or None,
             "kubernetes.audit.user.groups": user.get("groups"),
+            "kubernetes.audit.role.rule_flags": role_rule_flags,
+            "kubernetes.audit.binding.role_name": binding_role_name,
+            "kubernetes.audit.pod.security_flags": pod_security_flags,
+            "kubernetes.audit.service.type": service_type,
+            "kubernetes.audit.configmap.has_credentials": configmap_has_credentials,
             "http.response.status_code": status_code,
         }
     )

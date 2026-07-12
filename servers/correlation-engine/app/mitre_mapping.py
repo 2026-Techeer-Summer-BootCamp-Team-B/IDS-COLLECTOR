@@ -11,10 +11,16 @@ DetectionRule.mitre_technique_id / ScenarioRule.mitre_technique_id와 같은 값
    몇 %를 커버하는가" 같은 ATT&CK 커버리지 API/대시보드(README "아직 안 된 것" 참고)를
    만들 때도 이 카탈로그를 그대로 쓸 수 있다.
 2. SCENARIO_TACTIC_OVERRIDE: 특정 시나리오 맥락에서 MITRE 공식 다중 전술 중 일부만
-   보여주고 싶을 때만 좁혀서 적는다 (예: T1078은 공식적으로 4개 전술에 걸치지만, S1은
-   RBAC 변경으로 인한 권한상승 맥락이라 Privilege Escalation 하나로만 표시). 여기 없는
-   technique_id는 CONTAINERS_MATRIX의 공식 전술을 그대로 쓴다 - 새 시나리오를 짤 때마다
-   매핑을 안 채워도 되는 이유.
+   보여주고 싶을 때만 좁혀서 적는다 (예: 공식적으로 여러 전술에 걸치는 기법을 특정
+   시나리오 맥락 하나로 좁히고 싶을 때). 여기 없는 technique_id는 CONTAINERS_MATRIX의
+   공식 전술을 그대로 쓴다 - 새 시나리오를 짤 때마다 매핑을 안 채워도 되는 이유.
+   지금 app/scenarios/*.yaml이 쓰는 기법(S1/S3/S14=T1609, S2/S18=T1552, S4/S5=T1190,
+   S6=T1136, S8=T1485, S10=T1613, S11=T1685, S15=T1610, S16=T1611)은
+   CONTAINERS_MATRIX에서 단일 전술이라 비어있다. S7/S12/S13=T1098, S9/S17=T1133만
+   공식적으로 여러 전술에 걸치는데, 둘 다 시나리오 의미(S7/S12/S13: 계정·역할에
+   위험한 권한을 몰아줌 - Persistence/Privilege Escalation 둘 다 해당, S9/S17:
+   클러스터 경계 밖에서 접근 가능한 새 경로가 생김 - Initial Access/Persistence
+   둘 다 해당)와 맞아서 좁히지 않고 그대로 둔다.
 """
 from typing import Dict, List, Optional, TypedDict
 
@@ -75,8 +81,8 @@ CONTAINERS_MATRIX: Dict[str, TechniqueInfo] = {
 }
 
 SCENARIO_TACTIC_OVERRIDE: Dict[str, List[str]] = {
-    # S1: RBAC 변경으로 인한 권한상승 맥락이라 Privilege Escalation 하나로 좁힘.
-    "T1078": ["Privilege Escalation"],
+    # 지금 쓰는 시나리오는 전부 단일 전술 기법이라 좁힐 게 없음 - 다중 전술 기법을
+    # 특정 시나리오 맥락으로 좁혀야 할 때 여기 추가.
 }
 
 

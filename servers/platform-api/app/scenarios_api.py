@@ -1,5 +1,5 @@
 """Scenario API (/scenarios) [TBD] - 상관 시나리오 룰 조회/토글. YAML(correlation-engine의
-scenarios.yaml) vs API 중 어느 쪽이 최종 관리 주체인지 미정 - 지금은 조회 + enabled
+app/scenarios/*.yaml) vs API 중 어느 쪽이 최종 관리 주체인지 미정 - 지금은 조회 + enabled
 토글만 제공. sync_scenario_rules()가 enabled는 덮어쓰지 않으므로 토글은 유지되지만,
 correlation-engine이 실제로 이 값을 평가에 반영하는지는 별도 확인 필요(스켈레톤)."""
 from typing import Any, Dict, List

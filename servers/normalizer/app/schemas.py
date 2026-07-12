@@ -78,6 +78,35 @@ class NormalizedEvent(BaseModel):
         default=None, alias="kubernetes.audit.user.groups"
     )
 
+    # K8s Audit - RBAC request body 분석. k3d-audit-policy.yaml이 roles/clusterroles/
+    # rolebindings/clusterrolebindings의 create/update/patch/delete를 RequestResponse
+    # 레벨로 남겨서 requestObject를 실제로 받을 수 있다. 그 외 리소스는 Metadata
+    # 레벨이라 requestObject 자체가 안 온다 - pods의 create만 예외(바로 아래 필드,
+    # 2026-07-12에 Request 레벨로 승격함).
+    audit_role_rule_flags: Optional[List[str]] = Field(
+        default=None, alias="kubernetes.audit.role.rule_flags"
+    )  # role/clusterrole의 rules 분석 결과: wildcard_resource/wildcard_verb/write_verb/pods_exec
+    audit_binding_role_name: Optional[str] = Field(
+        default=None, alias="kubernetes.audit.binding.role_name"
+    )  # rolebinding/clusterrolebinding이 가리키는 roleRef.name
+
+    # K8s Audit - Pod 생성 request body 분석 (2026-07-12, k3d-audit-policy.yaml이
+    # pods의 create만 Request 레벨로 승격한 뒤 가능해짐). 생성 이후 바뀔 수 없는
+    # 불변 필드들이라 create 시점 한 번만 보면 충분하다.
+    audit_pod_security_flags: Optional[List[str]] = Field(
+        default=None, alias="kubernetes.audit.pod.security_flags"
+    )  # privileged/host_network/host_pid/host_ipc/host_path_volume 중 있는 것만
+
+    # K8s Audit - Service/ConfigMap request body 분석 (2026-07-12, k3d-audit-policy.yaml이
+    # services의 create/configmaps의 create·update·patch를 Request 레벨로 승격한 뒤
+    # 가능해짐).
+    audit_service_type: Optional[str] = Field(
+        default=None, alias="kubernetes.audit.service.type"
+    )  # spec.type (ClusterIP/NodePort/LoadBalancer/ExternalName)
+    audit_configmap_has_credentials: Optional[bool] = Field(
+        default=None, alias="kubernetes.audit.configmap.has_credentials"
+    )  # data/binaryData에 aws_access_key_id/password/passphrase류 문자열이 있는지
+
     # GeoIP enrichment (P3-6)
     geo_country_iso_code: Optional[str] = Field(
         default=None, alias="source.geo.country_iso_code"

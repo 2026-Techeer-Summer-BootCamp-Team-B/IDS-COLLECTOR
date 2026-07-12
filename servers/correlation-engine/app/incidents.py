@@ -27,7 +27,7 @@ async def stop() -> None:
 
 
 async def sync_scenario_rules(scenarios: List[Dict[str, Any]]) -> None:
-    """scenarios.yaml을 scenario_rules 테이블에 반영 (YAML이 source of truth, PG는
+    """app/scenarios/*.yaml을 scenario_rules 테이블에 반영 (YAML이 source of truth, PG는
     API 조회/감사용 캐시). incidents.matched_scenario_rule_id가 이 테이블을 FK로
     참조하므로, 엔진이 뜰 때 이 sync가 먼저 끝나야 인시던트 upsert가 성공한다."""
     assert _pool is not None, "incidents.start()를 먼저 호출해야 함"

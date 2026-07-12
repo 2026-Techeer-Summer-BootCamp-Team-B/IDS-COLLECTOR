@@ -38,12 +38,29 @@ def _match_value(actual: Optional[str], allowed: Any) -> bool:
     return actual == allowed
 
 
+def _match_any_flag(actual_flags: Optional[List[str]], wanted: Any) -> bool:
+    """actual_flags(리스트 필드) 중 wanted에 있는 값이 하나라도 있으면 True.
+    audit_role_rule_flags_any/audit_pod_security_flags_any가 공유하는 로직."""
+    flags = actual_flags or []
+    wanted = wanted if isinstance(wanted, list) else [wanted]
+    return any(flag in flags for flag in wanted)
+
+
 def _matches(event: NormalizedEvent, pattern: Dict[str, Any]) -> bool:
     """pattern의 조건을 전부 만족하면 True. 지원 키: event_module, event_action,
-    audit_verb, orchestrator_resource_type(전부 단일 값 또는 값 리스트 가능 -
-    여러 verb/resource 조합을 하나의 스테이지로 묶을 때 리스트를 쓴다, 예: S2의
-    secrets get/list, S1/S3의 RBAC verb x resource), min_severity. 시나리오
-    정의가 늘어나면 여기에 조건 종류를 추가하면 된다."""
+    audit_verb, orchestrator_resource_type, orchestrator_namespace, user_name,
+    event_outcome(전부 단일 값 또는 값 리스트 가능 - 여러 verb/resource 조합을 하나의
+    스테이지로 묶을 때 리스트를 쓴다, 예: S2의 secrets get/list, S1/S3의 RBAC verb x
+    resource, S6/S7의 시스템 네임스페이스 SA 생성, S9의 익명 요청 성공),
+    orchestrator_resource_name_prefix(리스트 불가, 단일 접두어 문자열만 - S11의
+    system: 프리픽스 룰 변조 감지), audit_role_rule_flags_any(event.audit_role_rule_flags
+    리스트 중 하나라도 있으면 True - S12의 위험한 RBAC 룰 생성 감지),
+    audit_binding_role_name(단일 값 또는 리스트 - S13의 cluster-admin 바인딩 감지),
+    audit_pod_security_flags_any(event.audit_pod_security_flags 리스트 중 하나라도
+    있으면 True - S16의 pod 탈옥 벡터 감지), audit_service_type(단일 값 또는 리스트 -
+    S17의 NodePort Service 노출 감지), audit_configmap_has_credentials(불리언 -
+    S18의 평문 자격증명 감지), min_severity. 시나리오 정의가 늘어나면 여기에 조건
+    종류를 추가하면 된다."""
     if "event_module" in pattern and event.event_module != pattern["event_module"]:
         return False
     if "event_action" in pattern and not _match_value(event.event_action, pattern["event_action"]):
@@ -52,6 +69,38 @@ def _matches(event: NormalizedEvent, pattern: Dict[str, Any]) -> bool:
         return False
     if "orchestrator_resource_type" in pattern and not _match_value(
         event.orchestrator_resource_type, pattern["orchestrator_resource_type"]
+    ):
+        return False
+    if "orchestrator_namespace" in pattern and not _match_value(
+        event.orchestrator_namespace, pattern["orchestrator_namespace"]
+    ):
+        return False
+    if "user_name" in pattern and not _match_value(event.user_name, pattern["user_name"]):
+        return False
+    if "event_outcome" in pattern and not _match_value(event.event_outcome, pattern["event_outcome"]):
+        return False
+    if "orchestrator_resource_name_prefix" in pattern and not (
+        event.orchestrator_resource_name or ""
+    ).startswith(pattern["orchestrator_resource_name_prefix"]):
+        return False
+    if "audit_role_rule_flags_any" in pattern and not _match_any_flag(
+        event.audit_role_rule_flags, pattern["audit_role_rule_flags_any"]
+    ):
+        return False
+    if "audit_binding_role_name" in pattern and not _match_value(
+        event.audit_binding_role_name, pattern["audit_binding_role_name"]
+    ):
+        return False
+    if "audit_pod_security_flags_any" in pattern and not _match_any_flag(
+        event.audit_pod_security_flags, pattern["audit_pod_security_flags_any"]
+    ):
+        return False
+    if "audit_service_type" in pattern and not _match_value(
+        event.audit_service_type, pattern["audit_service_type"]
+    ):
+        return False
+    if "audit_configmap_has_credentials" in pattern and not _match_value(
+        event.audit_configmap_has_credentials, pattern["audit_configmap_has_credentials"]
     ):
         return False
     if "min_severity" in pattern and event.event_severity < pattern["min_severity"]:

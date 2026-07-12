@@ -155,7 +155,7 @@ Target 서버
 | `targets` | 보호 대상 애플리케이션 |
 | `allow_list` | 예외 IP/대역 (target 스코프 가능) |
 | `detection_rules` | 단일 이벤트 탐지 룰 (시그니처) — 스키마만 준비, 평가 서비스 없음 |
-| `scenario_rules` | 상관분석 시나리오 룰 — correlation-engine의 `scenarios.yaml`이 sync (YAML이 source of truth) |
+| `scenario_rules` | 상관분석 시나리오 룰 — correlation-engine의 `app/scenarios/*.yaml`이 sync (YAML이 source of truth) |
 | `incidents` | 상관분석으로 묶인 보안 사고 (`correlation_key_type`/`value`, `severity`, `status`, `mitre_tactics`) |
 | `incident_events` | 인시던트 <-> 이벤트 매핑 (event_id는 OpenSearch/ClickHouse event.id를 문자열로만 참조, 교차 저장소라 FK 불가) |
 | `audit_logs` | 관리자 행위 감사 로그 |
@@ -259,8 +259,8 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 - otel-collector의 `routing` 커넥터가 resource attribute `log.source`(was/waf/falco/
   k8s-audit) 값 기준으로 이벤트를 4개 파이프라인으로 나눠서 각각 다른 Kafka 토픽으로
   내보낸다. 매칭 안 되는 소스는 `events.unknown`으로 - 조용히 버려지지 않게.
-- `scenario_rules.id`는 UUID인데 `scenarios.yaml`은 사람이 읽는 코드(S1/S2/S4)를 쓴다 -
-  correlation-engine이 `uuid5(NAMESPACE_OID, "scenario:{code}")`로 결정적 변환해서
+- `scenario_rules.id`는 UUID인데 `app/scenarios/*.yaml`은 사람이 읽는 코드(S1/S2/...)를
+  쓴다 - correlation-engine이 `uuid5(NAMESPACE_OID, "scenario:{code}")`로 결정적 변환해서
   sync하므로, 같은 코드는 재시작해도 항상 같은 UUID로 매핑된다(중복 insert 없음).
 - **Kafka 토픽을 삭제·재생성하면 otel-collector의 franz-go 클라이언트가 옛 토픽
   ID/파티션 수를 캐싱하고 있어서 `UNKNOWN_TOPIC_ID` 에러가 한동안 반복된다** -
@@ -291,13 +291,14 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 - `events.normalized`로 emit, OpenSearch는 더 이상 직접 안 만짐 (Data Prepper가 대체)
 
 ### `servers/correlation-engine`
-- `events.normalized` 실시간 소비, `scenarios.yaml` 선언 룰(sequence/threshold) 평가
+- `events.normalized` 실시간 소비, `app/scenarios/*.yaml`(카테고리별로 분리 -
+  `app/scenarios/README.md` 참고) 선언 룰(sequence/threshold) 평가
 - Redis로 시퀀스 대기 상태/threshold 카운터/쿨다운 관리
 - 발화 시 `scenario_rules`를 FK로 참조하는 `incidents`/`incident_events` upsert(open 병합)
-  + Redis pub/sub(`incidents:events`) 발행. MITRE 전술은 `mitre_mapping.py`(예시 매핑,
-  실제 값은 팀 설계 후 교체)로 technique_id -> tactics 변환해서 저장
-- `scenarios.yaml`의 stage1/stage2/match 조건은 엔진 검증용 예시 - 실제 공격 체인
-  정의는 팀 설계 후 그 파일만 교체하면 됨
+  + Redis pub/sub(`incidents:events`) 발행. MITRE 전술은 `mitre_mapping.py`(MITRE 공식
+  Containers 매트릭스 대조 완료)로 technique_id -> tactics 변환해서 저장
+- 18개 시나리오(S1~S18) 전부 falcosecurity/plugins의 실제 K8s audit 룰에 근거한
+  설계 - 엔진 검증용 예시가 아님(`app/scenarios/README.md` 참고)
 
 ### `servers/platform-api`
 - 프론트엔드(별도 팀/레포)의 유일한 연동 지점 - 위 "프론트엔드 연동 API" 참고, CORS 허용
@@ -309,8 +310,11 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   별도 규칙 이름 필드를 주면 분리할 것
 - was/waf의 정적 orchestrator 매핑(`juice-shop-68ccbc74b4-xh7r8` 등)은 하드코딩 -
   실제 배포 pod 이름이 바뀌면 `app/enrichment.py`만 교체 (나중엔 K8s API 조회로 대체 가능)
-- was의 XFF(`http_x_forwarded_for`)/`request_time`/`body_bytes_sent` 등은 nginx
-  log format이 아직 이 필드들을 안 내보내서 대부분 비어있음 - [Target 액션] 대기 중
+- was의 XFF(`http_x_forwarded_for`): Target(Techeer-12th-b)의
+  `juice-shop-nginx-configmap.yaml` log_format에 필드를 추가함(2026-07-12) - 이제
+  값이 실려오는지는 실측 확인 필요. `request_time`/`body_bytes_sent`는 확인 결과
+  이미 log_format에 있었음(README의 예전 서술이 틀렸었음) - was.request_time/
+  http.response.body.bytes는 이미 채워지고 있었을 것
 - `detection_rules`: 테이블만 있고 이걸 평가하는 서비스가 없음 (단일 이벤트 시그니처 탐지)
 - `users`/`targets`/`allow_list`: 테이블만 있고 이걸 다루는 API/화면이 없음
 - 인증(P5-2): Target에서 실제 이관될 역할(RBAC) 모델 미반영
@@ -318,6 +322,21 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 - 프론트엔드 팀에게 인계해야 할 집계 API 갭: 컨슈머 lag, DLQ 깊이, 클록 차
   (event.ingested - @timestamp), 4소스 계층별 통계, ATT&CK 커버리지, ground-truth
   라벨 매칭(precision/recall) - 지금은 `GET /reports/trend`(시나리오별 집계)만 있음
-- `mitre_mapping.py`: technique->tactic 매핑이 예시 3개뿐 - 정식 매핑으로 교체 필요
-- RBAC verb 범위(severity.yaml): create/patch만 커버, update/rolebindings 등 다른
-  조합은 아직 default(2)로 떨어짐 - 시트에 범위 확정되면 rule의 verb 목록만 넓히면 됨
+- `mitre_mapping.py`: CONTAINERS_MATRIX(공식 Containers 매트릭스 카탈로그, MITRE
+  공식 페이지 대조 확인 완료)는 채워져 있으나, app/scenarios/*.yaml이 실제로 쓰는
+  technique_id는 아직 일부(T1609/T1552/T1190/T1136/T1098/T1485/T1133/T1613/T1685/
+  T1610/T1611)뿐 (시크릿 enumeration은 검토 결과 falcosecurity/plugins의 실제
+  룰에도 "get 성공/실패"뿐 - 별도 정교화 근거 없어서 현행 S2 유지)
+- request body 파싱(2026-07-12): S12/S13(RBAC 룰/바인딩) → S16(pod 보안 컨텍스트)
+  → S17/S18(NodePort Service/ConfigMap 자격증명)까지 확장 완료. `k3d-audit-policy.yaml`이
+  roles/clusterroles/rolebindings/clusterrolebindings(RequestResponse) +
+  pods/services/configmaps(Request)의 관련 verb에 대해서만 `requestObject`를
+  남기고 있어서 이 7개 리소스에 한해서만 request body 기반 필드가 채워진다.
+  `NormalizedEvent`에 `kubernetes.audit.role.rule_flags`/
+  `kubernetes.audit.binding.role_name`/`kubernetes.audit.pod.security_flags`/
+  `kubernetes.audit.service.type`/`kubernetes.audit.configmap.has_credentials`
+  필드 추가, `normalize_audit()`/`_matches()` 확장함 - 정규화 계약 문서(Notion
+  "정규화") §4-4에 반영 완료. 원본 48개 룰 중 request body가 필요했던 것은 이제
+  거의 다 구현됨(남은 건 Ingress without TLS 정도, 낮은 우선순위)
+- RBAC verb 범위(severity.yaml): K8s API의 RBAC 오브젝트 변경 verb 전체(create/
+  delete/patch/replace/update)로 확정 완료

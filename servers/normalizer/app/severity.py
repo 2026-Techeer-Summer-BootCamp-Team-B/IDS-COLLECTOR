@@ -47,6 +47,7 @@ def get_severity(source: str, payload: Dict[str, Any]) -> int:
         object_ref = payload.get("objectRef") or {}
         resource = object_ref.get("resource") or ""
         subresource = object_ref.get("subresource") or ""
+        namespace = object_ref.get("namespace") or ""
 
         for rule in rules.get("rules", []):
             match = rule.get("match", {})
@@ -55,6 +56,8 @@ def get_severity(source: str, payload: Dict[str, Any]) -> int:
             if "resource" in match and not _match_value(match["resource"], resource):
                 continue
             if "subresource" in match and not _match_value(match["subresource"], subresource):
+                continue
+            if "namespace" in match and not _match_value(match["namespace"], namespace):
                 continue
             return rule.get("severity", rules.get("default", 2))
         return rules.get("default", 2)
