@@ -15,10 +15,14 @@ export const RULES = [
   { id: "R-09", name: "Sensitive File Access", attackType: "CRED_ACCESS", enabled: true, description: "/etc/shadow, 시크릿 파일 등 민감 경로 접근 시도" },
 ];
  
-export function byRuleHits(events) {
-  return RULES.map((r) => ({
-    ...r,
-    hits: events.filter((e) => e.attackType === r.attackType).length,
-  })).sort((a, b) => b.hits - a.hits);
+// `rules` defaults to the static seed but accepts a stateful array so the
+// Admin/Audit screen's enable/disable toggle can feed live values back in.
+export function byRuleHits(events, rules = RULES) {
+  return rules
+    .map((r) => ({
+      ...r,
+      hits: events.filter((e) => e.attackType === r.attackType).length,
+    }))
+    .sort((a, b) => b.hits - a.hits);
 }
  

@@ -9,13 +9,14 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceDot,
   PieChart,
   Pie,
   Cell,
 } from "recharts";
-import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, topSourcesFor } from "../data/mockLogs";
+import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, topSourcesFor, latencyStatsFor } from "../data/mockLogs";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta } from "../data/logLevels";
-import { RANGE_PRESETS, bucketEvents } from "../data/timeSeries";
+import { RANGE_PRESETS, bucketEvents, detectSpike } from "../data/timeSeries";
 import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import SearchDiscoverView from "./SearchDiscoverView";
@@ -164,10 +165,21 @@ function LogVolumeChart({ rangeKey }) {
     });
   }, [rangeKey]);
 
+  // 평소(중앙값) 대비 급증 구간 탐지 — 있으면 배지 + 차트 위 마커로 표시.
+  const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
+  const spikePoint = spike ? data[spike.index] : null;
+
   return (
     <Card
       title="Log Volume"
       subtitle={`지난 ${preset.label} · ${data.length}개 구간`}
+      action={
+        spike && (
+          <span className="text-[11px] font-medium px-2 py-1 rounded-md bg-dash-pink/15 text-dash-pink whitespace-nowrap">
+            ⚠ {spikePoint.label} 평소 대비 +{spike.pctOverBaseline}% 급증
+          </span>
+        )
+      }
       className="h-80"
     >
       <ResponsiveContainer width="100%" height="82%">
@@ -188,6 +200,17 @@ function LogVolumeChart({ rangeKey }) {
           <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
           <Area type="monotone" dataKey="total" stroke={C.mint} fill="url(#volumeFill)" strokeWidth={2} />
           <Area type="monotone" dataKey="errorish" stroke={C.critical} fill="url(#errorFill)" strokeWidth={2} />
+          {spikePoint && (
+            <ReferenceDot
+              x={spikePoint.label}
+              y={spikePoint.total}
+              r={5}
+              fill={C.pink}
+              stroke={C.bg}
+              strokeWidth={2}
+              ifOverflow="extendDomain"
+            />
+          )}
         </AreaChart>
       </ResponsiveContainer>
       <div className="flex gap-4 text-xs text-dash-muted mt-2">
@@ -197,6 +220,11 @@ function LogVolumeChart({ rangeKey }) {
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: C.critical }} /> Emergency~Major
         </span>
+        {spike && (
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-dash-pink inline-block" /> 급증 구간 (기준선 {spike.baseline}건)
+          </span>
+        )}
       </div>
     </Card>
   );
@@ -309,19 +337,60 @@ function ErrorRateGauge({ events }) {
   );
 }
 
+// quantile_over_time 계열 통계 — 응답시간(durationMs) p50/p90/p99 + avg/max.
+// SOC 대시보드에서 신뢰도를 높여주는 "API 레이턴시 p99" 패널.
+function LatencyStatsPanel({ events }) {
+  const stats = useMemo(() => latencyStatsFor(events), [events]);
+
+  const rows = stats
+    ? [
+        { label: "p50", value: stats.p50, tone: "text-dash-fg" },
+        { label: "p90", value: stats.p90, tone: "text-dash-fg" },
+        { label: "p99", value: stats.p99, tone: "text-dash-pink" },
+        { label: "avg", value: stats.avg, tone: "text-dash-muted" },
+        { label: "max", value: stats.max, tone: "text-dash-muted" },
+      ]
+    : [];
+
+  return (
+    <Card title="API Latency" subtitle={stats ? `선택 구간 · ${stats.count.toLocaleString()}건 기준` : "데이터 없음"}>
+      {stats ? (
+        <div className="grid grid-cols-5 gap-2">
+          {rows.map((r) => (
+            <div key={r.label} className="bg-dash-bg rounded-xl p-3 text-center">
+              <p className="text-dash-muted text-[10px] uppercase tracking-wide mb-1">{r.label}</p>
+              <p className={`text-sm font-semibold ${r.tone}`}>{r.value}ms</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>
+      )}
+    </Card>
+  );
+}
+
 function RecentLogsTable({ events }) {
   const [query, setQuery] = useState("");
   const [levelFilter, setLevelFilter] = useState("ALL");
+  const [sourceFilter, setSourceFilter] = useState("ALL");
 
+  const sourceOptions = useMemo(
+    () => Array.from(new Set(events.map((l) => l.source))).sort(),
+    [events]
+  );
+
+  // AND 조합: 레벨 AND 소스 AND 키워드 — 셋 다 만족하는 로그만 남김.
   const filtered = useMemo(() => {
     return events.filter((l) => {
       const matchesLevel = levelFilter === "ALL" || l.level === levelFilter;
+      const matchesSource = sourceFilter === "ALL" || l.source === sourceFilter;
       const q = query.trim().toLowerCase();
       const matchesQuery =
         q === "" || l.message.toLowerCase().includes(q) || l.source.toLowerCase().includes(q);
-      return matchesLevel && matchesQuery;
+      return matchesLevel && matchesSource && matchesQuery;
     });
-  }, [events, query, levelFilter]);
+  }, [events, query, levelFilter, sourceFilter]);
 
   return (
     <Card
@@ -351,12 +420,38 @@ function RecentLogsTable({ events }) {
         </div>
       }
     >
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Filter by message or source..."
-        className="w-full bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-2 mb-3 outline-none focus:ring-1 focus:ring-dash-mint"
-      />
+      <div className="flex flex-wrap gap-2 mb-3">
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          className="bg-dash-bg text-sm text-dash-fg rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-dash-mint"
+        >
+          <option value="ALL">모든 소스</option>
+          {sourceOptions.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter by message or source..."
+          className="flex-1 min-w-[200px] bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-dash-mint"
+        />
+      </div>
+      {(levelFilter !== "ALL" || sourceFilter !== "ALL" || query.trim() !== "") && (
+        <p className="text-dash-faint text-[11px] -mt-2 mb-3">
+          조건:{" "}
+          {[
+            levelFilter !== "ALL" && `레벨=${levelFilter}`,
+            sourceFilter !== "ALL" && `소스=${sourceFilter}`,
+            query.trim() !== "" && `키워드="${query.trim()}"`,
+          ]
+            .filter(Boolean)
+            .join(" AND ")}
+        </p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -425,6 +520,8 @@ export function DashboardContent() {
         </div>
         <LevelDistributionChart events={rangeEvents} />
       </div>
+
+      <LatencyStatsPanel events={rangeEvents} />
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2">

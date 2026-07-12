@@ -51,7 +51,32 @@ function weightedRandomLevel() {
 function randomFrom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
- 
+
+// Rough "typical" response time (ms) per level — errors/warnings skew slower
+// (timeouts, retries, upstream waits) while INFO/DEBUG stay fast. Used to
+// synthesize a `durationMs` field on every event so a p50/p90/p99 latency
+// panel has something realistic to summarize (quantile_over_time equivalent).
+const LEVEL_LATENCY_BASE_MS = {
+  EMERGENCY: 900,
+  CRITICAL: 550,
+  MAJOR: 380,
+  MINOR: 160,
+  WARNING: 240,
+  NOTICE: 90,
+  INFO: 65,
+  TRACE: 18,
+  DEBUG: 12,
+};
+
+// Exponential-ish jitter on top of the base gives a realistic right-skewed
+// latency distribution (long tail) instead of a flat/uniform one — p99 ends
+// up meaningfully higher than p50, like real request latency does.
+function randomLatencyMs(level) {
+  const base = LEVEL_LATENCY_BASE_MS[level] ?? 60;
+  const jitter = -Math.log(1 - Math.random()) * base * 0.7;
+  return Math.max(1, Math.round(base * 0.35 + jitter));
+}
+
 function generateEvents(count, lookbackMs) {
   const events = [];
   for (let i = 0; i < count; i++) {
@@ -63,6 +88,7 @@ function generateEvents(count, lookbackMs) {
       level,
       source: randomFrom(SOURCES),
       message: randomFrom(MESSAGES[level] || MESSAGES.INFO),
+      durationMs: randomLatencyMs(level),
     });
   }
   return events.sort((a, b) => b.timestamp - a.timestamp);
@@ -90,6 +116,32 @@ export function topSourcesFor(events) {
   return Object.entries(counts)
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
+}
+
+// Nearest-rank percentile — same convention Loki/Prometheus's
+// quantile_over_time uses. `values` need not be pre-sorted.
+export function percentile(values, p) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+
+// p50/p90/p99 + avg/max over a set of events' durationMs — the
+// quantile_over_time-style numeric-field stats the Overview page was
+// missing (API 레이턴시 p99 같은 SOC 신뢰도 지표).
+export function latencyStatsFor(events) {
+  const values = events.map((e) => e.durationMs).filter((v) => typeof v === "number");
+  if (!values.length) return null;
+  const sum = values.reduce((a, b) => a + b, 0);
+  return {
+    count: values.length,
+    avg: Math.round(sum / values.length),
+    max: Math.max(...values),
+    p50: percentile(values, 50),
+    p90: percentile(values, 90),
+    p99: percentile(values, 99),
+  };
 }
  
 // Default snapshot (last 24h) — used wherever a component hasn't opted into

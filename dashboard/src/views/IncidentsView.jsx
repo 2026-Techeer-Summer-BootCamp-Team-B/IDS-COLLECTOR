@@ -6,6 +6,7 @@ import { ATTACK_EVENTS, ATTACK_TYPES, byAttackType, bySource, byIp } from "../da
 import { MOCK_NOW } from "../data/mockLogs";
 import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
 
 function tooltipStyle(C) {
   return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
@@ -139,6 +140,7 @@ function SourceDonut() {
   );
 }
 
+// 최근 탐지/차단 로그 8건을 테이블로 보여주고, 검색/차단 버튼 제공.
 function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
   const { theme } = useTheme();
   const [query, setQuery] = useState("");
@@ -346,18 +348,34 @@ export default function IncidentsView({
               {selected.firstDetected}
             </p>
           </div>
-          {selectedResolved ? (
-            <span className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap">
-              조치 완료
-            </span>
-          ) : (
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => onResolveIncident?.(selected)}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25"
+              onClick={() => exportIncidentCSV(selected)}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
+              title="이 인시던트를 CSV로 내보내기"
             >
-              조사완료 · 소스 IP 차단
+              CSV 내보내기
             </button>
-          )}
+            <button
+              onClick={() => exportIncidentPDF(selected)}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
+              title="이 인시던트를 PDF 리포트로 내보내기"
+            >
+              PDF 내보내기
+            </button>
+            {selectedResolved ? (
+              <span className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap">
+                조치 완료
+              </span>
+            ) : (
+              <button
+                onClick={() => onResolveIncident?.(selected)}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25"
+              >
+                조사완료 · 소스 IP 차단
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">

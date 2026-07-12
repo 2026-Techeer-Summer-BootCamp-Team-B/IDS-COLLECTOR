@@ -11,6 +11,7 @@ import { useLiveAttackFeed } from "./hooks/useLiveFeed";
 import { useTheme } from "./hooks/useTheme";
 import { incidentStats } from "./data/incidents";
 import { SEED_AUDIT_LOG } from "./data/auditLog";
+import { RULES } from "./data/rules";
 
 /**
  * SENTINEL-OPS app shell — left sidebar switches between screens.
@@ -188,6 +189,7 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [resolvedIncidentIds, setResolvedIncidentIds] = useState({});
   const [actedEventIds, setActedEventIds] = useState({});
+  const [rules, setRules] = useState(RULES);
 
   function logAction({ action, target, ip, user = "용욱님" }) {
     setAuditLog((prev) => [{ id: Date.now(), timestamp: new Date(), user, action, target, ip }, ...prev]);
@@ -214,6 +216,18 @@ export default function App() {
     });
   }
 
+  function toggleRule(ruleId) {
+    const rule = rules.find((r) => r.id === ruleId);
+    if (!rule) return;
+    const nextEnabled = !rule.enabled;
+    setRules((prev) => prev.map((r) => (r.id === ruleId ? { ...r, enabled: nextEnabled } : r)));
+    logAction({
+      action: `탐지 룰 ${nextEnabled ? "활성화" : "비활성화"} (${rule.name})`,
+      target: rule.id,
+      ip: "-",
+    });
+  }
+
   return (
     <div className="flex min-h-screen bg-dash-bg font-sans">
       <Sidebar active={active} onSelect={setActive} open={sidebarOpen} />
@@ -232,7 +246,7 @@ export default function App() {
           )}
           {active === "attack" && <AttackMatrixView />}
           {active === "infra" && <InfrastructureView />}
-          {active === "admin" && <AdminAuditView auditLog={auditLog} />}
+          {active === "admin" && <AdminAuditView auditLog={auditLog} rules={rules} onToggleRule={toggleRule} />}
         </main>
         <LiveTicker feed={feed} />
       </div>

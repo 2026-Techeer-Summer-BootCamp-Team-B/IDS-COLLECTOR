@@ -1,8 +1,59 @@
 import React, { useMemo } from "react";
-import { ATTACK_EVENTS, byK8sTarget, byCountry } from "../data/attackEvents";
+import { ATTACK_EVENTS, byK8sTarget, byCountry, sourceHealth } from "../data/attackEvents";
 import WorldMap from "../components/WorldMap";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+
+const STATUS_META = {
+  healthy: { label: "정상 수신중" },
+  warning: { label: "수신 지연" },
+  critical: { label: "무응답 (장애 의심)" },
+};
+
+function formatSilence(ms) {
+  if (!isFinite(ms)) return "로그 수신 이력 없음";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "방금 전";
+  if (mins < 60) return `${mins}분 전 마지막 수신`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}시간 ${mins % 60}분 전 마지막 수신`;
+  return `${Math.floor(hours / 24)}일 전 마지막 수신`;
+}
+
+// absent_over_time 스타일 헬스체크 — WAS/Falco/K8s Audit 중 하나가 일정 시간
+// 조용해지면(에이전트 다운, 파이프라인 장애 의심) 여기서 바로 드러남.
+function SourceHealthPanel() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const health = useMemo(() => sourceHealth(), []);
+  const statusColor = { healthy: C.mint, warning: C.high, critical: C.critical };
+
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">소스 헬스체크</h3>
+      <p className="text-dash-muted text-xs mb-4">
+        3계층(WAS / Falco / K8s Audit) 중 하나가 조용해지면 파이프라인 장애 신호로 간주
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {health.map((h) => {
+          const color = statusColor[h.status];
+          return (
+            <div key={h.source} className="bg-dash-bg rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-dash-fg text-sm font-medium">{h.source}</span>
+                <span className="flex items-center gap-1.5 text-[11px]" style={{ color }}>
+                  <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: color }} />
+                  {STATUS_META[h.status].label}
+                </span>
+              </div>
+              <p className="text-dash-muted text-[11px]">{formatSilence(h.silentMs)}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function intensityColor(count, max, C) {
   const ratio = max ? count / max : 0;
@@ -37,6 +88,8 @@ export default function InfrastructureView() {
 
   return (
     <div className="space-y-6">
+      <SourceHealthPanel />
+
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-dash-surface rounded-2xl p-5">
           <h3 className="text-dash-fg text-sm font-semibold mb-1">Top 공격 대상 (Namespace / Pod)</h3>

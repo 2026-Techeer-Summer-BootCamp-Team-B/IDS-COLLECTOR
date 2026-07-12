@@ -2,7 +2,27 @@ import React, { useMemo } from "react";
 import { RULES, byRuleHits } from "../data/rules";
 import { ATTACK_EVENTS } from "../data/attackEvents";
 
-function RuleRow({ rule, rank }) {
+function RuleToggle({ enabled, onToggle }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={enabled}
+      onClick={onToggle}
+      className={`relative w-8 h-4.5 rounded-full transition-colors shrink-0 ${
+        enabled ? "bg-dash-mint" : "bg-dash-surfaceAlt"
+      }`}
+      title={enabled ? "클릭하여 비활성화" : "클릭하여 활성화"}
+    >
+      <span
+        className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-dash-bg transition-transform ${
+          enabled ? "translate-x-[17px]" : "translate-x-0.5"
+        }`}
+      />
+    </button>
+  );
+}
+
+function RuleRow({ rule, rank, onToggle }) {
   return (
     <div className="flex items-center gap-3 py-2.5 border-t border-dash-surfaceAlt first:border-t-0 first:pt-0">
       <span className="text-dash-muted text-xs w-4">{String(rank).padStart(2, "0")}</span>
@@ -20,21 +40,24 @@ function RuleRow({ rule, rank }) {
         <p className="text-dash-muted text-[11px] truncate">{rule.description}</p>
       </div>
       <span className="text-dash-fg text-sm font-semibold w-14 text-right shrink-0">{rule.hits}건</span>
+      <RuleToggle enabled={rule.enabled} onToggle={() => onToggle?.(rule.id)} />
     </div>
   );
 }
 
-export default function AdminAuditView({ auditLog = [] }) {
-  const ranked = useMemo(() => byRuleHits(ATTACK_EVENTS), []);
+export default function AdminAuditView({ auditLog = [], rules = RULES, onToggleRule }) {
+  const ranked = useMemo(() => byRuleHits(ATTACK_EVENTS, rules), [rules]);
 
   return (
     <div className="space-y-6">
       <div className="bg-dash-surface rounded-2xl p-5">
         <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹</h3>
-        <p className="text-dash-muted text-xs mb-1">최근 7일 · 어느 룰이 제일 많이 걸리는지 · 총 {RULES.length}개 룰</p>
+        <p className="text-dash-muted text-xs mb-1">
+          최근 7일 · 어느 룰이 제일 많이 걸리는지 · 총 {rules.length}개 룰 · 스위치로 켜고 끌 수 있음
+        </p>
         <div>
           {ranked.map((r, i) => (
-            <RuleRow key={r.id} rule={r} rank={i + 1} />
+            <RuleRow key={r.id} rule={r} rank={i + 1} onToggle={onToggleRule} />
           ))}
         </div>
       </div>

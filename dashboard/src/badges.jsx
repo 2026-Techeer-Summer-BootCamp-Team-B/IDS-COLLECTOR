@@ -1,6 +1,4 @@
 import React from "react";
-import { useTheme } from "../hooks/useTheme";
-import { forTheme } from "../data/theme";
 
 /**
  * Shared badges for the SENTINEL-OPS views (Incidents, ATT&CK).
@@ -26,13 +24,11 @@ export const SOURCE_META = {
 };
 
 export function SeverityBadge({ level }) {
-  const { theme } = useTheme();
   const meta = SEVERITY_META[level] || SEVERITY_META.LOW;
-  const color = forTheme(meta.color, theme);
   return (
     <span
       className="text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded"
-      style={{ color, backgroundColor: `${color}22` }}
+      style={{ color: meta.color, backgroundColor: `${meta.color}22` }}
     >
       {meta.label}
     </span>
@@ -40,13 +36,11 @@ export function SeverityBadge({ level }) {
 }
 
 export function SourceBadge({ source }) {
-  const { theme } = useTheme();
   const meta = SOURCE_META[source] || { label: source, color: "#87888C" };
-  const color = forTheme(meta.color, theme);
   return (
     <span
       className="text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap"
-      style={{ color, backgroundColor: `${color}1A` }}
+      style={{ color: meta.color, backgroundColor: `${meta.color}1A` }}
     >
       {meta.label}
     </span>
@@ -54,10 +48,9 @@ export function SourceBadge({ source }) {
 }
 
 export function StatusDot({ status }) {
-  const { theme } = useTheme();
   // status: "IN_PROGRESS" | "RESOLVED"
   const isLive = status === "IN_PROGRESS";
-  const color = forTheme(isLive ? "#F2617A" : "#8FE3B0", theme);
+  const color = isLive ? "#F2617A" : "#8FE3B0";
   return (
     <span className="flex items-center gap-1 text-[11px] whitespace-nowrap" style={{ color }}>
       <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: color }} />

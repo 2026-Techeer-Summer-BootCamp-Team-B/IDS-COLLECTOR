@@ -67,3 +67,37 @@ export function bucketEvents(events, preset, now) {
   });
   return buckets;
 }
+
+// Baseline-vs-spike detection for the Log Volume chart: baseline = median of
+// the visible range's non-zero buckets, spike = the single peak bucket if
+// it's at least `thresholdRatio`x the baseline. Deliberately simple (no
+// historical/seasonal model) — good enough to flag "평소 대비 N% 급증" without
+// a real anomaly-detection backend.
+export function detectSpike(values, { minSamples = 4, thresholdRatio = 1.5 } = {}) {
+  const nonZero = values.filter((v) => v > 0);
+  if (nonZero.length < minSamples) return null;
+
+  const sorted = [...nonZero].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  if (median <= 0) return null;
+
+  let peakIndex = -1;
+  let peakValue = -Infinity;
+  values.forEach((v, i) => {
+    if (v > peakValue) {
+      peakValue = v;
+      peakIndex = i;
+    }
+  });
+
+  const ratio = peakValue / median;
+  if (ratio < thresholdRatio) return null;
+
+  return {
+    index: peakIndex,
+    value: peakValue,
+    baseline: Math.round(median),
+    pctOverBaseline: Math.round((ratio - 1) * 100),
+  };
+}

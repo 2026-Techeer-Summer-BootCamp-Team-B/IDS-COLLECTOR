@@ -167,7 +167,18 @@ function generateAttackEvents(count, lookbackMs) {
 }
  
 // 7 days of history — enough for the "최근 7일" framing used across these views.
-export const ATTACK_EVENTS = generateAttackEvents(600, 7 * 24 * 60 * 60 * 1000);
+const RAW_ATTACK_EVENTS = generateAttackEvents(600, 7 * 24 * 60 * 60 * 1000);
+
+// Demo hook for the source health check (absent_over_time-style): silence
+// K8s Audit for the most recent stretch so the "소스가 조용해졌다" state in
+// SourceHealthPanel actually has something to show, instead of relying on
+// Math.random() to happen to leave a gap. WAS/Falco stay untouched (still
+// noisy/healthy) so the panel shows a realistic mixed picture, not everything red.
+const K8S_AUDIT_SILENCE_MS = 3 * 60 * 60 * 1000; // 3h
+const silenceCutoff = MOCK_NOW.getTime() - K8S_AUDIT_SILENCE_MS;
+export const ATTACK_EVENTS = RAW_ATTACK_EVENTS.filter(
+  (e) => !(e.source === "K8s Audit" && e.timestamp.getTime() > silenceCutoff)
+);
  
 // ---------- aggregations (each view below is just one of these) ----------
  
@@ -199,6 +210,36 @@ export function byIp(events) {
     .sort((a, b) => b.count - a.count);
 }
  
+// ---------- source health (absent_over_time 대응) ----------
+
+// The 3 defense layers this whole project correlates — a healthcheck panel
+// watches all 3 regardless of how much data happens to be in `events`.
+export const MONITORED_SOURCES = ["WAS", "Falco", "K8s Audit"];
+
+const HEALTH_THRESHOLDS_MS = {
+  warning: 30 * 60 * 1000, // 30분 조용하면 경고
+  critical: 2 * 60 * 60 * 1000, // 2시간 조용하면 심각 (에이전트 다운/파이프라인 장애 의심)
+};
+
+// Per-source "언제 마지막으로 로그를 봤는지" + 그로부터 상태(healthy/warning/critical).
+// Loki의 absent_over_time(...) 알림과 같은 개념: 특정 소스가 일정 시간 조용하면
+// 그 자체가 이상신호(에이전트 다운, 파이프라인 장애)라는 판단.
+export function sourceHealth(events = ATTACK_EVENTS, now = MOCK_NOW.getTime()) {
+  return MONITORED_SOURCES.map((source) => {
+    const matching = events.filter((e) => e.source === source);
+    const lastSeen = matching.length
+      ? matching.reduce((latest, e) => Math.max(latest, e.timestamp.getTime()), 0)
+      : null;
+    const silentMs = lastSeen === null ? Infinity : now - lastSeen;
+
+    let status = "healthy";
+    if (silentMs >= HEALTH_THRESHOLDS_MS.critical) status = "critical";
+    else if (silentMs >= HEALTH_THRESHOLDS_MS.warning) status = "warning";
+
+    return { source, lastSeen, silentMs, status };
+  });
+}
+
 export function byK8sTarget(events) {
   const grouped = events.reduce((acc, e) => {
     const key = `${e.namespace}/${e.pod}`;
