@@ -35,7 +35,7 @@ scenarios:
       min_severity: 4
     stage2:
       event_module: falco
-      event_action: ["Terminal shell in container", "Contact K8s API Server From Container"]
+      event_action: ["Terminal shell in container", "Contact K8S API Server From Container"]
     severity: 4
     mitre_technique_id: "T1190"
 
