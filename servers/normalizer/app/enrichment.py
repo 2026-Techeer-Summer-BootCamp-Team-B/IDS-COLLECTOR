@@ -7,7 +7,7 @@ falco/audit는 자기 payload에서 orchestrator.*를 동적으로 이미 채우
 from typing import Any, Dict
 
 from app.geoip import lookup as geoip_lookup
-from app.schemas import NormalizedEvent
+from ids_shared.schemas import NormalizedEvent
 
 # TODO: 단일 타깃 전제 - 실제 배포된 pod 이름이 바뀌면 여기만 교체하면 됨
 # (나중엔 K8s API 조회로 대체 가능).

@@ -6,3 +6,6 @@ asyncpg==0.30.0
 redis==5.2.1
 httpx==0.28.1
 opensearch-py[async]==2.8.0
+clickhouse-connect==0.8.3
+aiokafka==0.12.0
+./shared

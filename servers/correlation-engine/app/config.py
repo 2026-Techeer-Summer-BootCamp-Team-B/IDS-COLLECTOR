@@ -11,8 +11,9 @@ class Settings(BaseSettings):
 
     postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
 
-    # scenarios.yaml 경로 - app 패키지 기준 상대경로 (app/main.py에서 resolve).
-    scenarios_config_path: str = "scenarios.yaml"
+    # 시나리오 정의 디렉터리 - app 패키지 기준 상대경로 (app/main.py에서 resolve).
+    # 이 안의 *.yaml 파일을 전부 읽어서 합친다 (app/scenarios/README.md 참고).
+    scenarios_config_path: str = "scenarios"
 
     class Config:
         env_file = ".env"

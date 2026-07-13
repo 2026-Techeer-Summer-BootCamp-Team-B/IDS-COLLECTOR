@@ -4,7 +4,12 @@ networks:
 
 services:
   normalizer:
-    build: ./normalizer
+    # 빌드 컨텍스트를 servers/ 루트로 잡는다 - normalizer/correlation-engine이 공유하는
+    # NormalizedEvent 스키마(shared/ids_shared)를 이미지에 COPY하려면 각자의 하위
+    # 디렉터리만으로는 컨텍스트 밖이라 접근이 안 된다.
+    build:
+      context: .
+      dockerfile: normalizer/Dockerfile
     container_name: normalizer
     restart: unless-stopped
     environment:
@@ -21,7 +26,9 @@ services:
       - siem-net
 
   correlation-engine:
-    build: ./correlation-engine
+    build:
+      context: .
+      dockerfile: correlation-engine/Dockerfile
     container_name: correlation-engine
     restart: unless-stopped
     environment:
@@ -37,7 +44,12 @@ services:
       - siem-net
 
   platform-api:
-    build: ./platform-api
+    # normalizer/correlation-engine과 같은 이유로 빌드 컨텍스트를 servers/ 루트로
+    # 잡는다 - mitre_mapping 카탈로그(shared/ids_shared)를 이미지에 COPY하려면
+    # 각자의 하위 디렉터리만으로는 컨텍스트 밖이라 접근이 안 된다.
+    build:
+      context: .
+      dockerfile: platform-api/Dockerfile
     container_name: platform-api
     restart: unless-stopped
     environment:

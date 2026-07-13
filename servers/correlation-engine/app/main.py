@@ -5,9 +5,9 @@ events.normalized를 실시간 소비 -> 시나리오 룰 평가(threshold/seque
 발화 시 인시던트 upsert(PG, app/incidents.py) + Redis pub/sub 발행(대시보드 WebSocket
 푸시용 - 실제 WebSocket 서버는 platform-api/dashboard 쪽에서 이 채널을 구독한다).
 
-시나리오 정의는 scenarios.yaml(YAML 선언 룰)에서 로드한다 - 지금 들어있는 stage1/stage2
-매칭 조건은 엔진 동작 검증용 예시고, 실제 공격 체인 정의는 팀 설계 후 그 파일만
-교체하면 된다.
+시나리오 정의는 app/scenarios/ 디렉터리 밑의 *.yaml 파일들(카테고리별로 분리,
+app/scenarios/README.md 참고)에서 로드한다 - falcosecurity/plugins의 실제 K8s
+audit 룰에 근거한 설계다(예시가 아님).
 
 실행 방법 (컨테이너):
     servers/docker-compose.yml에 포함되어 있음 - 저장소 루트에서 `make up`
@@ -25,10 +25,11 @@ import yaml
 from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI
 
-from app import incidents, mitre_mapping
+from app import incidents
 from app.config import settings
 from app.rules import ScenarioEngine
-from app.schemas import NormalizedEvent
+from ids_shared import mitre_mapping
+from ids_shared.schemas import NormalizedEvent
 
 app = FastAPI(title="IDS Correlation Engine")
 
@@ -41,13 +42,28 @@ INCIDENT_CHANNEL = "incidents:events"
 
 
 def _load_scenarios() -> list:
+    """scenarios_config_path 디렉터리 밑의 *.yaml 파일을 전부 읽어서 하나의 목록으로
+    합친다 - 카테고리별로 파일을 나눈 건 순전히 가독성 때문이고(app/scenarios/README.md
+    참고) 엔진 입장에서는 파일이 몇 개든 차이가 없다. 파일 이름 순으로 정렬해서
+    읽으므로 로드 순서(=평가 순서)는 결정적이다."""
     path = Path(settings.scenarios_config_path)
     if not path.is_absolute():
         path = Path(__file__).resolve().parent / path
-    with open(path, "r", encoding="utf-8") as f:
-        scenarios = yaml.safe_load(f)["scenarios"]
 
-    # scenario_rules.id는 PostgreSQL UUID 컬럼이라, YAML의 사람이 읽는 코드(S1/S2/S4)를
+    scenarios: list = []
+    seen_ids: dict = {}
+    for yaml_path in sorted(path.glob("*.yaml")):
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            file_scenarios = yaml.safe_load(f)["scenarios"]
+        for scenario in file_scenarios:
+            dup_source = seen_ids.get(scenario["id"])
+            assert dup_source is None, (
+                f"시나리오 id 중복: {scenario['id']} ({dup_source.name}, {yaml_path.name})"
+            )
+            seen_ids[scenario["id"]] = yaml_path
+        scenarios.extend(file_scenarios)
+
+    # scenario_rules.id는 PostgreSQL UUID 컬럼이라, YAML의 사람이 읽는 코드(S1/S2/...)를
     # 결정적으로 UUID로 변환해서 db_id에 얹는다 - 같은 코드는 재시작해도 항상 같은
     # UUID가 나오므로 sync_scenario_rules가 매번 같은 행을 덮어쓴다(중복 insert 없음).
     for scenario in scenarios:
@@ -79,6 +95,16 @@ async def _consume_loop():
 
     await incidents.start()
     await incidents.sync_scenario_rules(scenarios)
+
+    # platform-api의 PATCH /scenarios/{id}/enabled 토글은 Redis 키
+    # scenario:enabled:{id}로 실시간 반영된다(ScenarioEngine.evaluate() 참고) -
+    # 엔진이 뜰 때마다 Postgres의 현재 값으로 그 키들을 다시 시드해서, Redis가
+    # 재시작/플러시돼 토글 상태를 잃어버려도 Postgres 기준으로 자가 복구되게 한다.
+    enabled_map = await incidents.fetch_enabled_map()
+    for scenario in scenarios:
+        enabled = enabled_map.get(scenario["db_id"], True)
+        await _redis.set(f"scenario:enabled:{scenario['db_id']}", "1" if enabled else "0")
+
     print(f"[correlation] 시작 - topic={settings.kafka_normalized_topic}")
 
     try:
