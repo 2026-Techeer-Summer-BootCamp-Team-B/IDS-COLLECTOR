@@ -76,29 +76,34 @@ def _row_to_incident(row) -> IncidentOut:
 
 
 @router.get("", response_model=List[IncidentOut])
-async def list_incidents(status: Optional[str] = None, limit: int = 50):
+async def list_incidents(status: Optional[str] = None, since: Optional[str] = None, limit: int = 50):
+    """since(ISO8601)를 주면 그 시각 이후 생성된 인시던트만 오래된순으로 반환한다 -
+    프론트가 실시간 CRITICAL 팝업을 WebSocket 대신 이 파라미터로 3~5초 주기 폴링해서
+    구현한다(2026-07-13, 마지막으로 확인한 시각을 다음 호출의 since로 그대로 넘기면 됨).
+    since가 없는 기본 호출(목록 화면)은 기존대로 최신순."""
     limit = min(limit, 500)
+    clauses = []
+    params: List[Any] = []
+    if status:
+        params.append(status)
+        clauses.append(f"status = ${len(params)}")
+    if since:
+        params.append(since)
+        clauses.append(f"created_at > ${len(params)}")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    order = "created_at ASC" if since else "updated_at DESC"
+    params.append(limit)
+
     async with pool().acquire() as conn:
-        if status:
-            rows = await conn.fetch(
-                """
-                SELECT id, title, correlation_key_type, correlation_key_value, severity,
-                       status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at
-                FROM incidents WHERE status = $1
-                ORDER BY updated_at DESC LIMIT $2
-                """,
-                status,
-                limit,
-            )
-        else:
-            rows = await conn.fetch(
-                """
-                SELECT id, title, correlation_key_type, correlation_key_value, severity,
-                       status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at
-                FROM incidents ORDER BY updated_at DESC LIMIT $1
-                """,
-                limit,
-            )
+        rows = await conn.fetch(
+            f"""
+            SELECT id, title, correlation_key_type, correlation_key_value, severity,
+                   status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at
+            FROM incidents {where}
+            ORDER BY {order} LIMIT ${len(params)}
+            """,
+            *params,
+        )
     return [_row_to_incident(r) for r in rows]
 
 

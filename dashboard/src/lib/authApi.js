@@ -106,23 +106,15 @@ export function logout() {
   return apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
 }
 
-// ---- WebSocket ----
+// ---- /incidents (servers/platform-api/app/incidents_api.py) ----
 
-// /ws/incidents(상관분석 발화 릴레이)에 쿼리스트링으로 토큰을 붙여서 접속
-// URL을 만든다. 브라우저 WebSocket API는 연결 실패 사유(401/403 등)를 코드로
-// 읽을 방법이 없어서, 실제로 열기 전에 fetchSession()으로 토큰이 아직
-// 유효한지 먼저 확인하는 걸 권장 — 호출부에서 fetchSession() 성공 후에만
-// 이 함수로 연결하면 됨.
-//
-// 참고: /ws/events는 servers/platform-api에 아직 라우터가 없다(현재는
-// /ws/incidents만 존재, app/websocket.py). 필요해지면 그때 이 헬퍼를
-// 그대로 재사용하면 된다.
-export function wsUrl(path) {
-  const token = getToken();
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  if (/^https?:\/\//.test(API_BASE)) {
-    return `${API_BASE.replace(/^http/, "ws")}${path}${query}`;
-  }
-  const origin = window.location.origin.replace(/^http/, "ws");
-  return `${origin}${API_BASE}${path}${query}`;
+// 인시던트 실시간 팝업은 WebSocket이 아니라 짧은 주기(3~5초) REST 폴링으로 구현한다
+// (2026-07-13, servers 쪽에서 /ws/incidents 자체를 제거하고 GET /incidents?since=로
+// 대체 — 일반 Authorization 헤더를 그대로 쓸 수 있어 WS 핸드셰이크의 `?token=` 우회가
+// 필요 없어졌다). since를 안 주면 최신순 목록(기존 화면용), since(ISO8601)를 주면 그
+// 시각 이후 생성된 인시던트만 오래된순으로 온다 — 호출부는 마지막으로 받은 항목의
+// created_at을 다음 호출의 since로 그대로 넘기면 된다.
+export function fetchIncidentsSince(since) {
+  const qs = since ? `?since=${encodeURIComponent(since)}` : "";
+  return apiGet(`/incidents${qs}`);
 }
