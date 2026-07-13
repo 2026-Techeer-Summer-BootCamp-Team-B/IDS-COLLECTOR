@@ -74,39 +74,29 @@ async def get_stats(start: Optional[str] = None, end: Optional[str] = None) -> D
     }
 
 
-@router.get("/attack-types")
-async def get_attack_types(
-    start: Optional[str] = None, end: Optional[str] = None, limit: int = 10
-) -> List[Dict[str, Any]]:
-    """공격 유형(attackType) 분류 - ClickHouse가 아니라 OpenSearch를 쓴다
-    (event.action/rule.name이 필요한데 security_events_analytics엔 그 컬럼이 없음).
-    was/k8s_audit은 소스에 attack_type 개념 자체가 없어서 이번 분류 대상이 아니다."""
-    filters = _time_filters(start, end)
+@router.get("/top-ips")
+async def get_top_ips(start: Optional[str] = None, end: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
+    """공격 발원지 IP Top-N — source.ip(attack-logs-* 템플릿에서 type: ip) terms
+    aggregation. 프론트 대시보드 Overview의 "Top Sources" 패널이 소비 (원래는
+    api-gateway 같은 서비스 이름 기준 mock 집계였는데, 실제 데이터 연동하면서
+    "어떤 IP가 제일 많이 찍히는지" 기준으로 의미가 바뀜)."""
+    query: Dict[str, Any] = {"match_all": {}}
+    if start or end:
+        time_range: Dict[str, str] = {}
+        if start:
+            time_range["gte"] = start
+        if end:
+            time_range["lte"] = end
+        query = {"bool": {"filter": [{"range": {"@timestamp": time_range}}]}}
 
-    waf_result = await opensearch_client.search(
+    result = await opensearch_client.search(
         index=settings.attack_log_index_pattern,
         body={
             "size": 0,
-            "query": _module_query("waf", filters),
-            "aggs": {"types": {"terms": {"field": "event.action", "size": 50}}},
-        },
-    )
-    falco_result = await opensearch_client.search(
-        index=settings.attack_log_index_pattern,
-        body={
-            "size": 0,
-            "query": _module_query("falco", filters),
-            "aggs": {"types": {"terms": {"field": "rule.name", "size": 50}}},
+            "query": query,
+            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": min(limit, 50)}}},
         },
     )
 
-    counts: Dict[str, int] = defaultdict(int)
-    for b in waf_result["aggregations"]["types"]["buckets"]:
-        key = _WAF_ACTION_ALIASES.get(b["key"], b["key"])
-        counts[key] += b["doc_count"]
-    for b in falco_result["aggregations"]["types"]["buckets"]:
-        key = _FALCO_RULE_TO_ATTACK_TYPE.get(b["key"], "OTHER")
-        counts[key] += b["doc_count"]
-
-    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
-    return [{"attack_type": k, "count": v} for k, v in ranked[:limit]]
+    buckets = result["aggregations"]["by_ip"]["buckets"]
+    return {"items": [{"source_ip": b["key"], "count": b["doc_count"]} for b in buckets]}

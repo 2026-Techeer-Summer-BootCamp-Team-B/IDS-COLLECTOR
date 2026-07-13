@@ -127,10 +127,20 @@ Target 서버
 | `GET /incidents?status=&limit=` | 인시던트 목록. `status`는 `open`/`investigating`/`closed` |
 | `GET /incidents/{id}` | 인시던트 상세 |
 | `GET /incidents/{id}/events` | 인시던트에 묶인 이벤트 목록 (`event_id`, `event_module`, `added_at`) |
-| `PATCH /incidents/{id}/status` | 상태 변경. `open`→`investigating`→`closed` 선형 전이만 허용 (역행/건너뛰기는 400). admin만 |
-| `POST /auth/login` | `{username, password}` -> `{token}`. `users` 테이블(비밀번호는 pgcrypto bcrypt 해시) 실사용자 검증, 세션은 메모리 토큰 스토어. 인증 불필요 |
+| `PATCH /incidents/{id}/status` | 상태 변경. `open`→`investigating`→`closed` 선형 전이만 허용 (역행/건너뛰기는 400) |
+| `POST /auth/login` | `{username, password}` -> `{token}`. 스펙 미설계 스텁, 단일 관리자 계정 |
+| `GET /auth/session` | `Authorization: Bearer <token>` 검증 -> `{valid, username?}`. **role 필드 없음** (RBAC 미반영) |
+| `POST /auth/logout` | `Authorization: Bearer <token>` 필요. 토큰 폐기 -> `{status:"ok"}` |
+| `GET /stats?start=&end=` | ISO8601 구간 module/severity별 집계 |
+| `GET /stats/top-ips?start=&end=&limit=` | 공격 발원지 IP Top-N (`source.ip` terms agg) -> `{items:[{source_ip,count}]}` |
 | `GET /reports/trend?days=7` | AI 트렌드 리포트. `ANTHROPIC_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
 | `WS /ws/incidents?token=` | 상관분석 엔진이 발화할 때마다 인시던트 객체(JSON)를 그대로 push (연결 유지용 outbound는 없음) |
+
+인증/통계 엔드포인트는 현재 어느 것도 서버 쪽에서 Authorization을 강제하지 않는다
+(auth.py의 login/session/logout만 예외 — 토큰 발급/검증 자체가 목적이라 당연히
+검사함). 프론트는 로그인 후 모든 REST 호출에 `Authorization: Bearer <token>`을
+항상 붙이도록 만들어뒀지만(dashboard/src/lib/authApi.js), 백엔드가 그걸 실제로
+검사해서 401/403을 돌려주기 시작하는 건 role(RBAC) 모델이 들어온 다음 얘기.
 
 인시던트 JSON 형태(REST/WS 공통):
 ```json

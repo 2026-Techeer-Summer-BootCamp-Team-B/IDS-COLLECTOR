@@ -15,7 +15,8 @@ import {
   Cell,
   Sector,
 } from "recharts";
-import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, topSourcesFor, latencyStatsFor } from "../data/mockLogs";
+import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, latencyStatsFor } from "../data/mockLogs";
+import { useTopIps } from "../hooks/useTopIps";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
 import { RANGE_PRESETS, bucketEvents, detectSpike } from "../data/timeSeries";
 import { CHART_COLORS, forTheme } from "../data/theme";
@@ -295,38 +296,49 @@ export function LevelDistributionChart({ events }) {
   );
 }
 
-export function TopSources({ sources, limit = 5, highlighted = false }) {
+// GET /stats/top-ips 연동 이후로 "소스"는 서비스 이름이 아니라 공격 발원지
+// IP다. status/error가 오면(useTopIps) 로딩/에러 문구를 보여주고, 안 넘어오면
+// (다른 호출부가 여전히 즉시 계산된 배열을 넘기는 경우) 예전처럼 바로 렌더.
+export function TopSources({ sources, limit = 5, highlighted = false, status = "ready", error = null }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
   return (
     <Card
-      title="Top Log Sources"
-      subtitle={highlighted ? `전체 ${sources.length}개 소스` : "선택 구간 기준"}
+      title="Top Source IPs"
+      subtitle={highlighted ? `전체 ${sources.length}개 IP` : "선택 구간 기준"}
       className={highlighted ? "glow-box-mint" : ""}
     >
       <div className="space-y-3">
-        {sources.slice(0, limit).map((s, i) => (
-          <div key={s.name} className="flex items-center gap-3">
-            <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
-            <div className="flex-1">
-              <div className="flex justify-between text-xs mb-1">
-                <span className="text-dash-fg">{s.name}</span>
-                <span className="text-dash-muted">{s.count}</span>
-              </div>
-              <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${(s.count / max) * 100}%`,
-                    backgroundColor: i % 2 === 0 ? C.mint : C.pink,
-                  }}
-                />
+        {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
+        {status === "error" && (
+          <p className="text-dash-critical text-xs">{error || "데이터를 불러오지 못했습니다."}</p>
+        )}
+        {status !== "loading" &&
+          status !== "error" &&
+          sources.slice(0, limit).map((s, i) => (
+            <div key={s.name} className="flex items-center gap-3">
+              <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
+              <div className="flex-1">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-dash-fg font-mono">{s.name}</span>
+                  <span className="text-dash-muted">{s.count}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${(s.count / max) * 100}%`,
+                      backgroundColor: i % 2 === 0 ? C.mint : C.pink,
+                    }}
+                  />
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-        {sources.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
+          ))}
+        {status !== "loading" && status !== "error" && sources.length === 0 && (
+          <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>
+        )}
       </div>
     </Card>
   );
@@ -848,7 +860,12 @@ export function DashboardContent() {
     () => rangeEvents.filter((e) => KPI_FILTERS[kpiFilter](e.level)),
     [rangeEvents, kpiFilter]
   );
-  const displaySources = topSourcesFor(displayEvents);
+  // GET /stats/top-ips — 실제 백엔드 집계. kpiFilter가 SOURCES면 더 많이(limit
+  // 10) 보여주므로 그만큼 넉넉히 요청.
+  const { items: topIps, status: topIpsStatus, error: topIpsError } = useTopIps({
+    lookbackMs: preset.lookbackMs,
+    limit: kpiFilter === "SOURCES" ? 10 : 5,
+  });
 
   return (
     <div className="space-y-6">
@@ -944,7 +961,9 @@ export function DashboardContent() {
         </div>
         <div className="space-y-6">
           <TopSources
-            sources={displaySources}
+            sources={topIps}
+            status={topIpsStatus}
+            error={topIpsError}
             limit={kpiFilter === "SOURCES" ? 10 : 5}
             highlighted={kpiFilter === "SOURCES"}
           />

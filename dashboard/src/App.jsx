@@ -10,8 +10,10 @@ import K8sAuditView from "./views/K8sAuditView";
 import LiveTicker from "./components/LiveTicker";
 import CriticalAlertPopup from "./components/CriticalAlertPopup";
 import ToastStack from "./components/ToastStack";
+import LoginScreen from "./components/LoginScreen";
 import { useLiveAttackFeed } from "./hooks/useLiveFeed";
 import { useTheme } from "./hooks/useTheme";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { incidentStats } from "./data/incidents";
 import { SEED_AUDIT_LOG } from "./data/auditLog";
 import { RULES } from "./data/rules";
@@ -157,6 +159,7 @@ function ThemeToggle() {
 
 function TopBar({ sidebarOpen, onToggleSidebar }) {
   const [now, setNow] = useState(new Date());
+  const { username, logout } = useAuth();
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
@@ -180,6 +183,17 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
         <span>
           {time} {date} UTC+9
         </span>
+        {username && (
+          <span className="flex items-center gap-1.5 pl-3 border-l border-dash-surfaceAlt">
+            <span className="text-dash-fg">{username}</span>
+            <button
+              onClick={logout}
+              className="text-dash-muted hover:text-dash-critical px-1.5 py-1 rounded-md hover:bg-dash-surfaceAlt"
+            >
+              로그아웃
+            </button>
+          </span>
+        )}
         <ThemeToggle />
       </div>
     </header>
@@ -203,10 +217,13 @@ function Placeholder({ label }) {
   );
 }
 
-export default function App() {
+// 로그인 이후에만 렌더되는 실제 대시보드 셸. App() 아래에서 AuthProvider로
+// 감싼 채로만 마운트되므로 useAuth()가 항상 값을 갖는다.
+function AppShell() {
   const [active, setActive] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { feed, lastCritical } = useLiveAttackFeed();
+  const { isAdmin } = useAuth();
 
   // Fake response actions live here (not inside IncidentsView) so they
   // survive switching tabs — IncidentsView unmounts when you navigate away,
@@ -219,14 +236,29 @@ export default function App() {
   const [logPolicies, setLogPolicies] = useState(INITIAL_LOG_POLICIES);
   const [exclusionRules, setExclusionRules] = useState(INITIAL_EXCLUSION_RULES);
 
-  function logAction({ action, target, ip, user = "용욱님" }) {
-    setAuditLog((prev) => [{ id: Date.now(), timestamp: new Date(), user, action, target, ip }, ...prev]);
-    const toastId = Date.now() + 1;
-    setToasts((prev) => [...prev, { id: toastId, message: action, tone: "success" }]);
+  function pushToast(message, tone = "success") {
+    const toastId = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id: toastId, message, tone }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
   }
 
+  function logAction({ action, target, ip, user = "용욱님" }) {
+    setAuditLog((prev) => [{ id: Date.now(), timestamp: new Date(), user, action, target, ip }, ...prev]);
+    pushToast(action, "success");
+  }
+
+  // 쓰기 액션(룰 토글, 정책 변경, 인시던트 처리 등) 진입점마다 이걸 먼저 부른다.
+  // 지금은 로그인 = admin이라 항상 통과하지만(AuthContext.jsx의 isAdmin 주석
+  // 참고), role 필드가 세션 응답에 생기면 그때부터 실제로 걸러지기 시작한다 —
+  // 호출부는 손댈 필요 없음.
+  function requireAdmin() {
+    if (isAdmin) return true;
+    pushToast("이 작업은 관리자 권한이 필요합니다.", "error");
+    return false;
+  }
+
   function resolveIncident(incident) {
+    if (!requireAdmin()) return;
     setResolvedIncidentIds((prev) => ({ ...prev, [incident.id]: true }));
     logAction({
       action: `인시던트 조사 완료 처리 (${incident.id})`,
@@ -236,6 +268,7 @@ export default function App() {
   }
 
   function actOnEvent(event) {
+    if (!requireAdmin()) return;
     setActedEventIds((prev) => ({ ...prev, [event.id]: true }));
     logAction({
       action: `IP 차단 완료 (${event.sourceIp})`,
@@ -245,6 +278,7 @@ export default function App() {
   }
 
   function toggleRule(ruleId) {
+    if (!requireAdmin()) return;
     const rule = rules.find((r) => r.id === ruleId);
     if (!rule) return;
     const nextEnabled = !rule.enabled;
@@ -257,6 +291,7 @@ export default function App() {
   }
 
   function updatePolicy(layer, patch) {
+    if (!requireAdmin()) return;
     setLogPolicies((prev) => prev.map((p) => (p.layer === layer ? { ...p, ...patch } : p)));
     logAction({
       action: `데이터 정책 변경 (${layer}: ${Object.entries(patch)
@@ -268,6 +303,7 @@ export default function App() {
   }
 
   function toggleExclusion(ruleId) {
+    if (!requireAdmin()) return;
     const rule = exclusionRules.find((r) => r.id === ruleId);
     if (!rule) return;
     const nextEnabled = !rule.enabled;
@@ -317,5 +353,34 @@ export default function App() {
       <CriticalAlertPopup event={lastCritical} onInvestigate={() => setActive("incidents")} />
       <ToastStack toasts={toasts} />
     </div>
+  );
+}
+
+// 로그인 게이트. AuthProvider가 부팅 시 GET /auth/session으로 저장된 토큰을
+// 검증하는 동안은 스플래시를, 미인증이면 LoginScreen을, 인증되면 실제 대시보드
+// (AppShell)를 보여준다.
+function Gate() {
+  const { status } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen bg-dash-bg flex items-center justify-center">
+        <p className="text-dash-muted text-sm">세션 확인 중...</p>
+      </div>
+    );
+  }
+
+  if (status === "unauthenticated") {
+    return <LoginScreen />;
+  }
+
+  return <AppShell />;
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
   );
 }
