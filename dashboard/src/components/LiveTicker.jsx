@@ -1,19 +1,20 @@
 import React from "react";
 import { SOURCE_META } from "./badges";
-import { ATTACK_TYPES } from "../data/attackEvents";
 import { forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 
+// e = mapLogDoc() 결과(lib/normalizedEvent.js) — mock 시절의 attackType/blocked/
+// country 필드는 실제 이벤트엔 없어서(공격 유형 분류·차단 여부·GeoIP 국가명은
+// 파이프라인이 안 만듦) time/source/message/namespace·pod로만 구성한다.
 function describe(e, theme) {
-  const type = ATTACK_TYPES.find((t) => t.key === e.attackType);
   const src = SOURCE_META[e.source] || { label: e.source, color: "#8890B5" };
   const time = e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  return { time, type, src: { ...src, color: forTheme(src.color, theme) } };
+  return { time, src: { ...src, color: forTheme(src.color, theme) } };
 }
 
 // Bottom marquee of the live feed — purely cosmetic/"presence" signal, driven
-// by useLiveFeed.js. Renders the item list twice back-to-back so the CSS
-// scroll loop (-50%) is seamless.
+// by useLiveFeed.js (real WS /ws/events stream). Renders the item list twice
+// back-to-back so the CSS scroll loop (-50%) is seamless.
 export default function LiveTicker({ feed }) {
   const { theme } = useTheme();
   const items = feed.slice(0, 20);
@@ -35,25 +36,17 @@ export default function LiveTicker({ feed }) {
         <div className="overflow-hidden flex-1 min-w-0">
           <div className="flex whitespace-nowrap ticker-track w-max">
             {[...items, ...items].map((e, i) => {
-              const { time, type, src } = describe(e, theme);
+              const { time, src } = describe(e, theme);
               return (
-                <span
-                  key={`${e._liveId || e.id}-${i}`}
-                  className="text-xs text-dash-muted mx-4 flex items-center gap-1.5"
-                >
+                <span key={`${e.id}-${i}`} className="text-xs text-dash-muted mx-4 flex items-center gap-1.5">
                   <span className="text-dash-faint">{time}</span>
                   <span style={{ color: src.color }}>{src.label}</span>
-                  <span className="text-dash-fg">{type?.label}</span>
-                  <span className="text-dash-faint">
-                    · {e.namespace}/{e.pod}
-                  </span>
-                  <span
-                    className={`ml-1 text-[10px] px-1.5 py-0.5 rounded ${
-                      e.blocked ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-pink/15 text-dash-pink"
-                    }`}
-                  >
-                    {e.action}
-                  </span>
+                  <span className="text-dash-fg">{e.message}</span>
+                  {e.namespace && (
+                    <span className="text-dash-faint">
+                      · {e.namespace}/{e.pod}
+                    </span>
+                  )}
                 </span>
               );
             })}

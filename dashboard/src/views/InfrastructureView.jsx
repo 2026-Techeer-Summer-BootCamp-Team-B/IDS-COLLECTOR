@@ -1,9 +1,13 @@
 import React, { useMemo } from "react";
-import { ATTACK_EVENTS, byK8sTarget, byCountry, sourceHealth } from "../data/attackEvents";
+// sourceHealth는 대응하는 백엔드 엔드포인트가 아직 없어(consumer-lag/dlq-depth와는
+// 다른 "모듈별 last-seen" 개념) 계속 mock — 팀원과 논의 후 붙일 예정.
+import { ATTACK_EVENTS, sourceHealth } from "../data/attackEvents";
 import WorldMap from "../components/WorldMap";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
+import { useK8sTargets } from "../hooks/useK8sTargets";
+import { useGeoStats } from "../hooks/useGeoStats";
 
 const STATUS_META = {
   healthy: { label: "정상 수신중" },
@@ -174,8 +178,8 @@ function intensityTextColor(count, max, C) {
 export default function InfrastructureView() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const targets = useMemo(() => byK8sTarget(ATTACK_EVENTS), []);
-  const countries = useMemo(() => byCountry(ATTACK_EVENTS), []);
+  const { targets, status: targetsStatus, error: targetsError } = useK8sTargets({ limit: 20 });
+  const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 10 });
   const maxTarget = targets[0]?.count || 1;
 
   const byNamespace = useMemo(() => {
@@ -194,8 +198,13 @@ export default function InfrastructureView() {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-dash-surface rounded-2xl p-5">
-          <h3 className="text-dash-fg text-sm font-semibold mb-1">Top 공격 대상 (Namespace / Pod)</h3>
-          <p className="text-dash-muted text-xs mb-4">최근 7일 · 공격 탐지 건수 기준 순위</p>
+          <h3 className="text-dash-fg text-sm font-semibold mb-1">Top 공격 대상 (Namespace / Resource)</h3>
+          <p className="text-dash-muted text-xs mb-4">전체 기간 · 공격 탐지 건수 기준 순위</p>
+          {targetsStatus === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
+          {targetsStatus === "error" && <p className="text-dash-critical text-xs py-2">{targetsError}</p>}
+          {targetsStatus === "ready" && targets.length === 0 && (
+            <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
+          )}
           <div className="space-y-2.5">
             {targets.slice(0, 8).map((t, i) => (
               <div key={`${t.namespace}/${t.pod}`} className="flex items-center gap-3">
@@ -224,7 +233,10 @@ export default function InfrastructureView() {
 
         <div className="bg-dash-surface rounded-2xl p-5">
           <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
-          <p className="text-dash-muted text-xs mb-4">네임스페이스 &gt; Pod · 색이 진할수록 공격 집중</p>
+          <p className="text-dash-muted text-xs mb-4">네임스페이스 &gt; 리소스 · 색이 진할수록 공격 집중</p>
+          {targetsStatus === "ready" && targets.length === 0 && (
+            <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
+          )}
           <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
             {Object.entries(byNamespace).map(([ns, pods]) => (
               <div key={ns}>
@@ -238,7 +250,7 @@ export default function InfrastructureView() {
                         backgroundColor: `${intensityColor(p.count, maxTarget, C)}cc`,
                         color: intensityTextColor(p.count, maxTarget, C),
                       }}
-                      title={`${p.count}건 · 주요 유형 ${p.topAttackType}`}
+                      title={`${p.count}건`}
                     >
                       {p.pod} ({p.count})
                     </span>
@@ -253,8 +265,9 @@ export default function InfrastructureView() {
       <div className="bg-dash-surface rounded-2xl p-5">
         <div className="mb-4">
           <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
-          <p className="text-dash-muted text-xs mt-0.5">최근 7일 · 국가별 탐지 건수 (원 크기 = 건수)</p>
+          <p className="text-dash-muted text-xs mt-0.5">전체 기간 · 국가별 탐지 건수 (원 크기 = 건수)</p>
         </div>
+        {geoStatus === "error" && <p className="text-dash-critical text-xs mb-2">{geoError}</p>}
         <div className="h-80">
           <WorldMap points={countries} />
         </div>
