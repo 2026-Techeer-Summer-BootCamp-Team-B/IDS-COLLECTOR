@@ -3,7 +3,7 @@ import { apiGet, ApiError } from "../lib/authApi";
 
 // GET /stats/levels (servers/platform-api/app/stats_api.py) — Log Levels 차트의
 // 실데이터 소스 (event.severity 1~4, realSeverity.js와 짝).
-export function useLogLevels({ hours }) {
+export function useLogLevels({ hours, module }) {
   const [levels, setLevels] = useState([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -14,7 +14,10 @@ export function useLogLevels({ hours }) {
     setStatus("loading");
     setError(null);
 
-    apiGet(`/stats/levels?hours=${hours}`)
+    const qs = new URLSearchParams({ hours: String(hours) });
+    if (module) qs.set("module", module);
+
+    apiGet(`/stats/levels?${qs.toString()}`)
       .then((res) => {
         if (cancelled) return;
         setLevels(res.levels ?? []);
@@ -32,7 +35,7 @@ export function useLogLevels({ hours }) {
     return () => {
       cancelled = true;
     };
-  }, [hours]);
+  }, [hours, module]);
 
   return { levels, total, status, error };
 }

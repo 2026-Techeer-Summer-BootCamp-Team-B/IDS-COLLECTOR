@@ -5,7 +5,7 @@ import { apiGet, ApiError } from "../lib/authApi";
 // 실데이터 소스. bucketMs로부터 서버에 보낼 hours/buckets 개수를 역산해서 요청하고,
 // 응답의 { ts, total, errors } 배열을 그대로 반환한다 — 라벨 포맷(timeSeries.js의
 // formatBucketLabel)과 급증 탐지(detectSpike)는 프론트에서 그대로 재사용.
-export function useLogVolume({ lookbackMs, bucketMs }) {
+export function useLogVolume({ lookbackMs, bucketMs, module }) {
   const [buckets, setBuckets] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
@@ -18,6 +18,7 @@ export function useLogVolume({ lookbackMs, bucketMs }) {
     const hours = Math.max(lookbackMs / (60 * 60 * 1000), 1 / 60);
     const bucketCount = Math.max(Math.round(lookbackMs / bucketMs), 1);
     const qs = new URLSearchParams({ hours: String(hours), buckets: String(bucketCount) });
+    if (module) qs.set("module", module);
 
     apiGet(`/stats/volume?${qs.toString()}`)
       .then((res) => {
@@ -35,7 +36,7 @@ export function useLogVolume({ lookbackMs, bucketMs }) {
     return () => {
       cancelled = true;
     };
-  }, [lookbackMs, bucketMs]);
+  }, [lookbackMs, bucketMs, module]);
 
   return { buckets, status, error };
 }

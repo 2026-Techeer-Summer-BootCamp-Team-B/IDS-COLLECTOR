@@ -167,19 +167,25 @@ async def get_kpi(hours: int = 24) -> Dict[str, Any]:
 
 
 @router.get("/volume")
-async def get_volume(hours: int = 24, buckets: int = 25) -> Dict[str, Any]:
+async def get_volume(hours: int = 24, buckets: int = 25, module: Optional[str] = None) -> Dict[str, Any]:
     """Log Volume 차트 - date_histogram으로 시간대별 total/errors(severity>=3)
     카운트. 프론트가 timeSeries.js의 formatBucketLabel로 라벨을 입힌다(버킷 폭
-    계산은 여기서, 라벨 포맷은 프론트에서 - RANGE_PRESETS와 동일한 표기 유지)."""
+    계산은 여기서, 라벨 포맷은 프론트에서 - RANGE_PRESETS와 동일한 표기 유지).
+    module이 주어지면 WAS/Falco/K8s Audit 상세 뷰가 event.module로 필터링해서
+    같은 차트를 재사용한다."""
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
     interval_seconds = max(int(hours * 3600 / max(buckets, 1)), 60)
+
+    query = _time_range_query(start.isoformat(), now.isoformat())
+    if module:
+        query = {"bool": {"filter": [{"term": {"event.module": module}}], "must": [query]}}
 
     result = await opensearch_client.search(
         index=settings.attack_log_index_pattern,
         body={
             "size": 0,
-            "query": _time_range_query(start.isoformat(), now.isoformat()),
+            "query": query,
             "aggs": {
                 "over_time": {
                     "date_histogram": {
@@ -204,17 +210,22 @@ async def get_volume(hours: int = 24, buckets: int = 25) -> Dict[str, Any]:
 
 
 @router.get("/levels")
-async def get_levels(hours: int = 24) -> Dict[str, Any]:
+async def get_levels(hours: int = 24, module: Optional[str] = None) -> Dict[str, Any]:
     """Log Levels 차트 - event.severity(1~4) 분포. WAF가 비활성화된 뒤로는
-    1~4 정수 스케일이 전부라, 예전 9단계 mock과 달리 그대로 4개 막대로 나간다."""
+    1~4 정수 스케일이 전부라, 예전 9단계 mock과 달리 그대로 4개 막대로 나간다.
+    module이 주어지면 해당 event.module로만 필터링한다."""
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
+
+    query = _time_range_query(start.isoformat(), now.isoformat())
+    if module:
+        query = {"bool": {"filter": [{"term": {"event.module": module}}], "must": [query]}}
 
     result = await opensearch_client.search(
         index=settings.attack_log_index_pattern,
         body={
             "size": 0,
-            "query": _time_range_query(start.isoformat(), now.isoformat()),
+            "query": query,
             "aggs": {"by_severity": {"terms": {"field": "event.severity", "size": 4}}},
         },
     )

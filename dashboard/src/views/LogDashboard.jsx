@@ -191,11 +191,15 @@ function LevelBadge({ level }) {
 // GET /stats/volume(servers/platform-api/app/stats_api.py) 연동 — 서버가
 // date_histogram으로 버킷을 미리 잘라서 내려주면, 라벨 포맷(timeSeries.js의
 // formatBucketLabel)과 급증 탐지(detectSpike)는 그대로 클라이언트에서 재사용.
-export function LogVolumeChart({ rangeKey }) {
+export function LogVolumeChart({ rangeKey, module }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
-  const { buckets, status, error } = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs });
+  const { buckets, status, error } = useLogVolume({
+    lookbackMs: preset.lookbackMs,
+    bucketMs: preset.bucketMs,
+    module,
+  });
 
   const data = useMemo(
     () =>
@@ -281,10 +285,10 @@ export function LogVolumeChart({ rangeKey }) {
 // Log Levels 차트 실데이터 버전 — event.severity 1~4 그대로 4개 막대(기존
 // LevelDistributionChart의 9단계는 FalcoView 등 여전히 mock인 다른 뷰가
 // 재사용 중이라 그대로 두고, Overview 전용으로 새로 뺐다).
-function RealLevelDistributionChart({ hours }) {
+export function RealLevelDistributionChart({ hours, module }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const { levels, total, status, error } = useLogLevels({ hours });
+  const { levels, total, status, error } = useLogLevels({ hours, module });
 
   const data = REAL_SEVERITY_LEVELS.map((l) => {
     const found = levels.find((x) => x.severity === l.severity);
