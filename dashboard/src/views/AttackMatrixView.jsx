@@ -1,6 +1,18 @@
-import React, { useState } from "react";
-import { tactics, totalTechniques, detectedTechniques, matchedLogsByTechnique } from "../data/attackMatrix";
-import { SourceBadge } from "../components/badges";
+import React, { useEffect, useState } from "react";
+import { useAttackCoverage } from "../hooks/useAttackCoverage";
+import { useTechniqueIncidents } from "../hooks/useTechniqueIncidents";
+import { SeverityBadge, StatusDot } from "../components/badges";
+
+// incidents.severity(1~4)를 badges.jsx의 SEVERITY_META 키로 별칭 처리.
+// IncidentsView.jsx의 동일 매핑과 맞춰둠(공용 모듈로 뺄 정도는 아니라 로컬 복제).
+const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" };
+function severityBadgeKey(sev) {
+  return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
+}
+const STATUS_LABEL = { open: "Open", investigating: "조사중", closed: "종결" };
+function statusDotStatus(status) {
+  return status === "closed" ? "RESOLVED" : "IN_PROGRESS";
+}
 
 function TechniqueCell({ tech, active, onClick }) {
   const detected = tech.hits > 0;
@@ -23,10 +35,24 @@ function TechniqueCell({ tech, active, onClick }) {
 }
 
 export default function AttackMatrixView() {
-  const [selected, setSelected] = useState({ id: "T1609", name: "Command & Scripting Interp" });
+  const { tactics, totalTechniques, detectedTechniques, status: coverageStatus, error: coverageError } =
+    useAttackCoverage();
+  const [selected, setSelected] = useState(null);
   const [expandedIdx, setExpandedIdx] = useState(null);
-  const logs = matchedLogsByTechnique[selected.id] || [];
-  const coveragePct = Math.round((detectedTechniques / totalTechniques) * 100);
+
+  // 커버리지가 로드되면 첫 화면에 보여줄 기법을 고른다: hit이 있는 기법 우선,
+  // 없으면 카탈로그의 첫 기법. mock 시절엔 T1609를 하드코딩했지만 실데이터는
+  // 그 기법이 아예 없을 수도 있어 매번 계산해야 한다.
+  useEffect(() => {
+    if (selected || coverageStatus !== "ready" || tactics.length === 0) return;
+    const flat = tactics.flatMap((t) => t.techniques);
+    const firstDetected = flat.find((t) => t.hits > 0);
+    setSelected(firstDetected || flat[0] || null);
+  }, [coverageStatus, tactics, selected]);
+
+  const { incidents, status: incidentsStatus, error: incidentsError } = useTechniqueIncidents(selected?.id);
+
+  const coveragePct = totalTechniques > 0 ? Math.round((detectedTechniques / totalTechniques) * 100) : 0;
 
   function selectTechnique(tech) {
     setSelected(tech);
@@ -38,7 +64,7 @@ export default function AttackMatrixView() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-dash-fg text-base font-semibold mb-1">MITRE ATT&amp;CK 커버리지</h2>
-          <p className="text-dash-muted text-xs">실제 공격에서 각 기법으로 탐지된 로그 건수를 표시합니다</p>
+          <p className="text-dash-muted text-xs">실제 인시던트로 확인된 기법별 탐지 건수를 표시합니다</p>
         </div>
         <div className="text-right">
           <p className="text-dash-muted text-[11px] mb-1">Technique Coverage</p>
@@ -56,84 +82,104 @@ export default function AttackMatrixView() {
         </div>
       </div>
 
-      <div className="overflow-x-auto pb-2">
-        <div
-          className="grid gap-3 min-w-[1500px]"
-          style={{ gridTemplateColumns: `repeat(${tactics.length}, minmax(115px, 1fr))` }}
-        >
-          {tactics.map((tactic) => (
-            <div key={tactic.name}>
-              <p className="text-dash-muted text-[11px] font-medium mb-2 truncate" title={tactic.name}>
-                {tactic.name}
-              </p>
-              {tactic.techniques.map((tech) => (
-                <TechniqueCell
-                  key={tech.id}
-                  tech={tech}
-                  active={selected.id === tech.id}
-                  onClick={() => selectTechnique(tech)}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
+      {coverageStatus === "loading" && <p className="text-dash-muted text-xs">커버리지 데이터를 불러오는 중...</p>}
+      {coverageStatus === "error" && <p className="text-dash-critical text-xs">{coverageError}</p>}
 
-      <div className="bg-dash-surface rounded-2xl p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <span className="text-dash-mint text-xs font-semibold">{selected.id}</span>
-            <span className="text-dash-fg text-sm font-medium">{selected.name}</span>
+      {coverageStatus === "ready" && (
+        <div className="overflow-x-auto pb-2">
+          <div
+            className="grid gap-3 min-w-[1500px]"
+            style={{ gridTemplateColumns: `repeat(${tactics.length}, minmax(115px, 1fr))` }}
+          >
+            {tactics.map((tactic) => (
+              <div key={tactic.name}>
+                <p className="text-dash-muted text-[11px] font-medium mb-2 truncate" title={tactic.name}>
+                  {tactic.name}
+                </p>
+                {tactic.techniques.map((tech) => (
+                  <TechniqueCell
+                    key={tech.id}
+                    tech={tech}
+                    active={selected?.id === tech.id}
+                    onClick={() => selectTechnique(tech)}
+                  />
+                ))}
+              </div>
+            ))}
           </div>
-          <span className="text-dash-muted text-xs">{logs.length} matched logs</span>
         </div>
-        <div className="space-y-1">
-          {logs.length === 0 && <p className="text-dash-muted text-xs">이 기법에 대한 로그가 아직 없습니다.</p>}
-          {logs.map((log, i) => {
-            const isOpen = expandedIdx === i;
-            return (
-              <div key={i} className="rounded-lg -mx-2 px-2">
-                <button
-                  onClick={() => setExpandedIdx(isOpen ? null : i)}
-                  className="w-full flex gap-3 text-xs py-1.5 text-left hover:bg-dash-surfaceAlt/50 rounded-lg"
-                >
-                  <span className="text-dash-faint shrink-0 mt-0.5">{isOpen ? "▾" : "▸"}</span>
-                  <span className="text-dash-faint whitespace-nowrap w-14 shrink-0">{log.time}</span>
-                  <span className="shrink-0">
-                    <SourceBadge source={log.source} />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-dash-fg font-medium">{log.title}</p>
-                    <p className="text-dash-muted font-mono truncate">{log.detail}</p>
-                  </div>
-                </button>
-                {isOpen && (
-                  <div className="ml-[4.75rem] mb-2 mt-1 bg-dash-bg rounded-xl p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-xs">
-                    <div>
-                      <p className="text-dash-faint mb-0.5">대상</p>
-                      <p className="text-dash-fg">
-                        {log.namespace}/{log.pod}
+      )}
+
+      {selected && (
+        <div className="bg-dash-surface rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-dash-mint text-xs font-semibold">{selected.id}</span>
+              <span className="text-dash-fg text-sm font-medium">{selected.name}</span>
+            </div>
+            <span className="text-dash-muted text-xs">{incidents.length} matched incidents</span>
+          </div>
+          <div className="space-y-1">
+            {incidentsStatus === "loading" && <p className="text-dash-muted text-xs">인시던트를 불러오는 중...</p>}
+            {incidentsStatus === "error" && <p className="text-dash-critical text-xs">{incidentsError}</p>}
+            {incidentsStatus === "ready" && incidents.length === 0 && (
+              <p className="text-dash-muted text-xs">이 기법으로 연결된 인시던트가 아직 없습니다.</p>
+            )}
+            {incidents.map((incident, i) => {
+              const isOpen = expandedIdx === i;
+              return (
+                <div key={incident.id} className="rounded-lg -mx-2 px-2">
+                  <button
+                    onClick={() => setExpandedIdx(isOpen ? null : i)}
+                    className="w-full flex gap-3 text-xs py-1.5 text-left hover:bg-dash-surfaceAlt/50 rounded-lg"
+                  >
+                    <span className="text-dash-faint shrink-0 mt-0.5">{isOpen ? "▾" : "▸"}</span>
+                    <span className="text-dash-faint whitespace-nowrap w-32 shrink-0">
+                      {new Date(incident.updated_at).toLocaleString("ko-KR")}
+                    </span>
+                    <span className="shrink-0">
+                      <SeverityBadge level={severityBadgeKey(incident.severity)} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-dash-fg font-medium truncate">{incident.title}</p>
+                      <p className="text-dash-muted font-mono truncate">
+                        {incident.correlation_key_type}={incident.correlation_key_value}
                       </p>
                     </div>
-                    <div>
-                      <p className="text-dash-faint mb-0.5">출발지 IP</p>
-                      <p className="text-dash-fg">{log.sourceIp}</p>
+                    <span className="shrink-0">
+                      <StatusDot status={statusDotStatus(incident.status)} />
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="ml-[4.75rem] mb-2 mt-1 bg-dash-bg rounded-xl p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+                      <div>
+                        <p className="text-dash-faint mb-0.5">인시던트 ID</p>
+                        <p className="text-dash-fg font-mono">{incident.id}</p>
+                      </div>
+                      <div>
+                        <p className="text-dash-faint mb-0.5">상태</p>
+                        <p className="text-dash-fg">{STATUS_LABEL[incident.status] ?? incident.status}</p>
+                      </div>
+                      <div>
+                        <p className="text-dash-faint mb-0.5">최초 탐지</p>
+                        <p className="text-dash-fg">{new Date(incident.created_at).toLocaleString("ko-KR")}</p>
+                      </div>
+                      <div className="col-span-2 sm:col-span-3">
+                        <p className="text-dash-faint mb-0.5">연관 MITRE 전술</p>
+                        <p className="text-dash-fg">
+                          {incident.mitre_tactics && incident.mitre_tactics.length > 0
+                            ? incident.mitre_tactics.join(", ")
+                            : "-"}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-dash-faint mb-0.5">기법</p>
-                      <p className="text-dash-fg">{selected.id}</p>
-                    </div>
-                    <div className="col-span-2 sm:col-span-3">
-                      <p className="text-dash-faint mb-0.5">원본 로그</p>
-                      <p className="text-dash-fg font-mono text-[11px] break-all">{log.raw}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
