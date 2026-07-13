@@ -12,19 +12,22 @@
 // same job Loki's `detected_level` feature does. Extend the aliases arrays
 // as you wire in real sources and discover new spellings.
  
+// Neon gradient: red (most severe) -> orange/yellow (mid) -> cyan/green
+// (benign) -> muted blue-gray (trace/debug) — reads at a glance on the
+// near-black background instead of the old low-contrast pastel ladder.
 export const LOG_LEVELS = [
-  { key: "EMERGENCY", code: 1, label: "Emergency", color: "#F2617A", aliases: ["emerg", "emergency", "panic"] },
-  { key: "CRITICAL", code: 2, label: "Critical", color: "#F2748A", aliases: ["crit", "critical"] },
-  { key: "MAJOR", code: 3, label: "Major", color: "#F2A65A", aliases: ["major", "err", "error", "erro"] },
-  { key: "MINOR", code: 4, label: "Minor", color: "#F2C48A", aliases: ["minor"] },
-  { key: "WARNING", code: 5, label: "Warning", color: "#E8D97A", aliases: ["warn", "warning"] },
-  { key: "NOTICE", code: 6, label: "Notice", color: "#C9E8DE", aliases: ["notice"] },
-  { key: "INFO", code: 7, label: "Info", color: "#A9DFD8", aliases: ["info", "informational"] },
-  { key: "TRACE", code: 8, label: "Trace", color: "#A0A0A0", aliases: ["trace"] },
-  { key: "DEBUG", code: 9, label: "Debug", color: "#87888C", aliases: ["debug"] },
+  { key: "EMERGENCY", code: 1, label: "Emergency", color: "#FF0844", aliases: ["emerg", "emergency", "panic"] },
+  { key: "CRITICAL", code: 2, label: "Critical", color: "#FF1F6B", aliases: ["crit", "critical"] },
+  { key: "MAJOR", code: 3, label: "Major", color: "#FF5A1F", aliases: ["major", "err", "error", "erro"] },
+  { key: "MINOR", code: 4, label: "Minor", color: "#FF9500", aliases: ["minor"] },
+  { key: "WARNING", code: 5, label: "Warning", color: "#F5E400", aliases: ["warn", "warning"] },
+  { key: "NOTICE", code: 6, label: "Notice", color: "#00E5B0", aliases: ["notice"] },
+  { key: "INFO", code: 7, label: "Info", color: "#00FFA6", aliases: ["info", "informational"] },
+  { key: "TRACE", code: 8, label: "Trace", color: "#6B7BAA", aliases: ["trace"] },
+  { key: "DEBUG", code: 9, label: "Debug", color: "#5A6288", aliases: ["debug"] },
 ];
- 
-export const UNKNOWN_LEVEL = { key: "UNKNOWN", code: 0, label: "Unknown", color: "#5C5D66", aliases: [] };
+
+export const UNKNOWN_LEVEL = { key: "UNKNOWN", code: 0, label: "Unknown", color: "#3A3F55", aliases: [] };
  
 export const ALL_LEVELS = [...LOG_LEVELS, UNKNOWN_LEVEL];
  
@@ -49,4 +52,25 @@ export function normalizeLevel(raw) {
  
 export function getLevelMeta(key) {
   return ALL_LEVELS.find((l) => l.key === key) || UNKNOWN_LEVEL;
+}
+
+// 사람이 훑어보는 뱃지/색상용 4단계 요약 뷰. 데이터 자체(위 9단계, ERROR_BAND 등
+// 필터/상관분석 로직)는 그대로 정밀하게 유지하고, 배지처럼 "한눈에 스캔"하는
+// 지점만 여기로 색상을 뽑아 쓴다 — 라벨 텍스트는 원래 레벨(MAJOR, NOTICE 등)을
+// 그대로 보여주되, 색은 4개 시맨틱 버킷(Error/Warn/Info/Debug)으로 뭉쳐서
+// 색상 종류를 줄이는 절충안. Datadog/Kibana류 대시보드가 흔히 쓰는 패턴.
+export const DISPLAY_TIERS = [
+  { key: "ERROR", label: "Error", color: "#FF1F4B", levels: ["EMERGENCY", "CRITICAL", "MAJOR"] },
+  { key: "WARN", label: "Warn", color: "#F5E400", levels: ["MINOR", "WARNING"] },
+  { key: "INFO", label: "Info", color: "#00FFA6", levels: ["NOTICE", "INFO"] },
+  { key: "DEBUG", label: "Debug", color: "#5A6288", levels: ["TRACE", "DEBUG"] },
+];
+
+const TIER_LOOKUP = DISPLAY_TIERS.reduce((acc, tier) => {
+  tier.levels.forEach((lvl) => (acc[lvl] = tier));
+  return acc;
+}, {});
+
+export function getDisplayTier(key) {
+  return TIER_LOOKUP[key] || { key: "UNKNOWN", label: "Unknown", color: UNKNOWN_LEVEL.color, levels: [] };
 }

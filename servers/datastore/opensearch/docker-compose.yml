@@ -43,5 +43,23 @@ services:
     networks:
       - siem-net
 
+  # 선택 사항: 색인된 문서(otel-logs-raw-*, attack-logs-*)를 눈으로 확인하고 싶을 때만
+  # 붙이는 브라우저 UI. 우리 자체 SENTINEL-OPS 대시보드(dashboard/)와는 별개이고,
+  # 파이프라인 동작에는 필요 없음 - Discover 탭으로 원본 로그 훑어볼 때만 쓰는 용도.
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.19.6
+    container_name: opensearch-dashboards
+    restart: unless-stopped
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true" # opensearch 쪽 security.disabled=true와 맞춤
+    ports:
+      - "5601:5601"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - siem-net
+
 volumes:
   opensearch-data:

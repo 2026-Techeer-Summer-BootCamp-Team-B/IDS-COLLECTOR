@@ -1,3 +1,86 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * dash.* palette as CSS custom properties (R G B triplets, no commas — the
+ * format Tailwind's rgb(var(--x) / <alpha-value>) expects). :root is the
+ * dark theme (default, "neon cyberpunk SOC") — near-black background with
+ * high-saturation neon accents; .light overrides swap every token at once
+ * when ThemeProvider (src/hooks/useTheme.jsx) toggles the class on <html>.
+ *
+ * Light-mode accents are deliberately darker/less saturated than their
+ * dark-mode neon counterparts (e.g. mint #00FFA6 -> #00875A) — full-neon
+ * reads great on near-black but has almost no contrast as text on white.
+ */
+:root {
+  --dash-bg: 5 6 11;
+  --dash-surface: 14 15 26;
+  --dash-surfaceAlt: 25 27 44;
+  --dash-mint: 0 255 166;
+  --dash-pink: 166 77 255;
+  --dash-muted: 136 144 181;
+  --dash-faint: 90 98 136;
+  --dash-fg: 242 245 255;
+  --dash-critical: 255 31 75;
+  --dash-high: 255 122 24;
+  --dash-medium: 245 228 0;
+  --dash-live: 57 255 106;
+  --dash-was: 0 194 255;
+}
+
+:root.light {
+  --dash-bg: 244 245 250;
+  --dash-surface: 255 255 255;
+  --dash-surfaceAlt: 230 232 245;
+  --dash-mint: 0 135 90;
+  --dash-pink: 122 31 209;
+  --dash-muted: 91 97 128;
+  --dash-faint: 131 136 166;
+  --dash-fg: 11 12 20;
+  --dash-critical: 212 0 54;
+  --dash-high: 204 82 0;
+  --dash-medium: 138 118 0;
+  --dash-live: 14 159 83;
+  --dash-was: 0 114 184;
+}
+
+body {
+  background-color: rgb(var(--dash-bg));
+  background-image: radial-gradient(ellipse 80% 60% at 50% -10%, rgb(var(--dash-mint) / 0.08), transparent),
+    radial-gradient(ellipse 60% 50% at 100% 0%, rgb(var(--dash-pink) / 0.06), transparent);
+  background-attachment: fixed;
+  transition: background-color 0.15s ease;
+}
+
+:root.light body {
+  background-image: none;
+}
+
+/* Neon glow utilities — used sparingly (brand mark, LIVE indicator, KPI
+ * highlights, active nav) so the cyberpunk accent reads as a deliberate
+ * highlight instead of noise on every element. */
+.glow-mint {
+  text-shadow: 0 0 10px rgb(var(--dash-mint) / 0.65);
+}
+.glow-pink {
+  text-shadow: 0 0 10px rgb(var(--dash-pink) / 0.65);
+}
+.glow-critical {
+  text-shadow: 0 0 10px rgb(var(--dash-critical) / 0.65);
+}
+.glow-box-mint {
+  box-shadow: 0 0 0 1px rgb(var(--dash-mint) / 0.35), 0 0 18px rgb(var(--dash-mint) / 0.18);
+}
+.glow-box-critical {
+  box-shadow: 0 0 0 1px rgb(var(--dash-critical) / 0.4), 0 0 18px rgb(var(--dash-critical) / 0.22);
+}
+:root.light .glow-mint,
+:root.light .glow-pink,
+:root.light .glow-critical {
+  text-shadow: none;
+}
+:root.light .glow-box-mint,
+:root.light .glow-box-critical {
+  box-shadow: none;
+}
