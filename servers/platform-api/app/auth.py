@@ -151,12 +151,18 @@ async def verify(request: Request, response: Response):
     if token is None:
         token = _token_from_forwarded_uri(request)
 
+    method = request.headers.get("x-forwarded-method", request.method).upper()
+    if method == "OPTIONS":
+        # CORS preflight - 브라우저가 Authorization 헤더를 안 실어 보내므로 여기서
+        # 막으면 실제 요청이 나가기도 전에 프리플라이트가 401로 죽는다. 프리플라이트는
+        # 인증이 필요 없고, 진짜 인증은 뒤따르는 본 요청에서 검사된다.
+        return {"valid": True}
+
     session = await _get_session(token) if token else None
     if session is None:
         raise HTTPException(status_code=401, detail="invalid or expired token")
 
-    method = request.headers.get("x-forwarded-method", request.method).upper()
-    if method not in ("GET", "HEAD", "OPTIONS") and session.role != "admin":
+    if method not in ("GET", "HEAD") and session.role != "admin":
         raise HTTPException(status_code=403, detail="admin role required")
 
     response.headers["X-Auth-User-Id"] = str(session.user_id)

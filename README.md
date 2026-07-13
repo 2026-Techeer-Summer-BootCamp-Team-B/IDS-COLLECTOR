@@ -131,12 +131,22 @@ Target 서버
 | `GET /incidents?status=&since=&limit=` | 인시던트 목록. `status`는 `open`/`investigating`/`closed`. `since`(ISO8601)를 주면 그 시각 이후 생성된 인시던트만 오래된순 반환 - 프론트 실시간 팝업이 이걸 3~5초 주기 폴링(`since`=마지막 확인 시각) |
 | `GET /incidents/{id}` | 인시던트 상세 |
 | `GET /incidents/{id}/events` | 인시던트에 묶인 이벤트 목록 (`event_id`, `event_module`, `added_at`) |
+| `GET /incidents/{id}/timeline` | 스토리라인(시간순) - `incident_events` + OpenSearch 원문을 합쳐 `{event_id, event_module, added_at, title, detail, mitre_technique_id}` 배열로 반환 |
 | `PATCH /incidents/{id}/status` | 상태 변경. `open`→`investigating`→`closed` 선형 전이만 허용 (역행/건너뛰기는 400) |
+| `GET /scenarios` | 상관 시나리오 룰 + 적중 랭킹(`hit_count`, 매칭된 인시던트 수) |
+| `PATCH /scenarios/{id}/enabled` | 시나리오 룰 on/off (Postgres + Redis `scenario:enabled:{id}` 동시 반영, admin 전용) |
+| `GET /banned-ips` | 활성 차단 IP 목록(`unbanned_at IS NULL`) - 감사 트레일용, 실제 트래픽은 막지 않음 |
+| `POST /banned-ips` | `{ip_or_cidr, reason?}` 차단 기록 (admin 전용, `IP_BANNED` 감사 로그) |
+| `DELETE /banned-ips/{id}` | 차단 해제 (admin 전용, `IP_UNBANNED` 감사 로그) |
 | `POST /auth/login` | `{username, password}` -> `{token}`. 스펙 미설계 스텁, 단일 관리자 계정 |
 | `GET /auth/session` | `Authorization: Bearer <token>` 검증 -> `{valid, username?}`. **role 필드 없음** (RBAC 미반영) |
 | `POST /auth/logout` | `Authorization: Bearer <token>` 필요. 토큰 폐기 -> `{status:"ok"}` |
 | `GET /stats?start=&end=` | ISO8601 구간 module/severity별 집계 |
 | `GET /stats/top-ips?start=&end=&limit=` | 공격 발원지 IP Top-N (`source.ip` terms agg) -> `{items:[{source_ip,count}]}` |
+| `GET /stats/kpi?hours=24` | Overview KPI 카드용 - 현재/직전 동일 길이 구간의 total/errors(severity>=3)/warnings(severity==2)/sources(고유 event.module 수) + `delta_pct`, `sources_delta` |
+| `GET /stats/volume?hours=24&buckets=25&module=` | Log Volume 차트용 - `@timestamp` date_histogram, 버킷별 `{ts, total, errors}` (errors = severity>=3). `module`은 선택 - 주면 WAS/Falco/K8s Audit 상세 뷰처럼 해당 event.module로만 필터링 |
+| `GET /stats/levels?hours=24&module=` | Log Levels 차트용 - `event.severity`(1~4) terms agg -> `{total, levels:[{severity,count}]}`. `module`은 volume과 동일하게 선택적 필터 |
+| `GET /logs?module=&min_severity=&q=&start=&end=&limit=` | 정규화 이벤트 원본 조회 (Recent Logs 테이블/검색바) - `q`는 OpenSearch `query_string` 그대로 전달 |
 | `GET /reports/trend?days=7` | AI 트렌드 리포트. `ANTHROPIC_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
 
 인증/통계 엔드포인트는 현재 어느 것도 서버 쪽에서 Authorization을 강제하지 않는다

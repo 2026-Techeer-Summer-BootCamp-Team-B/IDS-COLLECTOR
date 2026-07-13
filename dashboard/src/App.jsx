@@ -12,9 +12,9 @@ import CriticalAlertPopup from "./components/CriticalAlertPopup";
 import ToastStack from "./components/ToastStack";
 import LoginScreen from "./components/LoginScreen";
 import { useLiveAttackFeed } from "./hooks/useLiveFeed";
+import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { incidentStats } from "./data/incidents";
 import { SEED_AUDIT_LOG } from "./data/auditLog";
 import { RULES } from "./data/rules";
 import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy";
@@ -24,9 +24,11 @@ import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy"
  * Setup: npm i recharts (LogDashboard's charts use it too).
  */
 
+// "incidents" 항목의 badge는 고정값이 아니라 activeIncidents(useIncidentStats,
+// 실데이터)로 렌더 시점에 채워진다 — Sidebar가 navItems를 prop으로 받는 이유.
 const NAV_ITEMS = [
   { key: "overview", label: "Overview" },
-  { key: "incidents", label: "Incidents", badge: incidentStats.activeIncidents },
+  { key: "incidents", label: "Incidents" },
   { key: "attack", label: "ATT&CK" },
   { key: "infra", label: "Infrastructure" },
   { key: "admin", label: "Admin / Audit" },
@@ -41,7 +43,7 @@ const LAYER_NAV_ITEMS = [
 
 // Fixed-width inner wrapper + shrinking outer <aside> is what makes the
 // collapse animate smoothly instead of content reflowing/wrapping mid-transition.
-function Sidebar({ active, onSelect, open }) {
+function Sidebar({ active, onSelect, open, incidentBadge }) {
   return (
     <aside
       className={`shrink-0 flex flex-col bg-dash-bg border-r border-dash-surfaceAlt overflow-hidden transition-all duration-200 ease-in-out ${
@@ -71,9 +73,9 @@ function Sidebar({ active, onSelect, open }) {
               }`}
             >
               <span>{item.label}</span>
-              {item.badge ? (
+              {item.key === "incidents" && incidentBadge ? (
                 <span className="text-[10px] bg-dash-pink/20 text-dash-pink rounded-full px-1.5 py-0.5">
-                  {item.badge}
+                  {incidentBadge}
                 </span>
               ) : null}
             </button>
@@ -157,7 +159,7 @@ function ThemeToggle() {
   );
 }
 
-function TopBar({ sidebarOpen, onToggleSidebar }) {
+function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
   const [now, setNow] = useState(new Date());
   const { username, logout } = useAuth();
   useEffect(() => {
@@ -230,8 +232,7 @@ function AppShell() {
   // so anything stored only in its local state would reset.
   const [auditLog, setAuditLog] = useState(SEED_AUDIT_LOG);
   const [toasts, setToasts] = useState([]);
-  const [resolvedIncidentIds, setResolvedIncidentIds] = useState({});
-  const [actedEventIds, setActedEventIds] = useState({});
+  const { stats: incidentStats } = useIncidentStats();
   const [rules, setRules] = useState(RULES);
   const [logPolicies, setLogPolicies] = useState(INITIAL_LOG_POLICIES);
   const [exclusionRules, setExclusionRules] = useState(INITIAL_EXCLUSION_RULES);
@@ -255,26 +256,6 @@ function AppShell() {
     if (isAdmin) return true;
     pushToast("이 작업은 관리자 권한이 필요합니다.", "error");
     return false;
-  }
-
-  function resolveIncident(incident) {
-    if (!requireAdmin()) return;
-    setResolvedIncidentIds((prev) => ({ ...prev, [incident.id]: true }));
-    logAction({
-      action: `인시던트 조사 완료 처리 (${incident.id})`,
-      target: incident.target,
-      ip: incident.sourceIp,
-    });
-  }
-
-  function actOnEvent(event) {
-    if (!requireAdmin()) return;
-    setActedEventIds((prev) => ({ ...prev, [event.id]: true }));
-    logAction({
-      action: `IP 차단 완료 (${event.sourceIp})`,
-      target: `${event.namespace}/${event.pod}`,
-      ip: event.sourceIp,
-    });
   }
 
   function toggleRule(ruleId) {
@@ -317,20 +298,17 @@ function AppShell() {
 
   return (
     <div className="flex min-h-screen bg-dash-bg font-sans">
-      <Sidebar active={active} onSelect={setActive} open={sidebarOpen} />
+      <Sidebar active={active} onSelect={setActive} open={sidebarOpen} incidentBadge={incidentStats.activeIncidents} />
       <div className="flex-1 flex flex-col min-h-screen min-w-0">
-        <TopBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((o) => !o)} />
+        <TopBar
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          incidentStats={incidentStats}
+        />
         <ConnectionBar />
         <main className="flex-1 p-6 overflow-y-auto">
           {active === "overview" && <DashboardContent />}
-          {active === "incidents" && (
-            <IncidentsView
-              resolvedIncidentIds={resolvedIncidentIds}
-              onResolveIncident={resolveIncident}
-              actedEventIds={actedEventIds}
-              onActOnEvent={actOnEvent}
-            />
-          )}
+          {active === "incidents" && <IncidentsView pushToast={pushToast} />}
           {active === "attack" && <AttackMatrixView />}
           {active === "infra" && <InfrastructureView />}
           {active === "admin" && (
