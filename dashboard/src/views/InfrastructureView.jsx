@@ -3,6 +3,7 @@ import { ATTACK_EVENTS, byK8sTarget, byCountry, sourceHealth } from "../data/att
 import WorldMap from "../components/WorldMap";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { usePipelineHealth } from "../hooks/usePipelineHealth";
 
 const STATUS_META = {
   healthy: { label: "정상 수신중" },
@@ -55,6 +56,106 @@ function SourceHealthPanel() {
   );
 }
 
+// consumer-lag 임계치는 딱히 SLA 문서가 있는 게 아니라 "0이면 정상, 몇백~몇천이면
+// 지켜볼 것, 그 이상이면 못 따라가는 중"이라는 상식적인 3단계 감으로 잡았다. 실측
+// 트래픽 보면서 팀원과 조정 필요.
+const LAG_WARNING_THRESHOLD = 500;
+const LAG_CRITICAL_THRESHOLD = 5000;
+
+function lagColor(totalLag, C) {
+  if (totalLag === null || totalLag === undefined) return C.muted;
+  if (totalLag >= LAG_CRITICAL_THRESHOLD) return C.critical;
+  if (totalLag >= LAG_WARNING_THRESHOLD) return C.high;
+  return C.mint;
+}
+
+function formatMs(ms) {
+  if (ms === null || ms === undefined) return "-";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+// Kafka 컨슈머 lag / DLQ 적재량 / 수신 지연(clock skew) — "로그 소스가 조용해졌는가"를
+// 보는 SourceHealthPanel과 달리 "파이프라인이 유입 속도를 따라가고 있는가"를 본다.
+// 백엔드 주석에 Kafka AdminClient 부분이 실제 브로커로 미검증이라 적혀 있어, 값이
+// 이상하면 백엔드 팀에 먼저 확인하는 게 맞다.
+function PipelineHealthPanel() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const { consumerLag, dlqDepth, clockSkew, status, error } = usePipelineHealth();
+
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">파이프라인 상태</h3>
+      <p className="text-dash-muted text-xs mb-4">
+        Kafka 컨슈머 lag / DLQ 적재량 / 수신 지연(clock skew) — 파이프라인이 유입 속도를 따라가고 있는지 확인
+      </p>
+
+      {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs py-2">{error}</p>}
+
+      {status !== "loading" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="bg-dash-bg rounded-xl p-4">
+            <p className="text-dash-faint text-[11px] mb-2">컨슈머 Lag</p>
+            {consumerLag.length === 0 && <p className="text-dash-muted text-xs">데이터 없음</p>}
+            <div className="space-y-2">
+              {consumerLag.map((g) => {
+                const color = lagColor(g.total_lag, C);
+                return (
+                  <div key={g.group} className="flex items-center justify-between text-xs">
+                    <span className="text-dash-fg truncate">{g.group}</span>
+                    <span className="font-mono shrink-0 ml-2" style={{ color }} title={g.error || ""}>
+                      {g.error ? "조회 실패" : `${g.total_lag}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-dash-bg rounded-xl p-4">
+            <p className="text-dash-faint text-[11px] mb-2">DLQ 적재량 (events.dlq)</p>
+            {dlqDepth ? (
+              <p
+                className="text-2xl font-semibold"
+                style={{ color: dlqDepth.depth > 0 ? C.critical : C.mint }}
+              >
+                {dlqDepth.depth}
+                <span className="text-dash-muted text-xs font-normal ml-1">건</span>
+              </p>
+            ) : (
+              <p className="text-dash-muted text-xs">데이터 없음</p>
+            )}
+          </div>
+
+          <div className="bg-dash-bg rounded-xl p-4">
+            <p className="text-dash-faint text-[11px] mb-2">수신 지연 (clock skew)</p>
+            {clockSkew && clockSkew.sample_size > 0 ? (
+              <div className="flex gap-4 text-xs">
+                <div>
+                  <p className="text-dash-faint mb-0.5">p50</p>
+                  <p className="text-dash-fg font-mono">{formatMs(clockSkew.p50_ms)}</p>
+                </div>
+                <div>
+                  <p className="text-dash-faint mb-0.5">p95</p>
+                  <p className="text-dash-fg font-mono">{formatMs(clockSkew.p95_ms)}</p>
+                </div>
+                <div>
+                  <p className="text-dash-faint mb-0.5">max</p>
+                  <p className="text-dash-fg font-mono">{formatMs(clockSkew.max_ms)}</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-dash-muted text-xs">표본 없음</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function intensityColor(count, max, C) {
   const ratio = max ? count / max : 0;
   if (ratio > 0.66) return C.critical;
@@ -88,6 +189,7 @@ export default function InfrastructureView() {
 
   return (
     <div className="space-y-6">
+      <PipelineHealthPanel />
       <SourceHealthPanel />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
