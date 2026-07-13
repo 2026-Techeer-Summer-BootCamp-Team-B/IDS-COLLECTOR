@@ -16,7 +16,9 @@
   브라우저가 커스텀 헤더를 못 보내서 `?token=` 쿼리스트링으로 토큰을 받아 /verify가
   X-Forwarded-Uri에서 파싱한다. 세션은 Redis에 저장(session:{token}, TTL=
   settings.session_ttl_seconds)돼 재시작에도 살아남는다. 주의: platform-api:8400
-  직결 포트(로컬 디버깅용)는 Traefik을 안 거치므로 이 인증이 전혀 적용되지 않는다
+  직결 포트(로컬 디버깅용, servers/docker-compose.yml에서 호스트 127.0.0.1에만
+  바인딩됨)는 Traefik을 안 거치므로 이 인증이 전혀 적용되지 않는다 - GCP VM 등
+  원격 호스트에서 이 포트로 붙으려면 SSH 터널이 필요하다(예: ssh -L 8400:localhost:8400 <host>)
 - 알림 채널 (P5-3): app/notifications.py - app/incident_alerts.py가 notified_at IS NULL인
   인시던트를 폴링해서 발송(트리거)
 - AI 트렌드 리포트 (P5-4): app/ai_report.py - Anthropic API 미설정이면 통계만 반환

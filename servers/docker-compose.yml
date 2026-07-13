@@ -21,7 +21,7 @@ services:
       KAFKA_DLQ_TOPIC: events.dlq
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "8200:8200"
+      - "127.0.0.1:8200:8200" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
       - siem-net
 
@@ -39,7 +39,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
     ports:
-      - "8300:8300"
+      - "127.0.0.1:8300:8300" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
       - siem-net
 
@@ -57,7 +57,7 @@ services:
       POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "8400:8400" # 로컬 디버깅 편의용 직결 포트 - 실제 진입 경로는 Traefik(:80/api)
+      - "127.0.0.1:8400:8400" # 로컬 디버깅 편의용 직결 포트(호스트 루프백에만 바인딩, forwardAuth 미적용) - 실제 진입 경로는 Traefik(:80/api). 원격 호스트에서 직결하려면 SSH 터널 필요(예: ssh -L 8400:localhost:8400 <host>)
     networks:
       - siem-net
     labels:

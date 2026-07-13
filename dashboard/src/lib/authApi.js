@@ -9,8 +9,10 @@
 // local `npm run dev` (separate Vite port, no Traefik in front of it), set
 // VITE_API_BASE_URL to either `http://localhost/api` (through Traefik) or
 // `http://localhost:8400` (straight to platform-api, per README's port
-// table — "직결, 디버깅용"). CORS is already wide open on the backend
-// (CORS_ALLOWED_ORIGINS=*) so a cross-origin absolute URL works fine.
+// table — "직결, 디버깅용". Bound to the docker host's 127.0.0.1 only —
+// SSH tunnel it (ssh -L 8400:localhost:8400 <host>) if the compose stack
+// runs on a remote host like the GCP VM). CORS is already wide open on the
+// backend (CORS_ALLOWED_ORIGINS=*) so a cross-origin absolute URL works fine.
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 const TOKEN_KEY = "sentinel_ops_token";
