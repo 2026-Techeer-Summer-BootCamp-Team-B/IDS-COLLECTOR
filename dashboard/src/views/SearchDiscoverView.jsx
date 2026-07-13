@@ -1,28 +1,36 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { ATTACK_EVENTS } from "../data/attackEvents";
-import { RAW_EVENTS, MOCK_NOW } from "../data/mockLogs";
+import { useLogs } from "../hooks/useLogs";
 import { RANGE_PRESETS, bucketEvents } from "../data/timeSeries";
-import { runQuery, extractTerms } from "../data/dql";
+import { extractTerms } from "../data/dql";
+import { MODULE_META } from "../data/moduleMeta";
+import { SOURCE_META } from "../components/badges";
+import { getRealSeverityMeta } from "../data/realSeverity";
 import TimeRangePicker from "../components/TimeRangePicker";
-import { CHART_COLORS } from "../data/theme";
+import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 /**
- * Discover-style search bar: pick a dataset (index), write a DQL-ish query,
- * see a histogram + expandable hit rows with matched terms highlighted.
+ * Discover-style search bar over GET /logs (servers/platform-api/app/logs_api.py).
+ * 예전엔 data/dql.js의 자체 파서로 mock 배열을 클라이언트에서 필터링했는데, 지금은
+ * 쿼리 입력을 그대로 백엔드 `q` 파라미터로 보낸다 — OpenSearch query_string 쿼리라
+ * 실제로는 mock DQL보다 더 강력한 Lucene 문법(AND/OR/NOT, 와일드카드, 범위, 구문
+ * 검색)을 그대로 지원한다. dql.js의 extractTerms만 하이라이트용 근사치 추출에 재사용.
+ *
  * Embedded at the top of Overview — shares its time range with the rest of
  * the page (rangeKey/onRangeChange come from DashboardContent) so picking a
  * range here also drives the Log Volume chart below.
  */
 
-const DATASETS = [
-  { key: "attack_events", label: "공격 탐지 이벤트 (attack_events)", data: ATTACK_EVENTS },
-  { key: "app_logs", label: "애플리케이션 로그 (app_logs)", data: RAW_EVENTS },
+const MODULE_OPTIONS = [
+  { key: "", label: "전체 소스" },
+  { key: "was", label: MODULE_META.was.label },
+  { key: "falco", label: MODULE_META.falco.label },
+  { key: "k8s_audit", label: MODULE_META.k8s_audit.label },
 ];
 
-const HIDDEN_FIELDS = new Set(["id", "lat", "lon"]);
+const RESULT_LIMIT = 500;
 
 function Highlight({ text, terms }) {
   const str = String(text);
@@ -46,41 +54,49 @@ function Highlight({ text, terms }) {
   );
 }
 
-function formatValue(v) {
-  if (v instanceof Date) return v.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE });
-  return String(v);
-}
-
-function HitRow({ doc, fields, terms }) {
+// doc.raw = /logs가 돌려준 flat dict 원본(event.module, source.ip, ... 점 표기
+// 그대로) — 상세 패널에선 이걸 펼쳐서 보여준다. 필드가 소스마다 다르므로(WAS만
+// url.path/http.*, Falco/Audit는 orchestrator.*) 고정 컬럼 대신 있는 것만 나열.
+function HitRow({ doc, terms }) {
   const [open, setOpen] = useState(false);
-  const time = doc.timestamp instanceof Date
-    ? doc.timestamp.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })
-    : String(doc.timestamp);
-  const previewFields = fields.slice(0, 5);
+  const { theme } = useTheme();
+  const src = SOURCE_META[doc.source] || { label: doc.source, color: "#8890B5" };
+  const sevMeta = getRealSeverityMeta(doc.severity);
+  const rawFields = Object.keys(doc.raw).sort();
 
   return (
     <div className="border-t border-dash-surfaceAlt">
       <button onClick={() => setOpen((o) => !o)} className="w-full flex items-start gap-3 py-2.5 text-left">
         <span className="text-dash-faint text-xs shrink-0 mt-0.5">{open ? "▾" : "▸"}</span>
-        <span className="text-dash-faint text-xs shrink-0 w-36">{time}</span>
+        <span className="text-dash-faint text-xs shrink-0 w-36">{doc.timestamp.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}</span>
+        <span className="shrink-0" style={{ color: forTheme(src.color, theme) }}>
+          <span className="text-[10px] font-medium">{src.label}</span>
+        </span>
+        <span
+          className="text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0"
+          style={{ color: sevMeta.color, backgroundColor: `${sevMeta.color}22` }}
+          title={sevMeta.label}
+        >
+          {sevMeta.label}
+        </span>
         <span className="text-xs text-dash-muted flex-1 min-w-0 truncate">
-          {previewFields.map((f) => (
-            <span key={f} className="mr-3">
-              <span className="text-dash-faint">{f}:</span>{" "}
-              <span className="text-dash-fg">
-                <Highlight text={formatValue(doc[f])} terms={terms} />
-              </span>
+          <span className="text-dash-fg">
+            <Highlight text={doc.message} terms={terms} />
+          </span>
+          {doc.namespace && (
+            <span className="text-dash-faint ml-2">
+              {doc.namespace}/{doc.pod}
             </span>
-          ))}
+          )}
         </span>
       </button>
       {open && (
         <div className="pl-16 pb-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1 text-xs">
-          {fields.map((f) => (
+          {rawFields.map((f) => (
             <div key={f} className="truncate">
               <span className="text-dash-faint">{f}: </span>
               <span className="text-dash-fg">
-                <Highlight text={formatValue(doc[f])} terms={terms} />
+                <Highlight text={String(doc.raw[f])} terms={terms} />
               </span>
             </div>
           ))}
@@ -97,7 +113,7 @@ function HitRow({ doc, fields, terms }) {
 export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: expandedProp, setExpanded: setExpandedProp, onResultsCountChange }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const [datasetKey, setDatasetKey] = useState("app_logs");
+  const [moduleFilter, setModuleFilter] = useState("");
   const [queryInput, setQueryInput] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
   // Results (histogram + hit list) start collapsed so the first thing a new
@@ -108,15 +124,15 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
   const expanded = expandedProp ?? expandedState;
   const setExpanded = setExpandedProp ?? setExpandedState;
 
-  const dataset = DATASETS.find((d) => d.key === datasetKey);
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
+  const moduleLabel = MODULE_OPTIONS.find((m) => m.key === moduleFilter)?.label ?? "전체 소스";
 
-  const inRange = useMemo(() => {
-    const cutoff = MOCK_NOW.getTime() - preset.lookbackMs;
-    return dataset.data.filter((d) => d.timestamp.getTime() > cutoff && d.timestamp.getTime() <= MOCK_NOW.getTime());
-  }, [datasetKey, rangeKey]);
-
-  const results = useMemo(() => runQuery(inRange, appliedQuery), [inRange, appliedQuery]);
+  const { logs: results, status, error } = useLogs({
+    lookbackMs: preset.lookbackMs,
+    module: moduleFilter || undefined,
+    q: appliedQuery || undefined,
+    limit: RESULT_LIMIT,
+  });
   const terms = useMemo(() => extractTerms(appliedQuery), [appliedQuery]);
 
   // 부모가 "N hits" 결과 수를 자기 쪽 토글 버튼에도 표시할 수 있게 매번 알려준다.
@@ -125,20 +141,16 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
   }, [results.length]);
 
   const histogram = useMemo(() => {
-    const buckets = bucketEvents(results, preset, MOCK_NOW.getTime());
+    const buckets = bucketEvents(results, preset, Date.now());
     return buckets.map((b) => ({
       label: b.label,
       count: Object.values(b.counts).reduce((a, c) => a + c, 0),
     }));
   }, [results, rangeKey]);
 
-  const fields = dataset.data[0]
-    ? Object.keys(dataset.data[0]).filter((f) => !HIDDEN_FIELDS.has(f))
-    : [];
-
   function runSearch() {
     setAppliedQuery(queryInput);
-    setExpanded(queryInput.trim() !== "");
+    setExpanded(true);
   }
 
   return (
@@ -150,13 +162,13 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
             <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
           <select
-            value={datasetKey}
-            onChange={(e) => setDatasetKey(e.target.value)}
+            value={moduleFilter}
+            onChange={(e) => setModuleFilter(e.target.value)}
             className="bg-dash-bg text-dash-fg text-xs rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint"
           >
-            {DATASETS.map((d) => (
-              <option key={d.key} value={d.key}>
-                {d.label}
+            {MODULE_OPTIONS.map((m) => (
+              <option key={m.key} value={m.key}>
+                {m.label}
               </option>
             ))}
           </select>
@@ -164,7 +176,7 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
             value={queryInput}
             onChange={(e) => setQueryInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && runSearch()}
-            placeholder='DQL 스타일 검색 — 예: severity:CRITICAL AND source:Falco'
+            placeholder='OpenSearch 쿼리 — 예: event.severity:4 AND rule.name:"Terminal shell"'
             className="flex-1 min-w-[200px] bg-dash-bg text-xs text-dash-fg placeholder-dash-muted rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint"
           />
           <TimeRangePicker value={rangeKey} onChange={onRangeChange} />
@@ -192,34 +204,47 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
       {expanded && (
         <div className="bg-dash-surface rounded-2xl p-5">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <p className="text-dash-fg text-sm font-semibold">{results.length.toLocaleString()} hits</p>
+            <p className="text-dash-fg text-sm font-semibold">
+              {results.length.toLocaleString()}
+              {results.length >= RESULT_LIMIT ? "+" : ""} hits
+            </p>
             <p className="text-dash-muted text-xs">
-              Last {preset.label} · {dataset.label}
+              Last {preset.label} · {moduleLabel}
             </p>
           </div>
-          <div className="h-48 mb-3">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={histogram}>
-                <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
-                <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} minTickGap={20} />
-                <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 }} />
-                <Bar dataKey="count" fill={C.mint} radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
 
-          <div className="max-h-96 overflow-y-auto">
-            {results.slice(0, 50).map((doc, i) => (
-              <HitRow key={doc.id ?? i} doc={doc} fields={fields} terms={terms} />
-            ))}
-            {results.length === 0 && (
-              <p className="text-dash-muted text-xs py-8 text-center">조건에 맞는 결과가 없습니다.</p>
-            )}
-            {results.length > 50 && (
-              <p className="text-dash-muted text-[11px] pt-2 text-center">상위 50건만 표시 중 (총 {results.length}건)</p>
-            )}
-          </div>
+          {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
+
+          {status !== "error" && (
+            <>
+              <div className="h-48 mb-3">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={histogram}>
+                    <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+                    <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} minTickGap={20} />
+                    <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
+                    <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 }} />
+                    <Bar dataKey="count" fill={C.mint} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="max-h-96 overflow-y-auto">
+                {status === "loading" && <p className="text-dash-muted text-xs py-8 text-center">불러오는 중...</p>}
+                {status === "ready" &&
+                  results.slice(0, 50).map((doc) => <HitRow key={doc.id} doc={doc} terms={terms} />)}
+                {status === "ready" && results.length === 0 && (
+                  <p className="text-dash-muted text-xs py-8 text-center">조건에 맞는 결과가 없습니다.</p>
+                )}
+                {results.length > 50 && (
+                  <p className="text-dash-muted text-[11px] pt-2 text-center">
+                    상위 50건만 표시 중 (총 {results.length.toLocaleString()}
+                    {results.length >= RESULT_LIMIT ? "+" : ""}건)
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

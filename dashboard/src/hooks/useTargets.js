@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
 
-// GET /scenarios (servers/platform-api/app/scenarios_api.py) — 상관 시나리오
-// 룰 + 적중(hit_count) 랭킹. IncidentsView의 "Top 상관 규칙"과 상세 패널의
-// "상관 규칙" 이름 조회(matched_scenario_rule_id -> name)에 쓴다. AdminAuditView의
-// "탐지 룰별 적중 랭킹"(PATCH /scenarios/{id}/enabled로 on/off)도 이 훅을 같이 쓴다 —
-// reload()로 토글 직후 hit_count/enabled를 다시 받아온다.
-export function useScenarios() {
-  const [scenarios, setScenarios] = useState([]);
+// GET /targets (servers/platform-api/app/targets_api.py) — 보호 대상 애플리케이션
+// 등록 목록(예: "Juice Shop #1", "Juice Shop #2"). 등록해도 파이프라인이 아직 이
+// 테이블을 읽지 않는다(normalizer가 Postgres 연결이 없어서 별도 작업) — 지금은
+// 순수 등록/관리용 장부. AllowListPanel의 target 드롭다운도 이 훅을 같이 쓴다.
+export function useTargets() {
+  const [targets, setTargets] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -17,16 +16,16 @@ export function useScenarios() {
   useEffect(() => {
     let cancelled = false;
     setStatus((s) => (s === "ready" ? "ready" : "loading"));
-    apiGet("/scenarios")
+    apiGet("/targets")
       .then((res) => {
         if (cancelled) return;
-        setScenarios(res ?? []);
+        setTargets(res ?? []);
         setStatus("ready");
         setError(null);
       })
       .catch((e) => {
         if (cancelled) return;
-        setError(e instanceof ApiError ? e.message : "상관 규칙을 불러오지 못했습니다.");
+        setError(e instanceof ApiError ? e.message : "타깃 목록을 불러오지 못했습니다.");
         setStatus("error");
       });
     return () => {
@@ -34,5 +33,5 @@ export function useScenarios() {
     };
   }, [reloadToken]);
 
-  return { scenarios, status, error, reload };
+  return { targets, status, error, reload };
 }

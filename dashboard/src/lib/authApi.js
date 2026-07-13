@@ -119,3 +119,24 @@ export function fetchIncidentsSince(since) {
   const qs = since ? `?since=${encodeURIComponent(since)}` : "";
   return apiGet(`/incidents${qs}`);
 }
+
+// ---- /ws/events (servers/platform-api/app/event_stream.py) ----
+
+// 개별 정규화 이벤트 실시간 스트림(LiveTicker/CriticalAlertPopup용) — 인시던트
+// 폴링(fetchIncidentsSince)과 달리 이건 진짜 WebSocket이다. Traefik이 /api/*
+// 앞단에서 forwardAuth를 거는데, 브라우저 WebSocket API는 커스텀 헤더(Authorization)를
+// 못 실어 보내므로 auth.py의 verify()가 대신 X-Forwarded-Uri의 쿼리스트링에서
+// `?token=`을 읽도록 되어 있다 — 그래서 여기서 토큰을 쿼리스트링으로 붙인다.
+//
+// API_BASE가 상대경로("/api", Traefik 경유)든 절대 URL(http://host:8400, 직결)이든
+// 둘 다 처리: new URL(base, location.origin)으로 절대화한 뒤 http(s)->ws(s)만
+// 바꾸고 path는 그대로 이어붙인다 - Traefik 경유면 PathPrefix(`/api`)가 스트립하는
+// prefix가 그대로 남아 있어야 라우팅되고, 직결이면 애초에 prefix가 없다.
+export function wsUrl(path) {
+  const base = new URL(API_BASE, window.location.origin);
+  const protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  const basePath = base.pathname.endsWith("/") ? base.pathname.slice(0, -1) : base.pathname;
+  const token = getToken();
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${protocol}//${base.host}${basePath}${path}${qs}`;
+}

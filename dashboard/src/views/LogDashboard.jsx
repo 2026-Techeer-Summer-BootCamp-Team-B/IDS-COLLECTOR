@@ -25,7 +25,7 @@ import { useLogs } from "../hooks/useLogs";
 import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } from "../data/realSeverity";
 import { getModuleMeta } from "../data/moduleMeta";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
-import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
+import { RANGE_PRESETS, formatBucketLabel, detectSpike, LIVE_POLL_MS } from "../data/timeSeries";
 import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
@@ -37,10 +37,7 @@ import WorldMap from "../components/WorldMap";
 // dynamic import + Suspense로 분리(코드 스플리팅), Overview가 실제로 렌더될 때만
 // 별도 청크로 로드되게 한다.
 const Globe3D = lazy(() => import("../components/Globe3D"));
-// GeoSummaryCard는 아직 mock(ATTACK_EVENTS)이다 — enrichment.py의 GeoIP lookup이
-// 지금 모든 IP를 "KR/Seoul"로 고정 반환하는 더미라 실데이터로 바꾸면 지구본에
-// 점이 한반도에만 찍혀서 오히려 의미가 없어진다. MaxMind DB 붙인 뒤에 마저 연결.
-import { ATTACK_EVENTS, byCountry } from "../data/attackEvents";
+import { useGeoStats } from "../hooks/useGeoStats";
 
 /**
  * Log Analytics Dashboard — first-pass layout
@@ -200,6 +197,7 @@ export function LogVolumeChart({ rangeKey, module }) {
     lookbackMs: preset.lookbackMs,
     bucketMs: preset.bucketMs,
     module,
+    pollMs: LIVE_POLL_MS,
   });
 
   const data = useMemo(
@@ -289,7 +287,7 @@ export function LogVolumeChart({ rangeKey, module }) {
 export function RealLevelDistributionChart({ hours, module }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const { levels, total, status, error } = useLogLevels({ hours, module });
+  const { levels, total, status, error } = useLogLevels({ hours, module, pollMs: LIVE_POLL_MS });
 
   const data = REAL_SEVERITY_LEVELS.map((l) => {
     const found = levels.find((x) => x.severity === l.severity);
@@ -602,16 +600,21 @@ function DetectionSourceDonutCompact({ lookbackMs }) {
 }
 
 // 공격 발원지 요약 — Infrastructure 탭엔 자세히 훑어보는 평면 WorldMap이 이미
-// 있어서, Overview는 같은 데이터(ATTACK_EVENTS의 GeoIP)를 회전하는 3D 지구본으로
+// 있어서, Overview는 같은 데이터(GET /stats/geo)를 회전하는 3D 지구본으로
 // 보여주는 쪽을 택함 — 랜딩 화면의 "화려한" 대표 비주얼 역할. 자세히 보려면
 // Infrastructure 탭으로.
+//
+// 주의: enrichment.py의 GeoIP lookup이 아직 모든 IP를 "KR/Seoul"로 고정
+// 반환하는 더미라, MaxMind DB가 붙기 전까진 지구본에 한반도 쪽 점만 두드러질
+// 수 있다 — 팀원 확인 필요(useGeoStats.js 주석 참고).
 function GeoSummaryCard() {
   const { theme } = useTheme();
-  const countries = useMemo(() => byCountry(ATTACK_EVENTS), []);
+  const { countries, status, error } = useGeoStats({ limit: 10 });
   const total = countries.reduce((s, c) => s + c.count, 0);
 
   return (
-    <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`최근 7일 · ${countries.length}개국 · 총 ${total}건 · 드래그로 회전`}>
+    <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`전체 기간 · ${countries.length}개국 · 총 ${total}건 · 드래그로 회전`}>
+      {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
       <div className="h-80">
         <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
           <Globe3D points={countries} theme={theme} />
@@ -872,8 +875,9 @@ export function DashboardContent() {
   const hours = preset.lookbackMs / (60 * 60 * 1000);
 
   // GET /stats/kpi — 상단 4개 KPI 카드(Total/Errors/Warnings/Active Sources +
-  // 이전 구간 대비 델타).
-  const { data: kpi, status: kpiStatus } = useKpi({ hours });
+  // 이전 구간 대비 델타). pollMs로 2초마다 갱신 — 더미 로그 생성기 돌릴 때 화면이
+  // 수동 새로고침 없이 따라 올라가야 한다는 피드백 반영.
+  const { data: kpi, status: kpiStatus } = useKpi({ hours, pollMs: LIVE_POLL_MS });
 
   // GET /logs — 아래 차트/테이블에 실제로 흘려보내는 이벤트. kpiFilter에 따라
   // min_severity로 서버에서 미리 좁혀서 요청.
@@ -881,6 +885,7 @@ export function DashboardContent() {
     lookbackMs: preset.lookbackMs,
     minSeverity: KPI_MIN_SEVERITY[kpiFilter],
     limit: 300,
+    pollMs: LIVE_POLL_MS,
   });
   const displayEvents = useMemo(
     () => (kpiFilter === "WARNING" ? rawLogs.filter((e) => e.severity === REAL_WARNING_SEVERITY) : rawLogs),
@@ -893,6 +898,7 @@ export function DashboardContent() {
   const { items: topIps, status: topIpsStatus, error: topIpsError } = useTopIps({
     lookbackMs: preset.lookbackMs,
     limit: kpiFilter === "SOURCES" ? 10 : 5,
+    pollMs: LIVE_POLL_MS,
   });
 
   return (

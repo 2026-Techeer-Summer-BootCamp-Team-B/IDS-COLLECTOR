@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
+import { usePoll } from "./usePoll";
 
 // GET /stats/levels (servers/platform-api/app/stats_api.py) — Log Levels 차트의
-// 실데이터 소스 (event.severity 1~4, realSeverity.js와 짝).
-export function useLogLevels({ hours, module }) {
+// 실데이터 소스 (event.severity 1~4, realSeverity.js와 짝). pollMs를 주면 주기적으로
+// 재요청.
+export function useLogLevels({ hours, module, pollMs }) {
   const [levels, setLevels] = useState([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
+  const pollTick = usePoll(pollMs);
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
+    setStatus((s) => (s === "ready" ? "ready" : "loading"));
     setError(null);
 
     const qs = new URLSearchParams({ hours: String(hours) });
@@ -35,7 +38,7 @@ export function useLogLevels({ hours, module }) {
     return () => {
       cancelled = true;
     };
-  }, [hours, module]);
+  }, [hours, module, pollTick]);
 
   return { levels, total, status, error };
 }

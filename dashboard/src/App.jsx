@@ -16,8 +16,6 @@ import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { SEED_AUDIT_LOG } from "./data/auditLog";
-import { RULES } from "./data/rules";
 import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy";
 
 /**
@@ -234,10 +232,8 @@ function AppShell() {
   // Fake response actions live here (not inside IncidentsView) so they
   // survive switching tabs — IncidentsView unmounts when you navigate away,
   // so anything stored only in its local state would reset.
-  const [auditLog, setAuditLog] = useState(SEED_AUDIT_LOG);
   const [toasts, setToasts] = useState([]);
   const { stats: incidentStats } = useIncidentStats();
-  const [rules, setRules] = useState(RULES);
   const [logPolicies, setLogPolicies] = useState(INITIAL_LOG_POLICIES);
   const [exclusionRules, setExclusionRules] = useState(INITIAL_EXCLUSION_RULES);
 
@@ -247,8 +243,12 @@ function AppShell() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
   }
 
-  function logAction({ action, target, ip, user = "용욱님" }) {
-    setAuditLog((prev) => [{ id: Date.now(), timestamp: new Date(), user, action, target, ip }, ...prev]);
+  // logPolicies/exclusionRules(데이터 보존·샘플링·제외 규칙) 토글은 대응하는 백엔드
+  // 엔드포인트가 아예 없어서 아직 로컬 상태만 바꾸는 mock 액션이다 — 여기서 남기는
+  // 건 실제 audit_logs 테이블에는 안 쌓이고 토스트 피드백용으로만 쓰인다. 탐지 룰
+  // on/off는 이제 실제 PATCH /scenarios/{id}/enabled를 쓰므로(AdminAuditView.jsx)
+  // 여기 없다.
+  function logAction({ action }) {
     pushToast(action, "success");
   }
 
@@ -260,19 +260,6 @@ function AppShell() {
     if (isAdmin) return true;
     pushToast("이 작업은 관리자 권한이 필요합니다.", "error");
     return false;
-  }
-
-  function toggleRule(ruleId) {
-    if (!requireAdmin()) return;
-    const rule = rules.find((r) => r.id === ruleId);
-    if (!rule) return;
-    const nextEnabled = !rule.enabled;
-    setRules((prev) => prev.map((r) => (r.id === ruleId ? { ...r, enabled: nextEnabled } : r)));
-    logAction({
-      action: `탐지 룰 ${nextEnabled ? "활성화" : "비활성화"} (${rule.name})`,
-      target: rule.id,
-      ip: "-",
-    });
   }
 
   function updatePolicy(layer, patch) {
@@ -317,13 +304,11 @@ function AppShell() {
           {active === "infra" && <InfrastructureView />}
           {active === "admin" && (
             <AdminAuditView
-              auditLog={auditLog}
-              rules={rules}
-              onToggleRule={toggleRule}
               logPolicies={logPolicies}
               onUpdatePolicy={updatePolicy}
               exclusionRules={exclusionRules}
               onToggleExclusion={toggleExclusion}
+              pushToast={pushToast}
             />
           )}
           {active === "was" && <WASView />}

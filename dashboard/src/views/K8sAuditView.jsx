@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { RANGE_PRESETS } from "../data/timeSeries";
+import { RANGE_PRESETS, LIVE_POLL_MS } from "../data/timeSeries";
 import { useLogs } from "../hooks/useLogs";
+import { useDetectionSources } from "../hooks/useDetectionSources";
 import TimeRangePicker from "../components/TimeRangePicker";
 import RankedList from "../components/RankedList";
 import { Card, KpiCard, LogVolumeChart, ErrorRateGauge } from "./LogDashboard";
@@ -104,7 +105,17 @@ export default function K8sAuditView() {
   const [rangeKey, setRangeKey] = useState("24h");
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
 
-  const { logs, status, error } = useLogs({ lookbackMs: preset.lookbackMs, module: "k8s_audit", limit: 300 });
+  const { logs, status, error } = useLogs({
+    lookbackMs: preset.lookbackMs,
+    module: "k8s_audit",
+    limit: 300,
+    pollMs: LIVE_POLL_MS,
+  });
+
+  // Total 카드는 logs.length(limit=300 캡) 대신 GET /stats의 by_module count(정확한
+  // 총량)를 쓴다 — WASView.jsx와 동일한 이유.
+  const { byModule } = useDetectionSources({ lookbackMs: preset.lookbackMs, pollMs: LIVE_POLL_MS });
+  const totalAuditEvents = byModule.find((m) => m.module === "k8s_audit")?.count ?? 0;
 
   const deniedCount = useMemo(
     () => logs.filter((e) => e.raw["http.response.status_code"] === DENIED_STATUS_CODE).length,
@@ -149,7 +160,7 @@ export default function K8sAuditView() {
       </div>
 
       <div className="flex flex-wrap gap-4">
-        <KpiCard label={`Total Audit Events (${preset.label})`} value={logs.length.toLocaleString()} />
+        <KpiCard label={`Total Audit Events (${preset.label})`} value={totalAuditEvents.toLocaleString()} />
         <KpiCard label="Denied (HTTP 403)" value={deniedCount} accent="critical" />
         <KpiCard label="Distinct Users" value={distinctUsers} />
         <KpiCard label="Top Verb" value={topVerb ? `${topVerb.label} (${topVerb.count})` : "-"} />

@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { latencyStatsFor } from "../data/mockLogs";
-import { RANGE_PRESETS } from "../data/timeSeries";
+import { RANGE_PRESETS, LIVE_POLL_MS } from "../data/timeSeries";
 import { REAL_SEVERITY_LEVELS } from "../data/realSeverity";
 import { useLogs } from "../hooks/useLogs";
+import { useDetectionSources } from "../hooks/useDetectionSources";
 import TimeRangePicker from "../components/TimeRangePicker";
 import RankedList from "../components/RankedList";
 import {
@@ -25,7 +26,19 @@ export default function WASView() {
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const hours = preset.lookbackMs / (60 * 60 * 1000);
 
-  const { logs, status, error } = useLogs({ lookbackMs: preset.lookbackMs, module: "was", limit: 300 });
+  const { logs, status, error } = useLogs({
+    lookbackMs: preset.lookbackMs,
+    module: "was",
+    limit: 300,
+    pollMs: LIVE_POLL_MS,
+  });
+
+  // Total 카드는 logs.length(=limit 300으로 잘린 배열 길이)를 쓰면 실제 건수가 300을
+  // 넘는 순간부터 300에 고정되어 "연동이 안 된 것"처럼 보인다. GET /stats(track_total_hits
+  // 적용됨)의 by_module count를 따로 받아서 정확한 총량을 쓴다 — logs 배열 자체는
+  // 에러율/레이턴시/Top Path 등 "최근 300건 기준" 지표에는 그대로 쓰인다.
+  const { byModule } = useDetectionSources({ lookbackMs: preset.lookbackMs, pollMs: LIVE_POLL_MS });
+  const totalRequests = byModule.find((m) => m.module === "was")?.count ?? 0;
 
   const errorCount = useMemo(
     () => logs.filter((e) => (e.raw["http.response.status_code"] ?? 0) >= 400).length,
@@ -79,7 +92,7 @@ export default function WASView() {
       </div>
 
       <div className="flex flex-wrap gap-4">
-        <KpiCard label={`Total Requests (${preset.label})`} value={logs.length.toLocaleString()} />
+        <KpiCard label={`Total Requests (${preset.label})`} value={totalRequests.toLocaleString()} />
         <KpiCard label="Errors (HTTP 4xx/5xx)" value={errorCount} accent="critical" />
         <KpiCard label="p99 Latency" value={latency ? `${latency.p99}ms` : "-"} />
         <KpiCard label="Avg Latency" value={latency ? `${latency.avg}ms` : "-"} />

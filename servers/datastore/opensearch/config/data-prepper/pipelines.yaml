@@ -28,6 +28,17 @@ otel-logs-raw-pipeline:
     - opensearch:
         hosts: ["http://opensearch:9200"]
         index: "otel-logs-raw-%{yyyy.MM.dd}"
+        template_type: index-template
+        template_file: "/usr/share/data-prepper/config/otel-logs-raw-template.json"
+        # flush_timeout 기본값 60000ms(1분) - bulk_size가 안 찰 만큼 저볼륨이면
+        # 최대 1분까지 문서를 묶어뒀다가 flush한다. 데모/테스트처럼 이벤트가 뜨문뜨문
+        # 오면 이게 대시보드 반영 지연의 실제 원인이 될 수 있어 1초로 낮춤.
+        flush_timeout: 500
+        # doubleValue 필드가 처음 본 문서의 숫자 표기(정수처럼 보이는 200 vs 200.5)에
+        # 따라 타입이 long/float로 제멋대로 확정되면서 이후 문서가 전부 400으로 튕기던
+        # 문제(otel-logs-raw-template.json의 dynamic_template으로 고정) - 실측으로
+        # 이 벌크 실패가 반복되면서 같은 Data Prepper 프로세스를 쓰는
+        # attack-logs-normalized-pipeline까지 같이 밀리는 것으로 보인다.
 
 # 정규화된 이벤트 (P6-4) - normalizer가 emit한 events.normalized를 그대로 색인한다.
 # _id=event.id(dedupe 키)라서 재처리로 같은 이벤트가 두 번 들어와도 덮어쓰기만 되고
@@ -55,3 +66,6 @@ attack-logs-normalized-pipeline:
         document_id: "${event.id}"
         template_type: index-template
         template_file: "/usr/share/data-prepper/config/attack-logs-template.json"
+        # 대시보드가 실제로 읽는 인덱스라 여기가 핵심 - flush_timeout 기본값 60초를
+        # 1초로 낮춰서 저볼륨 트래픽에서도 거의 실시간으로 색인되게 함.
+        flush_timeout: 500

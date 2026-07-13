@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { ATTACK_TYPES } from "../data/attackEvents";
 import { SOURCE_META } from "./badges";
 import { forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 
-// Fires whenever useLiveFeed.js reports a new CRITICAL event. Auto-dismisses
-// after 6s, or the user can close it / jump to Incidents early.
+// Fires whenever useLiveFeed.js reports a new CRITICAL(severity=4) event.
+// event = mapLogDoc() 결과(lib/normalizedEvent.js) — mock 시절의 attackType/
+// country 필드는 실제 이벤트엔 없어서 message/namespace·pod/sourceIp로 표시.
+// Auto-dismisses after 6s, or the user can close it / jump to Incidents early.
 export default function CriticalAlertPopup({ event, onInvestigate }) {
   const { theme } = useTheme();
   const [visible, setVisible] = useState(false);
@@ -15,11 +16,10 @@ export default function CriticalAlertPopup({ event, onInvestigate }) {
     setVisible(true);
     const t = setTimeout(() => setVisible(false), 6000);
     return () => clearTimeout(t);
-  }, [event?._liveId]);
+  }, [event?.id]);
 
   if (!event || !visible) return null;
 
-  const type = ATTACK_TYPES.find((t) => t.key === event.attackType);
   const src = SOURCE_META[event.source] || { label: event.source, color: "#8890B5" };
 
   return (
@@ -36,9 +36,10 @@ export default function CriticalAlertPopup({ event, onInvestigate }) {
             ✕
           </button>
         </div>
-        <p className="text-dash-fg text-sm font-medium mb-1">{type?.label} 탐지</p>
+        <p className="text-dash-fg text-sm font-medium mb-1">{event.message}</p>
         <p className="text-dash-muted text-xs mb-3">
-          {event.namespace}/{event.pod} · {event.sourceIp} ({event.country}) ·{" "}
+          {event.namespace && `${event.namespace}/${event.pod} · `}
+          {event.sourceIp && `${event.sourceIp} · `}
           <span style={{ color: forTheme(src.color, theme) }}>{src.label}</span>
         </p>
         <button

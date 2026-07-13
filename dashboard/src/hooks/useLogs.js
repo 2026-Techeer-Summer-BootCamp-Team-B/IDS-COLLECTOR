@@ -1,70 +1,35 @@
 import { useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
-import { getModuleMeta } from "../data/moduleMeta";
+import { mapLogDoc } from "../lib/normalizedEvent";
+import { usePoll } from "./usePoll";
 
 // GET /logs (servers/platform-api/app/logs_api.py) — Overview의 Recent Logs
 // 테이블 / Latency 패널 / Error Rate Gauge 실데이터 소스. RAW_EVENTS(mockLogs.js)
 // 대체. 응답은 NormalizedEvent를 점 표기 그대로 직렬화한 flat dict 배열
 // (servers/normalizer/app/schemas.py) — 소스마다 있는 필드가 달라서(WAS만
 // path/duration, Falco/Audit는 namespace/pod 위주) 테이블 한 줄에 필요한
-// message 등을 소스별로 합성한다.
+// message 등을 소스별로 합성한다. mapLogDoc은 lib/normalizedEvent.js로 옮겨서
+// useLiveFeed.js(WS /ws/events)와 파싱 로직을 공유한다 — 둘 다 같은 직렬화
+// 포맷(이벤트 하나를 점 표기 flat dict로)을 받기 때문.
 //
 // level: 기존 9단계 mock 스케일(logLevels.js) 중 정확히 이름이 겹치는 4개
 // (CRITICAL/MAJOR/MINOR/INFO)로 real severity(1~4)를 별칭 처리 — FalcoView/
 // K8sAuditView가 이미 쓰는 것과 같은 패턴이라 LevelBadge/ErrorRateGauge를
 // 그대로 재사용할 수 있다. Log Levels 차트만은 이 4개 외 5개가 항상 0으로
 // 나오는 걸 피하려고 useLogLevels(전용 4단계 집계)를 따로 쓴다.
-const SEVERITY_TO_LEVEL_KEY = { 4: "CRITICAL", 3: "MAJOR", 2: "MINOR", 1: "INFO" };
 
-function synthesizeMessage(doc) {
-  const module = doc["event.module"];
-  if (module === "was") {
-    const method = doc["http.request.method"] ?? "";
-    const path = doc["url.path"] ?? "";
-    const status = doc["http.response.status_code"];
-    const line = `${method} ${path}`.trim();
-    return status != null ? `${line} → ${status}` : line || "요청";
-  }
-  if (module === "falco") {
-    return doc["rule.name"] || doc["event.action"] || "Falco 탐지";
-  }
-  if (module === "k8s_audit") {
-    return doc["event.action"] || "K8s Audit 이벤트";
-  }
-  return doc["event.action"] || doc["event.dataset"] || "-";
-}
-
-function mapLogDoc(doc) {
-  const module = doc["event.module"];
-  const severity = doc["event.severity"] ?? 1;
-  const durationNs = doc["event.duration"];
-  return {
-    id: doc["event.id"],
-    timestamp: new Date(doc["@timestamp"]),
-    severity,
-    level: SEVERITY_TO_LEVEL_KEY[severity] || "INFO",
-    module,
-    source: getModuleMeta(module).label,
-    message: synthesizeMessage(doc),
-    sourceIp: doc["source.ip"] ?? null,
-    path: doc["url.path"] ?? "-",
-    durationMs: typeof durationNs === "number" ? Math.round(durationNs / 1_000_000) : undefined,
-    namespace: doc["orchestrator.namespace"],
-    pod: doc["orchestrator.resource.name"],
-    container: doc["container.name"] || doc["container.id"],
-    image: doc["container.image.name"],
-    raw: doc,
-  };
-}
-
-export function useLogs({ lookbackMs, module, minSeverity, q, limit = 300 }) {
+// pollMs를 주면 그 간격으로 계속 다시 fetch한다(더미 로그 생성기를 돌리면서
+// 화면이 알아서 갱신되길 원할 때 사용) — 재요청마다 "불러오는 중"으로 깜빡이지
+// 않도록 이전 상태가 ready였으면 그대로 ready를 유지한 채 백그라운드에서 갈아치운다.
+export function useLogs({ lookbackMs, module, minSeverity, q, limit = 300, pollMs }) {
   const [logs, setLogs] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
+  const pollTick = usePoll(pollMs);
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
+    setStatus((s) => (s === "ready" ? "ready" : "loading"));
     setError(null);
 
     const end = new Date();
@@ -94,7 +59,7 @@ export function useLogs({ lookbackMs, module, minSeverity, q, limit = 300 }) {
     return () => {
       cancelled = true;
     };
-  }, [lookbackMs, module, minSeverity, q, limit]);
+  }, [lookbackMs, module, minSeverity, q, limit, pollTick]);
 
   return { logs, status, error };
 }

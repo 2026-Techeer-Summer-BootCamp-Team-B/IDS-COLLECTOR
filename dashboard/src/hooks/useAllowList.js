@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
 
-// GET /scenarios (servers/platform-api/app/scenarios_api.py) — 상관 시나리오
-// 룰 + 적중(hit_count) 랭킹. IncidentsView의 "Top 상관 규칙"과 상세 패널의
-// "상관 규칙" 이름 조회(matched_scenario_rule_id -> name)에 쓴다. AdminAuditView의
-// "탐지 룰별 적중 랭킹"(PATCH /scenarios/{id}/enabled로 on/off)도 이 훅을 같이 쓴다 —
-// reload()로 토글 직후 hit_count/enabled를 다시 받아온다.
-export function useScenarios() {
-  const [scenarios, setScenarios] = useState([]);
+// GET /allow-list (servers/platform-api/app/allow_list_api.py) — 탐지 예외
+// IP/CIDR 목록. target_id가 있으면 그 타깃에만, 없으면 전역 예외. 등록해도
+// correlation-engine/normalizer가 아직 이 테이블을 읽고 걸러내는 로직은 없다
+// (banned_ips와 같은 성격의 "장부용" 테이블 — allow_list_api.py 주석 참고).
+export function useAllowList() {
+  const [entries, setEntries] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -17,16 +16,16 @@ export function useScenarios() {
   useEffect(() => {
     let cancelled = false;
     setStatus((s) => (s === "ready" ? "ready" : "loading"));
-    apiGet("/scenarios")
+    apiGet("/allow-list")
       .then((res) => {
         if (cancelled) return;
-        setScenarios(res ?? []);
+        setEntries(res ?? []);
         setStatus("ready");
         setError(null);
       })
       .catch((e) => {
         if (cancelled) return;
-        setError(e instanceof ApiError ? e.message : "상관 규칙을 불러오지 못했습니다.");
+        setError(e instanceof ApiError ? e.message : "허용 목록을 불러오지 못했습니다.");
         setStatus("error");
       });
     return () => {
@@ -34,5 +33,5 @@ export function useScenarios() {
     };
   }, [reloadToken]);
 
-  return { scenarios, status, error, reload };
+  return { entries, status, error, reload };
 }

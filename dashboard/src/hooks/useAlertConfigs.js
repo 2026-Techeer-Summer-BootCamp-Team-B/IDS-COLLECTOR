@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
 
-// GET /scenarios (servers/platform-api/app/scenarios_api.py) — 상관 시나리오
-// 룰 + 적중(hit_count) 랭킹. IncidentsView의 "Top 상관 규칙"과 상세 패널의
-// "상관 규칙" 이름 조회(matched_scenario_rule_id -> name)에 쓴다. AdminAuditView의
-// "탐지 룰별 적중 랭킹"(PATCH /scenarios/{id}/enabled로 on/off)도 이 훅을 같이 쓴다 —
-// reload()로 토글 직후 hit_count/enabled를 다시 받아온다.
-export function useScenarios() {
-  const [scenarios, setScenarios] = useState([]);
+// GET /alert-configs (servers/platform-api/app/alert_configs_api.py) — Slack/Discord
+// 웹훅 알림 설정 목록. app/notifications.py가 이 테이블을 실제로 읽어서 발송하므로
+// (targets/allow-list 같은 "장부용" 테이블과 달리) 여기서 만든 설정은 바로 동작한다 —
+// CRITICAL 인시던트가 생기면 이 목록의 활성 채널로 실제 알림이 나간다.
+export function useAlertConfigs() {
+  const [configs, setConfigs] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -17,16 +16,16 @@ export function useScenarios() {
   useEffect(() => {
     let cancelled = false;
     setStatus((s) => (s === "ready" ? "ready" : "loading"));
-    apiGet("/scenarios")
+    apiGet("/alert-configs")
       .then((res) => {
         if (cancelled) return;
-        setScenarios(res ?? []);
+        setConfigs(res ?? []);
         setStatus("ready");
         setError(null);
       })
       .catch((e) => {
         if (cancelled) return;
-        setError(e instanceof ApiError ? e.message : "상관 규칙을 불러오지 못했습니다.");
+        setError(e instanceof ApiError ? e.message : "알림 설정을 불러오지 못했습니다.");
         setStatus("error");
       });
     return () => {
@@ -34,5 +33,5 @@ export function useScenarios() {
     };
   }, [reloadToken]);
 
-  return { scenarios, status, error, reload };
+  return { configs, status, error, reload };
 }

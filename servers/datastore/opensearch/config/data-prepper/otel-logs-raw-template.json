@@ -1,0 +1,20 @@
+{
+  "index_patterns": ["otel-logs-raw-*"],
+  "template": {
+    "settings": {
+      "index": {
+        "refresh_interval": "1s"
+      }
+    },
+    "mappings": {
+      "dynamic_templates": [
+        {
+          "otel_double_value_as_double": {
+            "path_match": "resourceLogs.scopeLogs.logRecords.attributes.value.doubleValue",
+            "mapping": { "type": "double" }
+          }
+        }
+      ]
+    }
+  }
+}

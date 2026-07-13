@@ -1,6 +1,11 @@
 {
   "index_patterns": ["attack-logs-*"],
   "template": {
+    "settings": {
+      "index": {
+        "refresh_interval": "1s"
+      }
+    },
     "mappings": {
       "properties": {
         "@timestamp": { "type": "date" },
