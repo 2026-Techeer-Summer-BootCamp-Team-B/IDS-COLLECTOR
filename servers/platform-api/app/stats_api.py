@@ -66,6 +66,7 @@ async def get_stats(start: Optional[str] = None, end: Optional[str] = None) -> D
         index=settings.attack_log_index_pattern,
         body={
             "size": 0,
+            "track_total_hits": True,
             "query": query,
             "aggs": {
                 "by_module": {"terms": {"field": "event.module", "size": 10}},
@@ -121,6 +122,7 @@ async def _window_kpi(start: datetime, end: datetime) -> Dict[str, int]:
         index=settings.attack_log_index_pattern,
         body={
             "size": 0,
+            "track_total_hits": True,
             "query": _time_range_query(start.isoformat(), end.isoformat()),
             "aggs": {
                 "by_severity": {"terms": {"field": "event.severity", "size": 4}},
@@ -224,6 +226,7 @@ async def get_levels(hours: int = 24, module: Optional[str] = None) -> Dict[str,
         index=settings.attack_log_index_pattern,
         body={
             "size": 0,
+            "track_total_hits": True,
             "query": query,
             "aggs": {"by_severity": {"terms": {"field": "event.severity", "size": 4}}},
         },
