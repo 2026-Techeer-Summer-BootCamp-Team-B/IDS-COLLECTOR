@@ -1,27 +1,25 @@
 import { useEffect, useRef } from "react";
-import { wsUrl } from "../lib/authApi";
 
-// /ws/incidents(상관분석 엔진 발화를 그대로 릴레이, servers/platform-api/app/
-// websocket.py) 구독 훅. 페이로드 형태를 프론트가 가정하지 않고 "뭔가 새로
-// 왔다"는 신호로만 쓴다 — 호출부(useIncidents의 reload)가 GET /incidents를
-// 다시 불러 목록을 최신화하게 한다. 자동 재연결은 없음(연결이 끊기면 다음
-// 탭 재방문/새로고침 때 정상 목록으로 복구) - LiveTicker/CriticalAlertPopup은
-// 여전히 별도의 mock(useLiveFeed.js) 경로라 이 훅과 무관하다.
-export function useIncidentsSocket(onMessage) {
-  const onMessageRef = useRef(onMessage);
-  onMessageRef.current = onMessage;
+// 2026-07-13부로 백엔드가 /ws/incidents(WebSocket)를 완전히 제거하고 GET
+// /incidents?since=<ISO8601> 짧은 주기 폴링 방식으로 바꿨다(servers/platform-api/
+// app/incident_alerts.py, app/incidents_api.py 참고 — platform-api 재시작/단절 중
+// 발화된 인시던트가 Redis pub/sub 특성상 영구 유실되는 문제를 없애려고 바뀜).
+// 프론트도 맞춰서 WebSocket 대신 setInterval 폴링으로 전환 - 훅 이름/시그니처
+// (콜백 하나 받아서 새 데이터가 있을 때 호출)는 그대로 유지해서 IncidentsView.jsx는
+// 손댈 필요 없게 했다. 실제 재조회는 콜백으로 넘어온 useIncidents().reload가
+// GET /incidents(전체 목록)를 다시 받아오는 방식이라 since 파라미터 자체는 아직
+// 여기서 안 쓴다 - CRITICAL 팝업처럼 "새로 생긴 것만" 구분해야 하는 기능이 생기면
+// 그때 fetchIncidentsSince(dashboard/src/lib/authApi.js)로 바꾸면 된다.
+const POLL_INTERVAL_MS = 5000;
+
+export function useIncidentsSocket(onUpdate) {
+  const onUpdateRef = useRef(onUpdate);
+  onUpdateRef.current = onUpdate;
 
   useEffect(() => {
-    let ws;
-    try {
-      ws = new WebSocket(wsUrl("/ws/incidents"));
-      ws.onmessage = () => onMessageRef.current?.();
-    } catch {
-      // WebSocket 생성 자체가 실패해도(구형 브라우저 등) 나머지 페이지는 계속
-      // 동작해야 하므로 조용히 무시 - 실시간 갱신만 빠지고 최초 로드는 정상.
-    }
-    return () => {
-      ws?.close();
-    };
+    const timer = setInterval(() => {
+      onUpdateRef.current?.();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
   }, []);
 }

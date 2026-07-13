@@ -56,9 +56,11 @@ Target 서버
      -> enrich(GeoIP + was/waf 정적 orchestrator 매핑) -> emit
   -> Kafka 토픽 events.normalized
        ├─ servers/correlation-engine: 시나리오 룰(sequence/threshold) 평가 -> 발화 시
-       │    PostgreSQL incidents/incident_events upsert + Redis pub/sub(incidents:events) 발행
-       │    └─ servers/platform-api: pub/sub 구독 -> WebSocket(/ws/incidents)로 릴레이
-       │         + CRITICAL이면 Slack/Discord 웹훅
+       │    PostgreSQL incidents/incident_events upsert (그게 끝, push 없음)
+       │    └─ servers/platform-api: 프론트는 GET /incidents?since=를 3~5초 폴링해서
+       │         실시간 팝업 구현 + incident_alerts.py가 incidents.notified_at을
+       │         폴링해서 Slack/Discord 웹훅 발송 (2026-07-13 이전엔 Redis pub/sub
+       │         push + WebSocket 릴레이였으나, platform-api 재시작 중 유실 문제로 대체)
        ├─ Data Prepper: OpenSearch attack-logs-* 일 단위 인덱스에 색인 (_id=event.id)
        └─ ClickHouse Kafka 엔진 -> security_events_analytics (JSONExtract로 타입 컬럼화)
 
@@ -100,8 +102,10 @@ Target 서버
 - `/api/*` -> `servers/platform-api`(8400)로 라우팅 (Traefik이 `/api` 프리픽스를
   벗기고 전달 - `servers/docker-compose.yml`의 `platform-api` 서비스 labels 참고).
   예: 프론트에서 `fetch("/api/incidents")` -> platform-api의 `GET /incidents`.
-- WebSocket도 같은 경로로: `ws://<host>/api/ws/incidents` -> platform-api의
-  `/ws/incidents`로 프록시됨 (실측 확인 완료).
+- WebSocket도 같은 경로로: `ws://<host>/api/ws/events` -> platform-api의
+  `/ws/events`(개별 이벤트 티커)로 프록시됨 (실측 확인 완료). 인시던트 실시간 팝업은
+  WebSocket이 아니라 `GET /api/incidents?since=`를 3~5초 주기로 폴링하는 방식이다
+  (2026-07-13 이전엔 `/ws/incidents`였으나 제거됨).
 - `/api` 외 나머지 경로(`/`, 정적 자산 등)는 프론트엔드가 자기 서비스를 만들어서
   Traefik에 라우터/라벨을 추가하면 된다 (otel-collector/platform-api의 Traefik
   labels가 참고 예시).
@@ -116,15 +120,15 @@ Target 서버
   그 자리에서 반환하고 platform-api까지 요청이 가지도 않는다. 읽기(GET)는 로그인만
   되어 있으면 되고(`admin`/`viewer` 둘 다 허용), 쓰기(POST/PATCH/DELETE)는 `role=admin`만
   허용(그 외는 403).
-- WebSocket(`/ws/incidents`, `/ws/events`)도 같은 게이트를 거치는데, 브라우저 `WebSocket`
-  API가 커스텀 헤더를 못 보내므로 **쿼리스트링으로 토큰을 전달**:
-  `ws://<host>/api/ws/incidents?token=<token>` (토큰 없거나 무효면 핸드셰이크가 401로 거절됨).
+- WebSocket(`/ws/events`)도 같은 게이트를 거치는데, 브라우저 `WebSocket` API가 커스텀
+  헤더를 못 보내므로 **쿼리스트링으로 토큰을 전달**:
+  `ws://<host>/api/ws/events?token=<token>` (토큰 없거나 무효면 핸드셰이크가 401로 거절됨).
 - 주의: `platform-api:8400` 직결 포트(로컬 디버깅 편의용)는 Traefik을 거치지 않으므로
   이 인증이 전혀 적용되지 않는다 - 운영 환경에서는 이 포트를 외부에 노출하면 안 된다.
 
 | 메서드/경로 | 설명 |
 | --- | --- |
-| `GET /incidents?status=&limit=` | 인시던트 목록. `status`는 `open`/`investigating`/`closed` |
+| `GET /incidents?status=&since=&limit=` | 인시던트 목록. `status`는 `open`/`investigating`/`closed`. `since`(ISO8601)를 주면 그 시각 이후 생성된 인시던트만 오래된순 반환 - 프론트 실시간 팝업이 이걸 3~5초 주기 폴링(`since`=마지막 확인 시각) |
 | `GET /incidents/{id}` | 인시던트 상세 |
 | `GET /incidents/{id}/events` | 인시던트에 묶인 이벤트 목록 (`event_id`, `event_module`, `added_at`) |
 | `GET /incidents/{id}/timeline` | 스토리라인(시간순) - `incident_events` + OpenSearch 원문을 합쳐 `{event_id, event_module, added_at, title, detail, mitre_technique_id}` 배열로 반환 |
@@ -144,7 +148,6 @@ Target 서버
 | `GET /stats/levels?hours=24&module=` | Log Levels 차트용 - `event.severity`(1~4) terms agg -> `{total, levels:[{severity,count}]}`. `module`은 volume과 동일하게 선택적 필터 |
 | `GET /logs?module=&min_severity=&q=&start=&end=&limit=` | 정규화 이벤트 원본 조회 (Recent Logs 테이블/검색바) - `q`는 OpenSearch `query_string` 그대로 전달 |
 | `GET /reports/trend?days=7` | AI 트렌드 리포트. `ANTHROPIC_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
-| `WS /ws/incidents?token=` | 상관분석 엔진이 발화할 때마다 인시던트 객체(JSON)를 그대로 push (연결 유지용 outbound는 없음) |
 
 인증/통계 엔드포인트는 현재 어느 것도 서버 쪽에서 Authorization을 강제하지 않는다
 (auth.py의 login/session/logout만 예외 — 토큰 발급/검증 자체가 목적이라 당연히
@@ -152,7 +155,7 @@ Target 서버
 항상 붙이도록 만들어뒀지만(dashboard/src/lib/authApi.js), 백엔드가 그걸 실제로
 검사해서 401/403을 돌려주기 시작하는 건 role(RBAC) 모델이 들어온 다음 얘기.
 
-인시던트 JSON 형태(REST/WS 공통):
+인시던트 JSON 형태(GET /incidents, GET /incidents/{id} 공통):
 ```json
 {
   "id": "uuid",
@@ -220,10 +223,12 @@ IPv4 소스 IP도 `toIPv6OrDefault`로 IPv4-mapped IPv6(`::ffff:x.x.x.x`)로 통
 | `corr:{scenario}:stage1:{join_key}` | 시퀀스 stage1 대기 상태 | `window_seconds` |
 | `corr:{scenario}:count:{join_key}` | threshold 카운터 | `window_seconds` |
 | `corr:{scenario}:cooldown:{join_key}` | threshold 쿨다운 | `cooldown_seconds` |
-| `incidents:events` (pub/sub 채널) | 발화 -> platform-api WebSocket 릴레이 | 해당없음 |
+| `scenario:enabled:{id}` | 시나리오 활성/비활성 플래그 (Postgres 값 기준 재시드) | 없음(영구) |
+| `session:{token}` | 로그인 세션(app/auth.py) | `session_ttl_seconds` |
 
-(IP 차단/세션 스토어용 `blacklist:{ip}`/`session:{token}`/원본 이벤트 버퍼용
-`stream:events`는 Target 쪽 WAF 센서가 쓰던 것으로 이 레포 범위 밖 — 검토 필요 상태로 보류)
+(IP 차단 용도의 Redis 키는 없음 - `banned_ips`는 Postgres 기록/감사 전용, 실제
+방화벽 집행 없음. 인시던트 알림도 더 이상 Redis pub/sub을 쓰지 않고 Postgres
+`incidents.notified_at` 폴링으로 대체됨 - app/incident_alerts.py 참고)
 
 ## 디렉토리 구조
 
@@ -237,7 +242,7 @@ servers/
   proxy/       - Traefik (gRPC h2c 라우팅 + /api 단일 진입점 + 자체 관리 대시보드).
                  프론트엔드 서비스가 추가되면 이 밑에 자기 라우터/라벨을 붙이면 됨.
   datastore/
-    postgres/    - users/targets/allow_list/detection_rules/scenario_rules/incidents/incident_events/audit_logs
+    postgres/    - users/targets/allow_list/scenario_rules/incidents/incident_events/audit_logs
     redis/       - dedupe(P3) + 상관분석 윈도우/쿨다운(P4) + pub/sub 공용
     opensearch/  - OpenSearch + Data Prepper (raw 사본 + 정규화 사본 2개 파이프라인)
     clickhouse/  - ClickHouse (events.normalized 직결, JSONExtract 구조화 컬럼)
@@ -246,7 +251,8 @@ servers/
                           설치해서 쓴다(수동 복제 금지, 아래 참고)
   normalizer/         - Kafka 컨슈머 + dedupe + 파서 4종 + 정규화 + enrichment + emit
   correlation-engine/  - 시나리오 룰 엔진(sequence/threshold) + 인시던트 생명주기
-  platform-api/        - 인시던트 API + 인증(실사용자 검증, 세션은 메모리 스토어) + 알림 + AI 리포트 스텁 + WebSocket 릴레이
+  platform-api/        - 인시던트 API(실시간 팝업은 ?since= 폴링) + 인증(실사용자 검증,
+                          세션은 Redis) + 알림(Postgres notified_at 폴링) + AI 리포트 스텁
                           (프론트엔드가 Traefik 경유로 붙는 유일한 연동 지점)
   docker-compose.yml   - normalizer/correlation-engine/platform-api 3개 서비스 정의.
                           normalizer/correlation-engine은 shared/를 이미지에 넣어야 해서
@@ -281,7 +287,7 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 
 - Traefik `web` 엔트리포인트(:80)의 `/api` 라우터는 `stripprefix` 미들웨어로
   `/api` 프리픽스를 뗀 다음 platform-api(8400)로 넘긴다 - REST/WebSocket 둘 다
-  실측 확인 완료(`curl http://localhost/api/incidents`, `ws://localhost/api/ws/incidents`).
+  실측 확인 완료(`curl http://localhost/api/incidents`, `ws://localhost/api/ws/events`).
   프론트엔드 서비스를 추가할 땐 `traefik.enable=true` + 다른 PathPrefix(또는 기본
   라우터)로 라벨만 달면 같은 네트워크(`siem-net`)에서 자동으로 잡힌다.
 - Kafka: Bitnami 이미지 → Apache 공식 이미지로 교체 (무료 이미지 정책 변경 이슈).
@@ -333,14 +339,15 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   `app/scenarios/README.md` 참고) 선언 룰(sequence/threshold) 평가
 - Redis로 시퀀스 대기 상태/threshold 카운터/쿨다운 관리
 - 발화 시 `scenario_rules`를 FK로 참조하는 `incidents`/`incident_events` upsert(open 병합)
-  + Redis pub/sub(`incidents:events`) 발행. MITRE 전술은 `mitre_mapping.py`(MITRE 공식
-  Containers 매트릭스 대조 완료)로 technique_id -> tactics 변환해서 저장
+  로 끝 - platform-api로의 push는 없음(2026-07-13 이전엔 Redis pub/sub(`incidents:events`)
+  발행도 했으나 제거됨, 아래 platform-api 절 참고). MITRE 전술은 `mitre_mapping.py`
+  (MITRE 공식 Containers 매트릭스 대조 완료)로 technique_id -> tactics 변환해서 저장
 - 18개 시나리오(S1~S18) 전부 falcosecurity/plugins의 실제 K8s audit 룰에 근거한
   설계 - 엔진 검증용 예시가 아님(`app/scenarios/README.md` 참고)
 
 ### `servers/platform-api`
 - 프론트엔드(별도 팀/레포)의 유일한 연동 지점 - 위 "프론트엔드 연동 API" 참고, CORS 허용
-- 인시던트 API, 인증(users 테이블 실사용자 검증), Slack/Discord 알림, AI 트렌드 리포트 스텁, WebSocket 릴레이
+- 인시던트 API(실시간 팝업은 `?since=` 폴링), 인증(users 테이블 실사용자 검증), Slack/Discord 알림(Postgres 폴링), AI 트렌드 리포트 스텁, WebSocket(`/ws/events` 개별 이벤트 티커만)
 
 ## 아직 안 된 것 / 스텁인 것
 
