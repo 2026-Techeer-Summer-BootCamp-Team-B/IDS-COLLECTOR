@@ -15,7 +15,6 @@ import { useLiveAttackFeed } from "./hooks/useLiveFeed";
 import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { SEED_AUDIT_LOG } from "./data/auditLog";
 import { RULES } from "./data/rules";
 import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy";
 
@@ -230,7 +229,6 @@ function AppShell() {
   // Fake response actions live here (not inside IncidentsView) so they
   // survive switching tabs — IncidentsView unmounts when you navigate away,
   // so anything stored only in its local state would reset.
-  const [auditLog, setAuditLog] = useState(SEED_AUDIT_LOG);
   const [toasts, setToasts] = useState([]);
   const { stats: incidentStats } = useIncidentStats();
   const [rules, setRules] = useState(RULES);
@@ -243,8 +241,12 @@ function AppShell() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
   }
 
-  function logAction({ action, target, ip, user = "용욱님" }) {
-    setAuditLog((prev) => [{ id: Date.now(), timestamp: new Date(), user, action, target, ip }, ...prev]);
+  // rules/logPolicies/exclusionRules 토글은 아직 실제 백엔드 호출 없이 로컬 상태만
+  // 바꾸는 mock 액션이라(이번 작업 범위 밖 — AdminAuditView.jsx 상단 주석 참고),
+  // 여기서 남기는 건 실제 audit_logs 테이블에는 안 쌓이고 토스트 피드백용으로만
+  // 쓰인다. Admin/Audit 탭의 Audit Log 테이블은 이제 GET /audit-logs(진짜 감사
+  // 로그)를 보여주므로 이 mock 액션들은 거기 나타나지 않는다.
+  function logAction({ action }) {
     pushToast(action, "success");
   }
 
@@ -313,13 +315,13 @@ function AppShell() {
           {active === "infra" && <InfrastructureView />}
           {active === "admin" && (
             <AdminAuditView
-              auditLog={auditLog}
               rules={rules}
               onToggleRule={toggleRule}
               logPolicies={logPolicies}
               onUpdatePolicy={updatePolicy}
               exclusionRules={exclusionRules}
               onToggleExclusion={toggleExclusion}
+              pushToast={pushToast}
             />
           )}
           {active === "was" && <WASView />}
