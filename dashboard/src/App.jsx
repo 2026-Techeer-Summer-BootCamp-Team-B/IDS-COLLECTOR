@@ -15,7 +15,6 @@ import { useLiveAttackFeed } from "./hooks/useLiveFeed";
 import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { RULES } from "./data/rules";
 import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy";
 
 /**
@@ -231,7 +230,6 @@ function AppShell() {
   // so anything stored only in its local state would reset.
   const [toasts, setToasts] = useState([]);
   const { stats: incidentStats } = useIncidentStats();
-  const [rules, setRules] = useState(RULES);
   const [logPolicies, setLogPolicies] = useState(INITIAL_LOG_POLICIES);
   const [exclusionRules, setExclusionRules] = useState(INITIAL_EXCLUSION_RULES);
 
@@ -241,11 +239,11 @@ function AppShell() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
   }
 
-  // rules/logPolicies/exclusionRules 토글은 아직 실제 백엔드 호출 없이 로컬 상태만
-  // 바꾸는 mock 액션이라(이번 작업 범위 밖 — AdminAuditView.jsx 상단 주석 참고),
-  // 여기서 남기는 건 실제 audit_logs 테이블에는 안 쌓이고 토스트 피드백용으로만
-  // 쓰인다. Admin/Audit 탭의 Audit Log 테이블은 이제 GET /audit-logs(진짜 감사
-  // 로그)를 보여주므로 이 mock 액션들은 거기 나타나지 않는다.
+  // logPolicies/exclusionRules(데이터 보존·샘플링·제외 규칙) 토글은 대응하는 백엔드
+  // 엔드포인트가 아예 없어서 아직 로컬 상태만 바꾸는 mock 액션이다 — 여기서 남기는
+  // 건 실제 audit_logs 테이블에는 안 쌓이고 토스트 피드백용으로만 쓰인다. 탐지 룰
+  // on/off는 이제 실제 PATCH /scenarios/{id}/enabled를 쓰므로(AdminAuditView.jsx)
+  // 여기 없다.
   function logAction({ action }) {
     pushToast(action, "success");
   }
@@ -258,19 +256,6 @@ function AppShell() {
     if (isAdmin) return true;
     pushToast("이 작업은 관리자 권한이 필요합니다.", "error");
     return false;
-  }
-
-  function toggleRule(ruleId) {
-    if (!requireAdmin()) return;
-    const rule = rules.find((r) => r.id === ruleId);
-    if (!rule) return;
-    const nextEnabled = !rule.enabled;
-    setRules((prev) => prev.map((r) => (r.id === ruleId ? { ...r, enabled: nextEnabled } : r)));
-    logAction({
-      action: `탐지 룰 ${nextEnabled ? "활성화" : "비활성화"} (${rule.name})`,
-      target: rule.id,
-      ip: "-",
-    });
   }
 
   function updatePolicy(layer, patch) {
@@ -315,8 +300,6 @@ function AppShell() {
           {active === "infra" && <InfrastructureView />}
           {active === "admin" && (
             <AdminAuditView
-              rules={rules}
-              onToggleRule={toggleRule}
               logPolicies={logPolicies}
               onUpdatePolicy={updatePolicy}
               exclusionRules={exclusionRules}
