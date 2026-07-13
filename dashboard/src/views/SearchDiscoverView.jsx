@@ -7,6 +7,7 @@ import { runQuery, extractTerms } from "../data/dql";
 import TimeRangePicker from "../components/TimeRangePicker";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 /**
  * Discover-style search bar: pick a dataset (index), write a DQL-ish query,
@@ -46,13 +47,15 @@ function Highlight({ text, terms }) {
 }
 
 function formatValue(v) {
-  if (v instanceof Date) return v.toLocaleString("ko-KR");
+  if (v instanceof Date) return v.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE });
   return String(v);
 }
 
 function HitRow({ doc, fields, terms }) {
   const [open, setOpen] = useState(false);
-  const time = doc.timestamp instanceof Date ? doc.timestamp.toLocaleString("ko-KR") : String(doc.timestamp);
+  const time = doc.timestamp instanceof Date
+    ? doc.timestamp.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })
+    : String(doc.timestamp);
   const previewFields = fields.slice(0, 5);
 
   return (

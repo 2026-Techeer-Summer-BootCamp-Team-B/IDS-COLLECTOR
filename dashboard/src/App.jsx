@@ -14,6 +14,7 @@ import LoginScreen from "./components/LoginScreen";
 import { useLiveAttackFeed } from "./hooks/useLiveFeed";
 import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
+import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { SEED_AUDIT_LOG } from "./data/auditLog";
 import { RULES } from "./data/rules";
@@ -167,8 +168,11 @@ function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
     return () => clearInterval(t);
   }, []);
 
-  const time = now.toLocaleTimeString("en-GB", { hour12: false });
-  const date = now.toISOString().slice(0, 10);
+  const time = now.toLocaleTimeString("en-GB", { hour12: false, timeZone: DISPLAY_TIMEZONE });
+  // toISOString()은 항상 UTC라 자정 근처(표시 타임존 기준 자정 전)엔 하루 전 날짜가
+  // 찍힌다 - en-CA 로케일은 YYYY-MM-DD 포맷을 그대로 주는 몇 안 되는 로케일이라
+  // 별도 파싱 없이 씀.
+  const date = now.toLocaleDateString("en-CA", { timeZone: DISPLAY_TIMEZONE });
 
   return (
     <header className="flex flex-wrap items-center gap-x-8 gap-y-2 px-6 py-4 border-b border-dash-surfaceAlt">

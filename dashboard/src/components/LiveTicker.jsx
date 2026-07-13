@@ -3,11 +3,12 @@ import { SOURCE_META } from "./badges";
 import { ATTACK_TYPES } from "../data/attackEvents";
 import { forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 function describe(e, theme) {
   const type = ATTACK_TYPES.find((t) => t.key === e.attackType);
   const src = SOURCE_META[e.source] || { label: e.source, color: "#8890B5" };
-  const time = e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const time = e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: DISPLAY_TIMEZONE });
   return { time, type, src: { ...src, color: forTheme(src.color, theme) } };
 }
 

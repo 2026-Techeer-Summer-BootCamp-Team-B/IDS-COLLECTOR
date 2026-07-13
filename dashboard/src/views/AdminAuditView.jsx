@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { RULES, byRuleHits } from "../data/rules";
 import { ATTACK_EVENTS } from "../data/attackEvents";
 import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "../data/logPolicy";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 function RuleToggle({ enabled, onToggle }) {
   return (
@@ -208,6 +209,7 @@ export default function AdminAuditView({
                       day: "numeric",
                       hour: "2-digit",
                       minute: "2-digit",
+                      timeZone: DISPLAY_TIMEZONE,
                     })}
                   </td>
                   <td className="py-2.5 text-dash-fg whitespace-nowrap pr-4 text-xs">{log.user}</td>
