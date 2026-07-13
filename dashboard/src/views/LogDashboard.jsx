@@ -15,10 +15,17 @@ import {
   Cell,
   Sector,
 } from "recharts";
-import { RAW_EVENTS, MOCK_NOW, levelDistributionFor, latencyStatsFor } from "../data/mockLogs";
+import { latencyStatsFor, levelDistributionFor } from "../data/mockLogs";
 import { useTopIps } from "../hooks/useTopIps";
+import { useKpi } from "../hooks/useKpi";
+import { useLogVolume } from "../hooks/useLogVolume";
+import { useLogLevels } from "../hooks/useLogLevels";
+import { useDetectionSources } from "../hooks/useDetectionSources";
+import { useLogs } from "../hooks/useLogs";
+import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } from "../data/realSeverity";
+import { getModuleMeta } from "../data/moduleMeta";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
-import { RANGE_PRESETS, bucketEvents, detectSpike } from "../data/timeSeries";
+import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
 import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import SearchDiscoverView from "./SearchDiscoverView";
@@ -29,8 +36,10 @@ import WorldMap from "../components/WorldMap";
 // dynamic import + Suspense로 분리(코드 스플리팅), Overview가 실제로 렌더될 때만
 // 별도 청크로 로드되게 한다.
 const Globe3D = lazy(() => import("../components/Globe3D"));
-import { ATTACK_EVENTS, byCountry, byAttackType, bySource } from "../data/attackEvents";
-import { SOURCE_META } from "../components/badges";
+// GeoSummaryCard는 아직 mock(ATTACK_EVENTS)이다 — enrichment.py의 GeoIP lookup이
+// 지금 모든 IP를 "KR/Seoul"로 고정 반환하는 더미라 실데이터로 바꾸면 지구본에
+// 점이 한반도에만 찍혀서 오히려 의미가 없어진다. MaxMind DB 붙인 뒤에 마저 연결.
+import { ATTACK_EVENTS, byCountry } from "../data/attackEvents";
 
 /**
  * Log Analytics Dashboard — first-pass layout
@@ -179,18 +188,24 @@ function LevelBadge({ level }) {
 
 // Time range is picked once, in the search bar at the top of the page
 // (SearchDiscoverView's TimeRangePicker) — this chart just reads rangeKey.
+// GET /stats/volume(servers/platform-api/app/stats_api.py) 연동 — 서버가
+// date_histogram으로 버킷을 미리 잘라서 내려주면, 라벨 포맷(timeSeries.js의
+// formatBucketLabel)과 급증 탐지(detectSpike)는 그대로 클라이언트에서 재사용.
 export function LogVolumeChart({ rangeKey }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
-  const data = useMemo(() => {
-    const buckets = bucketEvents(RAW_EVENTS, preset, MOCK_NOW.getTime());
-    return buckets.map((b) => {
-      const total = Object.values(b.counts).reduce((a, c) => a + c, 0);
-      const errorish = ERROR_BAND.reduce((sum, key) => sum + (b.counts[key] || 0), 0);
-      return { label: b.label, total, errorish };
-    });
-  }, [rangeKey]);
+  const { buckets, status, error } = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs });
+
+  const data = useMemo(
+    () =>
+      buckets.map((b) => ({
+        label: formatBucketLabel(new Date(b.ts), preset.bucketMs),
+        total: b.total,
+        errorish: b.errors,
+      })),
+    [buckets, rangeKey]
+  );
 
   // 평소(중앙값) 대비 급증 구간 탐지 — 있으면 배지 + 차트 위 마커로 표시.
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
@@ -209,50 +224,91 @@ export function LogVolumeChart({ rangeKey }) {
       }
       className="h-80"
     >
-      <ResponsiveContainer width="100%" height="82%">
-        <AreaChart data={data}>
-          <defs>
-            <linearGradient id="volumeFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={C.mint} stopOpacity={0.45} />
-              <stop offset="100%" stopColor={C.mint} stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="errorFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={C.critical} stopOpacity={0.5} />
-              <stop offset="100%" stopColor={C.critical} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
-          <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
-          <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-          <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
-          <Area type="monotone" dataKey="total" stroke={C.mint} fill="url(#volumeFill)" strokeWidth={2} />
-          <Area type="monotone" dataKey="errorish" stroke={C.critical} fill="url(#errorFill)" strokeWidth={2} />
-          {spikePoint && (
-            <ReferenceDot
-              x={spikePoint.label}
-              y={spikePoint.total}
-              r={5}
-              fill={C.pink}
-              stroke={C.bg}
-              strokeWidth={2}
-              ifOverflow="extendDomain"
-            />
-          )}
-        </AreaChart>
-      </ResponsiveContainer>
-      <div className="flex gap-4 text-xs text-dash-muted mt-2">
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-dash-mint inline-block" /> 전체 로그
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: C.critical }} /> Emergency~Major
-        </span>
-        {spike && (
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-dash-pink inline-block" /> 급증 구간 (기준선 {spike.baseline}건)
-          </span>
-        )}
-      </div>
+      {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
+      {status === "ready" && (
+        <>
+          <ResponsiveContainer width="100%" height="82%">
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id="volumeFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={C.mint} stopOpacity={0.45} />
+                  <stop offset="100%" stopColor={C.mint} stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="errorFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={C.critical} stopOpacity={0.5} />
+                  <stop offset="100%" stopColor={C.critical} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+              <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
+              <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
+              <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
+              <Area type="monotone" dataKey="total" stroke={C.mint} fill="url(#volumeFill)" strokeWidth={2} />
+              <Area type="monotone" dataKey="errorish" stroke={C.critical} fill="url(#errorFill)" strokeWidth={2} />
+              {spikePoint && (
+                <ReferenceDot
+                  x={spikePoint.label}
+                  y={spikePoint.total}
+                  r={5}
+                  fill={C.pink}
+                  stroke={C.bg}
+                  strokeWidth={2}
+                  ifOverflow="extendDomain"
+                />
+              )}
+            </AreaChart>
+          </ResponsiveContainer>
+          <div className="flex gap-4 text-xs text-dash-muted mt-2">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-dash-mint inline-block" /> 전체 로그
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: C.critical }} /> Major~Critical
+            </span>
+            {spike && (
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-dash-pink inline-block" /> 급증 구간 (기준선 {spike.baseline}건)
+              </span>
+            )}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// Log Levels 차트 실데이터 버전 — event.severity 1~4 그대로 4개 막대(기존
+// LevelDistributionChart의 9단계는 FalcoView 등 여전히 mock인 다른 뷰가
+// 재사용 중이라 그대로 두고, Overview 전용으로 새로 뺐다).
+function RealLevelDistributionChart({ hours }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const { levels, total, status, error } = useLogLevels({ hours });
+
+  const data = REAL_SEVERITY_LEVELS.map((l) => {
+    const found = levels.find((x) => x.severity === l.severity);
+    return { key: l.key, level: l.label, count: found ? found.count : 0, color: forTheme(l.color, theme) };
+  });
+
+  return (
+    <Card title="Log Levels" subtitle={status === "ready" ? `선택 구간 · ${total}건` : "불러오는 중..."} className="h-80">
+      {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
+      {status !== "error" && (
+        <ResponsiveContainer width="100%" height="88%">
+          <BarChart data={data} margin={{ bottom: 16 }}>
+            <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+            <XAxis dataKey="level" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} interval={0} />
+            <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
+            <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
+            <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+              {data.map((d) => (
+                <Cell key={d.key} fill={d.color} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
     </Card>
   );
 }
@@ -470,122 +526,72 @@ function useCountUp(rawValue, duration = 500) {
   return display;
 }
 
-// 공격 유형 도넛 — Incidents 탭과 같은 ATTACK_EVENTS 집계를 Overview에도 요약 노출.
-// "전체 로그"뿐 아니라 "위협" 관점 요약도 첫 화면에서 한눈에 보이도록.
-function AttackTypeDonutCompact() {
-  const { theme } = useTheme();
-  const C = CHART_COLORS[theme];
-  const data = useMemo(
-    () => byAttackType(ATTACK_EVENTS).filter((d) => d.count > 0).map((d) => ({ ...d, color: forTheme(d.color, theme) })),
-    [theme]
-  );
-  const total = data.reduce((s, d) => s + d.count, 0);
-  const [activeIndex, setPaused] = useAutoCycleIndex(data.length);
-
-  return (
-    <Card title="공격 유형 분포" subtitle={`최근 7일 · 총 ${total}건`}>
-      <div className="flex items-center gap-4">
-        <ResponsiveContainer width={110} height={110}>
-          <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-            <Pie
-              data={data}
-              dataKey="count"
-              nameKey="label"
-              innerRadius={32}
-              outerRadius={52}
-              stroke="none"
-              isAnimationActive
-              animationDuration={700}
-              animationEasing="ease-out"
-              activeIndex={activeIndex}
-              activeShape={renderGlowActiveShape}
-            >
-              {data.map((d) => (
-                <Cell key={d.key} fill={d.color} />
-              ))}
-            </Pie>
-            <Tooltip contentStyle={tooltipStyle(C)} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="flex-1 space-y-1 text-xs">
-          {data.slice(0, 5).map((d, i) => (
-            <div
-              key={d.key}
-              className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
-                i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
-              }`}
-            >
-              <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
-                <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
-                {d.label}
-              </span>
-              <span className="text-dash-fg">{d.count}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 // 탐지 소스별(WAS/Falco/K8s Audit) 도넛 — 3계층 상관분석 프로젝트의 핵심 축이라
-// Overview 요약에도 반드시 있어야 하는 지표.
-function DetectionSourceDonutCompact() {
+// Overview 요약에도 반드시 있어야 하는 지표. GET /stats(by_module) 연동 - WAF는
+// 비활성화 상태라 보통 안 잡히거나 0건(정상).
+function DetectionSourceDonutCompact({ lookbackMs }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const { byModule, status, error } = useDetectionSources({ lookbackMs });
   const data = useMemo(
     () =>
-      bySource(ATTACK_EVENTS).map((d) => {
-        const meta = SOURCE_META[d.source] || { label: d.source, color: "#8890B5" };
-        return { ...d, ...meta, color: forTheme(meta.color, theme) };
-      }),
-    [theme]
+      byModule
+        .filter((d) => d.count > 0)
+        .map((d) => {
+          const meta = getModuleMeta(d.module);
+          return { key: d.module, count: d.count, label: meta.label, color: forTheme(meta.color, theme) };
+        }),
+    [byModule, theme]
   );
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused] = useAutoCycleIndex(data.length);
 
   return (
-    <Card title="탐지 소스별 분포" subtitle={`WAS / Falco / K8s Audit · 총 ${total}건`}>
-      <div className="flex items-center gap-4">
-        <ResponsiveContainer width={110} height={110}>
-          <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-            <Pie
-              data={data}
-              dataKey="count"
-              nameKey="label"
-              innerRadius={32}
-              outerRadius={52}
-              stroke="none"
-              isAnimationActive
-              animationDuration={700}
-              animationEasing="ease-out"
-              activeIndex={activeIndex}
-              activeShape={renderGlowActiveShape}
-            >
-              {data.map((d) => (
-                <Cell key={d.source} fill={d.color} />
-              ))}
-            </Pie>
-            <Tooltip contentStyle={tooltipStyle(C)} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="flex-1 space-y-1.5 text-xs">
-          {data.map((d, i) => (
-            <div
-              key={d.source}
-              className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
-                i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
-              }`}
-            >
-              <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
-                <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
-                {d.label}
-              </span>
-              <span className="text-dash-fg">{d.count}</span>
-            </div>
-          ))}
+    <Card title="탐지 소스별 분포" subtitle={status === "ready" ? `WAS / Falco / K8s Audit · 총 ${total}건` : "불러오는 중..."}>
+      {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
+      {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
+      {data.length > 0 && (
+        <div className="flex items-center gap-4">
+          <ResponsiveContainer width={110} height={110}>
+            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+              <Pie
+                data={data}
+                dataKey="count"
+                nameKey="label"
+                innerRadius={32}
+                outerRadius={52}
+                stroke="none"
+                isAnimationActive
+                animationDuration={700}
+                animationEasing="ease-out"
+                activeIndex={activeIndex}
+                activeShape={renderGlowActiveShape}
+              >
+                {data.map((d) => (
+                  <Cell key={d.key} fill={d.color} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={tooltipStyle(C)} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex-1 space-y-1.5 text-xs">
+            {data.map((d, i) => (
+              <div
+                key={d.key}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
+                  i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
+                }`}
+              >
+                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
+                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+                  {d.label}
+                </span>
+                <span className="text-dash-fg">{d.count}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </Card>
   );
 }
@@ -652,11 +658,16 @@ export function LatencyStatsPanel({ events }) {
   );
 }
 
-export function RecentLogsTable({ events }) {
+// filterLevels: 상단 레벨 필터 버튼 행에 보여줄 레벨 목록 — 기본은 9단계
+// mock 전체(ALL_LEVELS)지만, 실데이터(severity 1~4)를 넘길 땐 REAL_SEVERITY_LEVELS
+// 처럼 4개만 넘겨서 "눌러도 항상 0건"인 나머지 5개 버튼이 안 보이게 한다.
+// status/error: useLogs 같은 비동기 훅과 바로 연결할 수 있게 한 선택적 로딩/에러 표시.
+export function RecentLogsTable({ events, filterLevels, status = "ready", error = null }) {
   const [query, setQuery] = useState("");
   const [levelFilter, setLevelFilter] = useState("ALL");
   const [sourceFilter, setSourceFilter] = useState("ALL");
   const [expandedId, setExpandedId] = useState(null);
+  const levelButtons = filterLevels ?? ALL_LEVELS.filter((l) => l.key !== "UNKNOWN");
 
   const sourceOptions = useMemo(
     () => Array.from(new Set(events.map((l) => l.source))).sort(),
@@ -689,7 +700,7 @@ export function RecentLogsTable({ events }) {
           >
             All
           </button>
-          {ALL_LEVELS.filter((l) => l.key !== "UNKNOWN").map((l) => (
+          {levelButtons.map((l) => (
             <button
               key={l.key}
               onClick={() => setLevelFilter(l.key)}
@@ -703,6 +714,10 @@ export function RecentLogsTable({ events }) {
         </div>
       }
     >
+      {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs py-3">{error || "로그를 불러오지 못했습니다."}</p>}
+      {status === "ready" && (
+      <>
       <div className="flex flex-wrap gap-2 mb-3">
         <select
           value={sourceFilter}
@@ -816,6 +831,8 @@ export function RecentLogsTable({ events }) {
         </table>
         {filtered.length === 0 && <p className="text-dash-muted text-xs py-3">조건에 맞는 로그가 없습니다.</p>}
       </div>
+      </>
+      )}
     </Card>
   );
 }
@@ -829,11 +846,13 @@ export function RecentLogsTable({ events }) {
 // KPI 카드 4개 모두 라디오 버튼처럼 동작 — 눌러서 전체/에러만/경고만으로 아래
 // 차트·테이블을 필터링한다. SOURCES는 레벨 자체를 걸러내진 않지만(소스는 레벨
 // 개념이 아니라서), 대신 Top Sources 카드를 펼쳐서 더 많은 소스를 보여준다.
-const KPI_FILTERS = {
-  ALL: () => true,
-  ERROR: (l) => ERROR_BAND.includes(l),
-  WARNING: (l) => WARN_BAND.includes(l),
-  SOURCES: () => true,
+// min_severity: /logs가 지원하는 ">=" 조건. WARNING(정확히 severity 2)만 서버
+// 쪽에서 못 걸러서 클라이언트에서 한 번 더 좁힌다(아래 displayEvents).
+const KPI_MIN_SEVERITY = {
+  ALL: undefined,
+  ERROR: REAL_ERROR_MIN_SEVERITY,
+  WARNING: REAL_WARNING_SEVERITY,
+  SOURCES: undefined,
 };
 
 export function DashboardContent() {
@@ -845,21 +864,25 @@ export function DashboardContent() {
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [searchHits, setSearchHits] = useState(0);
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
+  const hours = preset.lookbackMs / (60 * 60 * 1000);
 
-  const rangeEvents = useMemo(() => {
-    const cutoff = MOCK_NOW.getTime() - preset.lookbackMs;
-    return RAW_EVENTS.filter((e) => e.timestamp.getTime() > cutoff);
-  }, [rangeKey]);
+  // GET /stats/kpi — 상단 4개 KPI 카드(Total/Errors/Warnings/Active Sources +
+  // 이전 구간 대비 델타).
+  const { data: kpi, status: kpiStatus } = useKpi({ hours });
 
-  const errorCount = rangeEvents.filter((l) => ERROR_BAND.includes(l.level)).length;
-  const warnCount = rangeEvents.filter((l) => WARN_BAND.includes(l.level)).length;
-  const sourceCount = new Set(rangeEvents.map((l) => l.source)).size;
-
-  // 아래 차트/테이블에 실제로 흘려보내는 이벤트 — kpiFilter에 따라 걸러짐.
+  // GET /logs — 아래 차트/테이블에 실제로 흘려보내는 이벤트. kpiFilter에 따라
+  // min_severity로 서버에서 미리 좁혀서 요청.
+  const { logs: rawLogs, status: logsStatus, error: logsError } = useLogs({
+    lookbackMs: preset.lookbackMs,
+    minSeverity: KPI_MIN_SEVERITY[kpiFilter],
+    limit: 300,
+  });
   const displayEvents = useMemo(
-    () => rangeEvents.filter((e) => KPI_FILTERS[kpiFilter](e.level)),
-    [rangeEvents, kpiFilter]
+    () => (kpiFilter === "WARNING" ? rawLogs.filter((e) => e.severity === REAL_WARNING_SEVERITY) : rawLogs),
+    [rawLogs, kpiFilter]
   );
+  const wasEventsForLatency = useMemo(() => displayEvents.filter((e) => e.module === "was"), [displayEvents]);
+
   // GET /stats/top-ips — 실제 백엔드 집계. kpiFilter가 SOURCES면 더 많이(limit
   // 10) 보여주므로 그만큼 넉넉히 요청.
   const { items: topIps, status: topIpsStatus, error: topIpsError } = useTopIps({
@@ -891,34 +914,34 @@ export function DashboardContent() {
       <div className="flex flex-wrap gap-4">
         <KpiCard
           label={`Total Logs (${preset.label})`}
-          value={rangeEvents.length}
-          delta="8%"
-          positive
+          value={kpiStatus === "ready" ? kpi.current.total : "-"}
+          delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
+          positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
           onClick={() => setKpiFilter("ALL")}
           active={kpiFilter === "ALL"}
         />
         <KpiCard
-          label="Errors (Emergency~Major)"
-          value={errorCount}
-          delta="12%"
-          positive={false}
+          label="Errors (Major~Critical)"
+          value={kpiStatus === "ready" ? kpi.current.errors : "-"}
+          delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
+          positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
           onClick={() => setKpiFilter("ERROR")}
           active={kpiFilter === "ERROR"}
           accent="critical"
         />
         <KpiCard
-          label="Warnings (Minor~Warning)"
-          value={warnCount}
-          delta="4%"
-          positive
+          label="Warnings (Minor)"
+          value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
+          delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
+          positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
           onClick={() => setKpiFilter("WARNING")}
           active={kpiFilter === "WARNING"}
         />
         <KpiCard
           label="Active Sources"
-          value={sourceCount}
-          delta="2 new"
-          positive
+          value={kpiStatus === "ready" ? kpi.current.sources : "-"}
+          delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
+          positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
           onClick={() => setKpiFilter("SOURCES")}
           active={kpiFilter === "SOURCES"}
         />
@@ -941,23 +964,25 @@ export function DashboardContent() {
           <div className="xl:col-span-2">
             <LogVolumeChart rangeKey={rangeKey} />
           </div>
-          <LevelDistributionChart events={displayEvents} />
+          <RealLevelDistributionChart hours={hours} />
         </div>
       </div>
 
       <div>
-        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">보안 탐지 요약 · 최근 7일</p>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <AttackTypeDonutCompact />
-          <DetectionSourceDonutCompact />
-        </div>
+        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">보안 탐지 요약</p>
+        <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />
       </div>
 
-      <LatencyStatsPanel events={displayEvents} />
+      <LatencyStatsPanel events={wasEventsForLatency} />
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2">
-          <RecentLogsTable events={displayEvents} />
+          <RecentLogsTable
+            events={displayEvents}
+            filterLevels={REAL_SEVERITY_LEVELS}
+            status={logsStatus}
+            error={logsError}
+          />
         </div>
         <div className="space-y-6">
           <TopSources
@@ -967,7 +992,7 @@ export function DashboardContent() {
             limit={kpiFilter === "SOURCES" ? 10 : 5}
             highlighted={kpiFilter === "SOURCES"}
           />
-          <ErrorRateGauge events={displayEvents} />
+          <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />
         </div>
       </div>
 

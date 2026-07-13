@@ -121,6 +121,10 @@ Target 서버
 | `POST /auth/logout` | `Authorization: Bearer <token>` 필요. 토큰 폐기 -> `{status:"ok"}` |
 | `GET /stats?start=&end=` | ISO8601 구간 module/severity별 집계 |
 | `GET /stats/top-ips?start=&end=&limit=` | 공격 발원지 IP Top-N (`source.ip` terms agg) -> `{items:[{source_ip,count}]}` |
+| `GET /stats/kpi?hours=24` | Overview KPI 카드용 - 현재/직전 동일 길이 구간의 total/errors(severity>=3)/warnings(severity==2)/sources(고유 event.module 수) + `delta_pct`, `sources_delta` |
+| `GET /stats/volume?hours=24&buckets=25` | Log Volume 차트용 - `@timestamp` date_histogram, 버킷별 `{ts, total, errors}` (errors = severity>=3) |
+| `GET /stats/levels?hours=24` | Log Levels 차트용 - `event.severity`(1~4) terms agg -> `{total, levels:[{severity,count}]}` |
+| `GET /logs?module=&min_severity=&q=&start=&end=&limit=` | 정규화 이벤트 원본 조회 (Recent Logs 테이블/검색바) - `q`는 OpenSearch `query_string` 그대로 전달 |
 | `GET /reports/trend?days=7` | AI 트렌드 리포트. `ANTHROPIC_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
 | `WS /ws/incidents` | 상관분석 엔진이 발화할 때마다 인시던트 객체(JSON)를 그대로 push (연결 유지용 outbound는 없음) |
 

@@ -33,7 +33,9 @@ export const RANGE_PRESETS = [
 // card) so those don't get crowded by the full 13-item ladder above.
 export const QUICK_RANGE_KEYS = ["15m", "1h", "6h", "24h", "7d", "30d"];
  
-function formatBucketLabel(date, bucketMs) {
+// Exported so real-data hooks (useLogVolume.js) can format server-returned
+// bucket timestamps with the exact same convention as the mock bucketing path.
+export function formatBucketLabel(date, bucketMs) {
   const isDayBucket = bucketMs >= 24 * 60 * 60 * 1000;
   const isHourPlus = bucketMs >= 60 * 60 * 1000;
   if (isDayBucket) return date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
