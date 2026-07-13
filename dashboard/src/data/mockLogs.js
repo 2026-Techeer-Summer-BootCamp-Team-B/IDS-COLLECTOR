@@ -135,16 +135,6 @@ export function levelDistributionFor(events) {
   }, {});
 }
  
-export function topSourcesFor(events) {
-  const counts = events.reduce((acc, l) => {
-    acc[l.source] = (acc[l.source] || 0) + 1;
-    return acc;
-  }, {});
-  return Object.entries(counts)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-}
-
 // Nearest-rank percentile — same convention Loki/Prometheus's
 // quantile_over_time uses. `values` need not be pre-sorted.
 export function percentile(values, p) {
@@ -176,4 +166,3 @@ export function latencyStatsFor(events) {
 const last24hCutoff = MOCK_NOW.getTime() - 24 * 60 * 60 * 1000;
 const last24h = RAW_EVENTS.filter((e) => e.timestamp.getTime() > last24hCutoff);
 export const levelDistribution = levelDistributionFor(last24h);
-export const topSources = topSourcesFor(last24h);
