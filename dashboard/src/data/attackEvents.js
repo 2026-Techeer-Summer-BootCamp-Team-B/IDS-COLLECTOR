@@ -12,15 +12,15 @@ import { MOCK_NOW } from "./mockLogs";
 // Attack-type taxonomy. Colors mirror the logLevels.js severity gradient so
 // the palette stays consistent across the whole app.
 export const ATTACK_TYPES = [
-  { key: "SQLI", label: "SQL Injection", mitre: "T1190", color: "#F2617A" },
-  { key: "XSS", label: "Stored/Reflected XSS", mitre: "T1059", color: "#F2748A" },
-  { key: "BRUTE_FORCE", label: "Brute Force", mitre: "T1110", color: "#F2A65A" },
-  { key: "PATH_TRAVERSAL", label: "Path Traversal", mitre: "T1083", color: "#F2C48A" },
-  { key: "SCANNING", label: "Recon Scanning", mitre: "T1595", color: "#E8D97A" },
-  { key: "SHELL_EXEC", label: "Container Shell Exec", mitre: "T1609", color: "#C9E8DE" },
-  { key: "PRIV_ESC", label: "Privilege Escalation", mitre: "T1611", color: "#A9DFD8" },
-  { key: "C2_COMM", label: "C2 Communication", mitre: "T1071", color: "#A0A0A0" },
-  { key: "CRED_ACCESS", label: "Credential Access", mitre: "T1552", color: "#87888C" },
+  { key: "SQLI", label: "SQL Injection", mitre: "T1190", color: "#FF1F4B" },
+  { key: "XSS", label: "Stored/Reflected XSS", mitre: "T1059", color: "#FF3E7A" },
+  { key: "BRUTE_FORCE", label: "Brute Force", mitre: "T1110", color: "#FF7A18" },
+  { key: "PATH_TRAVERSAL", label: "Path Traversal", mitre: "T1083", color: "#FF9F1C" },
+  { key: "SCANNING", label: "Recon Scanning", mitre: "T1595", color: "#F5E400" },
+  { key: "SHELL_EXEC", label: "Container Shell Exec", mitre: "T1609", color: "#00E5B0" },
+  { key: "PRIV_ESC", label: "Privilege Escalation", mitre: "T1611", color: "#00FFA6" },
+  { key: "C2_COMM", label: "C2 Communication", mitre: "T1071", color: "#8890B5" },
+  { key: "CRED_ACCESS", label: "Credential Access", mitre: "T1552", color: "#B026FF" },
 ];
  
 // detection_source per attack type — mirrors which of the 3 defense layers

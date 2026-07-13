@@ -7,10 +7,23 @@
 // real fetch that returns objects in the same shape — nothing else changes.
  
 import { normalizeLevel } from "./logLevels";
- 
+import { APP_POD_CONTEXTS } from "./clusterTopology";
+
 export const MOCK_NOW = new Date("2026-07-10T14:30:00");
- 
+
 const SOURCES = ["api-gateway", "auth-service", "payment-service", "web-app", "worker-queue", "db-proxy"];
+
+// Per-source request path pool — gives the Recent Logs drill-down something
+// concrete ("정확한 경로") to show once a row is expanded, instead of just
+// message/level/source with nothing to actually trace back to an endpoint.
+const PATHS_BY_SOURCE = {
+  "api-gateway": ["GET /api/v1/route", "GET /api/v1/health", "POST /api/v1/webhook"],
+  "auth-service": ["POST /auth/login", "POST /auth/refresh", "GET /auth/session"],
+  "payment-service": ["POST /payments/charge", "GET /payments/:id/status", "POST /payments/refund"],
+  "web-app": ["GET /", "GET /dashboard", "GET /static/bundle.js"],
+  "worker-queue": ["worker.job.process", "worker.job.retry", "worker.queue.drain"],
+  "db-proxy": ["QUERY orders", "QUERY users", "QUERY sessions"],
+};
  
 const MESSAGES = {
   EMERGENCY: ["Service completely unresponsive", "Data corruption detected in primary store"],
@@ -82,13 +95,27 @@ function generateEvents(count, lookbackMs) {
   for (let i = 0; i < count; i++) {
     const level = normalizeLevel(weightedRandomLevel());
     const timestamp = new Date(MOCK_NOW.getTime() - Math.random() * lookbackMs);
+    const source = randomFrom(SOURCES);
+    // K8s 컨텍스트 — source(워크로드명)와 같은 워크로드의 파드 중 하나를 붙여서
+    // "이 WAS 로그가 실제로 어느 네임스페이스/파드/컨테이너/노드에서 났는지"가
+    // 드릴다운에서 보이게 한다. Falco/K8s Audit도 같은 clusterTopology.js를 쓰므로
+    // 세 계층이 같은 파드를 가리킬 수 있음(상관분석 스토리와 일관).
+    const candidates = APP_POD_CONTEXTS.filter((p) => p.workload === source);
+    const k8s = candidates.length ? randomFrom(candidates) : APP_POD_CONTEXTS[0];
     events.push({
       id: i + 1,
       timestamp,
       level,
-      source: randomFrom(SOURCES),
+      source,
       message: randomFrom(MESSAGES[level] || MESSAGES.INFO),
       durationMs: randomLatencyMs(level),
+      path: randomFrom(PATHS_BY_SOURCE[source] || ["-"]),
+      namespace: k8s.namespace,
+      workload: k8s.workload,
+      pod: k8s.pod,
+      container: k8s.container,
+      image: k8s.image,
+      node: k8s.node,
     });
   }
   return events.sort((a, b) => b.timestamp - a.timestamp);

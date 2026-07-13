@@ -12,22 +12,30 @@ function tooltipStyle(C) {
   return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
 }
 
-function MiniKpi({ label, value, sub, color }) {
+// Overview의 KpiCard와 동일한 패턴 — onClick 있으면 버튼으로, active면 네온 링.
+function MiniKpi({ label, value, sub, color, onClick, active = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="bg-dash-surface rounded-2xl p-4 flex-1 min-w-[160px]">
+    <Tag
+      onClick={onClick}
+      className={`bg-dash-surface rounded-2xl p-4 flex-1 min-w-[160px] text-left transition-shadow ${
+        onClick ? "cursor-pointer hover:bg-dash-surfaceAlt/60" : ""
+      } ${active ? "glow-box-mint" : ""}`}
+    >
       <p className="text-dash-muted text-xs mb-1.5">{label}</p>
       <p className="text-lg font-semibold truncate" style={{ color: color || C.fg }}>
         {value}
       </p>
       {sub && <p className="text-dash-muted text-[11px] mt-0.5">{sub}</p>}
-    </div>
+    </Tag>
   );
 }
 
 // 오늘(최근 24h) 기준 탐지/차단 수 + Top 공격유형 / Top 공격 IP.
-function KpiRow() {
+// 탐지 수/차단 수는 버튼 겸용 — 눌러서 BlockedLogsTable을 전체/차단만으로 좁힌다.
+function KpiRow({ filter, onFilterChange }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const last24h = useMemo(() => {
@@ -40,8 +48,19 @@ function KpiRow() {
 
   return (
     <div className="flex flex-wrap gap-4">
-      <MiniKpi label="오늘 탐지 수" value={last24h.length} />
-      <MiniKpi label="오늘 차단 수" value={blockedCount} color={C.mint} />
+      <MiniKpi
+        label="오늘 탐지 수"
+        value={last24h.length}
+        onClick={() => onFilterChange?.("ALL")}
+        active={filter === "ALL"}
+      />
+      <MiniKpi
+        label="오늘 차단 수"
+        value={blockedCount}
+        color={C.mint}
+        onClick={() => onFilterChange?.("BLOCKED")}
+        active={filter === "BLOCKED"}
+      />
       <MiniKpi
         label="Top 공격유형"
         value={topType?.label || "-"}
@@ -102,7 +121,7 @@ function SourceDonut() {
   const data = useMemo(
     () =>
       bySource(ATTACK_EVENTS).map((d) => {
-        const meta = SOURCE_META[d.source] || { label: d.source, color: "#87888C" };
+        const meta = SOURCE_META[d.source] || { label: d.source, color: "#8890B5" };
         return { ...d, ...meta, color: forTheme(meta.color, theme) };
       }),
     [theme]
@@ -141,25 +160,30 @@ function SourceDonut() {
 }
 
 // 최근 탐지/차단 로그 8건을 테이블로 보여주고, 검색/차단 버튼 제공.
-function BlockedLogsTable({ actedEventIds = {}, onActOnEvent }) {
+function BlockedLogsTable({ actedEventIds = {}, onActOnEvent, filter = "ALL" }) {
   const { theme } = useTheme();
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return ATTACK_EVENTS.filter(
-      (e) =>
+    return ATTACK_EVENTS.filter((e) => {
+      const effectiveBlocked = e.blocked || !!actedEventIds[e.id];
+      const matchesFilter = filter !== "BLOCKED" || effectiveBlocked;
+      const matchesQuery =
         q === "" ||
         e.message.toLowerCase().includes(q) ||
         e.pod.toLowerCase().includes(q) ||
-        e.country.toLowerCase().includes(q)
-    );
-  }, [query]);
+        e.country.toLowerCase().includes(q);
+      return matchesFilter && matchesQuery;
+    });
+  }, [query, filter, actedEventIds]);
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
       <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-dash-fg text-sm font-semibold">최근 차단/탐지 로그</h3>
+          <h3 className="text-dash-fg text-sm font-semibold">
+            {filter === "BLOCKED" ? "차단된 로그" : "최근 차단/탐지 로그"}
+          </h3>
           <p className="text-dash-muted text-xs mt-0.5">
             Showing {Math.min(filtered.length, 8)} of {filtered.length}
           </p>
@@ -307,19 +331,20 @@ export default function IncidentsView({
   onActOnEvent,
 }) {
   const [selectedId, setSelectedId] = useState(incidents[0].id);
+  const [incidentFilter, setIncidentFilter] = useState("ALL");
   const selected = incidents.find((i) => i.id === selectedId) || incidents[0];
   const selectedResolved = !!resolvedIncidentIds[selected.id];
 
   return (
     <div className="space-y-6">
-      <KpiRow />
+      <KpiRow filter={incidentFilter} onFilterChange={setIncidentFilter} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <AttackTypeDonut />
         <SourceDonut />
       </div>
 
-      <BlockedLogsTable actedEventIds={actedEventIds} onActOnEvent={onActOnEvent} />
+      <BlockedLogsTable actedEventIds={actedEventIds} onActOnEvent={onActOnEvent} filter={incidentFilter} />
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
         <div className="space-y-3">

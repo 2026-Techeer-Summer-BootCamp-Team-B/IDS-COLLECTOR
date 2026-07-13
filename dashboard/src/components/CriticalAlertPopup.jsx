@@ -20,10 +20,10 @@ export default function CriticalAlertPopup({ event, onInvestigate }) {
   if (!event || !visible) return null;
 
   const type = ATTACK_TYPES.find((t) => t.key === event.attackType);
-  const src = SOURCE_META[event.source] || { label: event.source, color: "#87888C" };
+  const src = SOURCE_META[event.source] || { label: event.source, color: "#8890B5" };
 
   return (
-    <div className="fixed top-6 right-6 z-50 w-80 bg-dash-surface border border-dash-critical rounded-2xl shadow-2xl p-4">
+    <div className="fixed top-6 right-6 z-50 w-80 bg-dash-surface border border-dash-critical rounded-2xl shadow-2xl p-4 glow-box-critical">
       <style>{`
         @keyframes critical-pop-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>

@@ -13,16 +13,16 @@ import { forTheme } from "../data/theme";
  */
 
 export const SEVERITY_META = {
-  CRITICAL: { label: "CRITICAL", color: "#F2617A" },
-  HIGH: { label: "HIGH", color: "#F2A65A" },
-  MEDIUM: { label: "MEDIUM", color: "#E8D97A" },
-  LOW: { label: "LOW", color: "#87888C" },
+  CRITICAL: { label: "CRITICAL", color: "#FF1F4B" },
+  HIGH: { label: "HIGH", color: "#FF7A18" },
+  MEDIUM: { label: "MEDIUM", color: "#F5E400" },
+  LOW: { label: "LOW", color: "#6B7BAA" },
 };
 
 export const SOURCE_META = {
-  WAS: { label: "WAS", color: "#7FB3E8" },
-  Falco: { label: "Falco", color: "#F2C8ED" },
-  "K8s Audit": { label: "K8s Audit", color: "#A9DFD8" },
+  WAS: { label: "WAS", color: "#00C2FF" },
+  Falco: { label: "Falco", color: "#A64DFF" },
+  "K8s Audit": { label: "K8s Audit", color: "#00FFA6" },
 };
 
 export function SeverityBadge({ level }) {
@@ -41,7 +41,7 @@ export function SeverityBadge({ level }) {
 
 export function SourceBadge({ source }) {
   const { theme } = useTheme();
-  const meta = SOURCE_META[source] || { label: source, color: "#87888C" };
+  const meta = SOURCE_META[source] || { label: source, color: "#8890B5" };
   const color = forTheme(meta.color, theme);
   return (
     <span
@@ -57,7 +57,7 @@ export function StatusDot({ status }) {
   const { theme } = useTheme();
   // status: "IN_PROGRESS" | "RESOLVED"
   const isLive = status === "IN_PROGRESS";
-  const color = forTheme(isLive ? "#F2617A" : "#8FE3B0", theme);
+  const color = forTheme(isLive ? "#FF1F4B" : "#39FF6A", theme);
   return (
     <span className="flex items-center gap-1 text-[11px] whitespace-nowrap" style={{ color }}>
       <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: color }} />

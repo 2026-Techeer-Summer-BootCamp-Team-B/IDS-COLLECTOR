@@ -14,19 +14,19 @@
 // short ranges like 1분/5분 will often show 0 hits — that's expected, not a
 // bug, until a real live source is wired in.
 export const RANGE_PRESETS = [
-  { key: "1m", label: "1분", lookbackMs: 1 * 60 * 1000, bucketMs: 5 * 1000 },
-  { key: "5m", label: "5분", lookbackMs: 5 * 60 * 1000, bucketMs: 15 * 1000 },
-  { key: "15m", label: "15분", lookbackMs: 15 * 60 * 1000, bucketMs: 60 * 1000 },
-  { key: "30m", label: "30분", lookbackMs: 30 * 60 * 1000, bucketMs: 2 * 60 * 1000 },
-  { key: "1h", label: "1시간", lookbackMs: 60 * 60 * 1000, bucketMs: 5 * 60 * 1000 },
-  { key: "3h", label: "3시간", lookbackMs: 3 * 60 * 60 * 1000, bucketMs: 15 * 60 * 1000 },
-  { key: "6h", label: "6시간", lookbackMs: 6 * 60 * 60 * 1000, bucketMs: 30 * 60 * 1000 },
-  { key: "12h", label: "12시간", lookbackMs: 12 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 },
-  { key: "24h", label: "24시간", lookbackMs: 24 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 },
-  { key: "2d", label: "2일", lookbackMs: 2 * 24 * 60 * 60 * 1000, bucketMs: 3 * 60 * 60 * 1000 },
-  { key: "7d", label: "7일", lookbackMs: 7 * 24 * 60 * 60 * 1000, bucketMs: 6 * 60 * 60 * 1000 },
-  { key: "30d", label: "30일", lookbackMs: 30 * 24 * 60 * 60 * 1000, bucketMs: 24 * 60 * 60 * 1000 },
-  { key: "90d", label: "90일", lookbackMs: 90 * 24 * 60 * 60 * 1000, bucketMs: 3 * 24 * 60 * 60 * 1000 },
+  { key: "1m", label: "1 minute", lookbackMs: 1 * 60 * 1000, bucketMs: 5 * 1000 },
+  { key: "5m", label: "5 minutes", lookbackMs: 5 * 60 * 1000, bucketMs: 15 * 1000 },
+  { key: "15m", label: "15 minutes", lookbackMs: 15 * 60 * 1000, bucketMs: 60 * 1000 },
+  { key: "30m", label: "30 minutes", lookbackMs: 30 * 60 * 1000, bucketMs: 2 * 60 * 1000 },
+  { key: "1h", label: "1 hour", lookbackMs: 60 * 60 * 1000, bucketMs: 5 * 60 * 1000 },
+  { key: "3h", label: "3 hours", lookbackMs: 3 * 60 * 60 * 1000, bucketMs: 15 * 60 * 1000 },
+  { key: "6h", label: "6 hours", lookbackMs: 6 * 60 * 60 * 1000, bucketMs: 30 * 60 * 1000 },
+  { key: "12h", label: "12 hours", lookbackMs: 12 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 },
+  { key: "24h", label: "24 hours", lookbackMs: 24 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 },
+  { key: "2d", label: "2 days", lookbackMs: 2 * 24 * 60 * 60 * 1000, bucketMs: 3 * 60 * 60 * 1000 },
+  { key: "7d", label: "7 days", lookbackMs: 7 * 24 * 60 * 60 * 1000, bucketMs: 6 * 60 * 60 * 1000 },
+  { key: "30d", label: "30 days", lookbackMs: 30 * 24 * 60 * 60 * 1000, bucketMs: 24 * 60 * 60 * 1000 },
+  { key: "90d", label: "90 days", lookbackMs: 90 * 24 * 60 * 60 * 1000, bucketMs: 3 * 24 * 60 * 60 * 1000 },
 ];
  
 // Curated subset for compact inline chart buttons (LogDashboard's Log Volume

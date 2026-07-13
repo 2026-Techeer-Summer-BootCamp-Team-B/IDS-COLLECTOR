@@ -4,6 +4,9 @@ import IncidentsView from "./views/IncidentsView";
 import AttackMatrixView from "./views/AttackMatrixView";
 import InfrastructureView from "./views/InfrastructureView";
 import AdminAuditView from "./views/AdminAuditView";
+import WASView from "./views/WASView";
+import FalcoView from "./views/FalcoView";
+import K8sAuditView from "./views/K8sAuditView";
 import LiveTicker from "./components/LiveTicker";
 import CriticalAlertPopup from "./components/CriticalAlertPopup";
 import ToastStack from "./components/ToastStack";
@@ -12,6 +15,7 @@ import { useTheme } from "./hooks/useTheme";
 import { incidentStats } from "./data/incidents";
 import { SEED_AUDIT_LOG } from "./data/auditLog";
 import { RULES } from "./data/rules";
+import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy";
 
 /**
  * SENTINEL-OPS app shell — left sidebar switches between screens.
@@ -26,6 +30,13 @@ const NAV_ITEMS = [
   { key: "admin", label: "Admin / Audit" },
 ];
 
+// 계층별 상세 뷰 — 위 NAV_ITEMS와 별도 그룹으로 사이드바에 노출 (구분선으로 분리).
+const LAYER_NAV_ITEMS = [
+  { key: "was", label: "WAS" },
+  { key: "falco", label: "Falco" },
+  { key: "k8s-audit", label: "K8s API" },
+];
+
 // Fixed-width inner wrapper + shrinking outer <aside> is what makes the
 // collapse animate smoothly instead of content reflowing/wrapping mid-transition.
 function Sidebar({ active, onSelect, open }) {
@@ -37,11 +48,11 @@ function Sidebar({ active, onSelect, open }) {
     >
       <div className="w-60 h-full flex flex-col px-5 py-6">
         <div className="flex items-center gap-2 mb-8 px-1">
-          <div className="w-8 h-8 rounded-lg bg-dash-mint/20 flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-dash-mint/20 flex items-center justify-center shrink-0 glow-box-mint">
             <span className="w-3 h-3 rounded-sm bg-dash-mint" />
           </div>
           <div>
-            <p className="text-dash-fg font-semibold text-sm leading-none">SENTINEL-OPS</p>
+            <p className="text-dash-fg font-semibold text-sm leading-none tracking-wide glow-mint">SENTINEL-OPS</p>
             <p className="text-dash-muted text-[10px] mt-1">Juice Shop 침투 시나리오</p>
           </div>
         </div>
@@ -51,10 +62,10 @@ function Sidebar({ active, onSelect, open }) {
             <button
               key={item.key}
               onClick={() => onSelect(item.key)}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm border-l-2 transition-colors ${
                 active === item.key
-                  ? "bg-dash-surface text-dash-fg"
-                  : "text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
+                  ? "bg-dash-surface text-dash-fg border-dash-mint"
+                  : "border-transparent text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
               }`}
             >
               <span>{item.label}</span>
@@ -63,6 +74,21 @@ function Sidebar({ active, onSelect, open }) {
                   {item.badge}
                 </span>
               ) : null}
+            </button>
+          ))}
+
+          <p className="text-dash-faint text-[10px] uppercase tracking-wide px-3 pt-4 pb-1">계층별 로그</p>
+          {LAYER_NAV_ITEMS.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => onSelect(item.key)}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm border-l-2 transition-colors ${
+                active === item.key
+                  ? "bg-dash-surface text-dash-fg border-dash-mint"
+                  : "border-transparent text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
+              }`}
+            >
+              <span>{item.label}</span>
             </button>
           ))}
         </nav>
@@ -148,7 +174,7 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
       <StatBlock label="총 BLOCKED" value={incidentStats.totalBlocked} />
 
       <div className="ml-auto flex items-center gap-3 text-xs text-dash-muted">
-        <span className="flex items-center gap-1.5 text-dash-mint font-medium">
+        <span className="flex items-center gap-1.5 text-dash-mint font-medium glow-mint">
           <span className="w-1.5 h-1.5 rounded-full bg-dash-mint inline-block animate-pulse" /> LIVE
         </span>
         <span>
@@ -190,6 +216,8 @@ export default function App() {
   const [resolvedIncidentIds, setResolvedIncidentIds] = useState({});
   const [actedEventIds, setActedEventIds] = useState({});
   const [rules, setRules] = useState(RULES);
+  const [logPolicies, setLogPolicies] = useState(INITIAL_LOG_POLICIES);
+  const [exclusionRules, setExclusionRules] = useState(INITIAL_EXCLUSION_RULES);
 
   function logAction({ action, target, ip, user = "용욱님" }) {
     setAuditLog((prev) => [{ id: Date.now(), timestamp: new Date(), user, action, target, ip }, ...prev]);
@@ -228,6 +256,29 @@ export default function App() {
     });
   }
 
+  function updatePolicy(layer, patch) {
+    setLogPolicies((prev) => prev.map((p) => (p.layer === layer ? { ...p, ...patch } : p)));
+    logAction({
+      action: `데이터 정책 변경 (${layer}: ${Object.entries(patch)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ")})`,
+      target: layer,
+      ip: "-",
+    });
+  }
+
+  function toggleExclusion(ruleId) {
+    const rule = exclusionRules.find((r) => r.id === ruleId);
+    if (!rule) return;
+    const nextEnabled = !rule.enabled;
+    setExclusionRules((prev) => prev.map((r) => (r.id === ruleId ? { ...r, enabled: nextEnabled } : r)));
+    logAction({
+      action: `제외 규칙 ${nextEnabled ? "활성화" : "비활성화"} (${rule.id})`,
+      target: rule.pattern,
+      ip: "-",
+    });
+  }
+
   return (
     <div className="flex min-h-screen bg-dash-bg font-sans">
       <Sidebar active={active} onSelect={setActive} open={sidebarOpen} />
@@ -246,7 +297,20 @@ export default function App() {
           )}
           {active === "attack" && <AttackMatrixView />}
           {active === "infra" && <InfrastructureView />}
-          {active === "admin" && <AdminAuditView auditLog={auditLog} rules={rules} onToggleRule={toggleRule} />}
+          {active === "admin" && (
+            <AdminAuditView
+              auditLog={auditLog}
+              rules={rules}
+              onToggleRule={toggleRule}
+              logPolicies={logPolicies}
+              onUpdatePolicy={updatePolicy}
+              exclusionRules={exclusionRules}
+              onToggleExclusion={toggleExclusion}
+            />
+          )}
+          {active === "was" && <WASView />}
+          {active === "falco" && <FalcoView />}
+          {active === "k8s-audit" && <K8sAuditView />}
         </main>
         <LiveTicker feed={feed} />
       </div>
