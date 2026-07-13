@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # AI 트렌드 리포트 (P5-4) - 비어있으면 "미설정" 응답만 반환.
     anthropic_api_key: str = ""
 
+    # 인증 세션 (P5-2) - app/auth.py가 Redis에 session:{token} 키로 저장, TTL 지나면
+    # Redis가 알아서 지워줘서 별도 만료 처리 로직이 필요 없다.
+    session_ttl_seconds: int = 86400
+
     # 프론트엔드가 별도 레포/팀이라 다른 origin에서 REST/WS를 호출한다 - CORS 허용
     # origin 목록(콤마 구분). "*"면 전체 허용(개발 기본값, 쿠키/인증정보 없는
     # 토큰 방식이라 "*"라도 안전).

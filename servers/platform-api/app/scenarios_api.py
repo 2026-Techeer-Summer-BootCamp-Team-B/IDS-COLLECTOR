@@ -43,6 +43,8 @@ class ScenarioOut(BaseModel):
     enabled: bool
     mitre_technique_id: str | None
     hit_count: int
+    created_at: str
+    updated_at: str
 
 
 class EnabledUpdate(BaseModel):
@@ -64,6 +66,8 @@ def _row_to_out(row) -> ScenarioOut:
         enabled=row["enabled"],
         mitre_technique_id=row["mitre_technique_id"],
         hit_count=row["hit_count"],
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
     )
 
 
@@ -76,6 +80,7 @@ async def list_scenarios():
             """
             SELECT sr.id, sr.name, sr.required_modules, sr.correlation_key_type,
                    sr.time_window_seconds, sr.min_severity, sr.enabled, sr.mitre_technique_id,
+                   sr.created_at, sr.updated_at,
                    COALESCE(ic.hit_count, 0) AS hit_count
             FROM scenario_rules sr
             LEFT JOIN (
@@ -94,9 +99,9 @@ async def set_enabled(scenario_id: str, body: EnabledUpdate, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
-            UPDATE scenario_rules SET enabled = $2 WHERE id = $1
+            UPDATE scenario_rules SET enabled = $2, updated_at = now() WHERE id = $1
             RETURNING id, name, required_modules, correlation_key_type, time_window_seconds,
-                      min_severity, enabled, mitre_technique_id,
+                      min_severity, enabled, mitre_technique_id, created_at, updated_at,
                       (SELECT count(*) FROM incidents WHERE matched_scenario_rule_id = $1) AS hit_count
             """,
             scenario_id,
@@ -110,5 +115,6 @@ async def set_enabled(scenario_id: str, body: EnabledUpdate, request: Request):
         "scenario_rules",
         _client_ip(request),
         user_id=current_user_id(request),
+        record_id=scenario_id,
     )
     return _row_to_out(row)

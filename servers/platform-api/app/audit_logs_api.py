@@ -14,7 +14,9 @@ class AuditLogOut(BaseModel):
     user_id: Optional[str]
     action: str
     target_table: Optional[str]
+    record_id: Optional[str]
     ip_address: Optional[str]
+    user_agent: Optional[str]
     created_at: str
 
 
@@ -23,7 +25,7 @@ async def list_audit_logs(limit: int = 50):
     async with pool().acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, user_id, action, target_table, ip_address, created_at
+            SELECT id, user_id, action, target_table, record_id, ip_address, user_agent, created_at
             FROM audit_logs ORDER BY created_at DESC LIMIT $1
             """,
             min(limit, 500),
@@ -34,7 +36,9 @@ async def list_audit_logs(limit: int = 50):
             user_id=str(r["user_id"]) if r["user_id"] else None,
             action=r["action"],
             target_table=r["target_table"],
+            record_id=str(r["record_id"]) if r["record_id"] else None,
             ip_address=r["ip_address"],
+            user_agent=r["user_agent"],
             created_at=r["created_at"].isoformat(),
         )
         for r in rows

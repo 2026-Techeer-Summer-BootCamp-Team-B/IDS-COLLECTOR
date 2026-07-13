@@ -31,6 +31,7 @@ class TargetIn(BaseModel):
 class TargetOut(TargetIn):
     id: str
     created_at: str
+    updated_at: str
 
 
 def _row_to_out(row) -> TargetOut:
@@ -40,6 +41,7 @@ def _row_to_out(row) -> TargetOut:
         base_url=row["base_url"],
         is_active=row["is_active"],
         created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
     )
 
 
@@ -47,7 +49,7 @@ def _row_to_out(row) -> TargetOut:
 async def list_targets():
     async with pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, base_url, is_active, created_at FROM targets ORDER BY created_at"
+            "SELECT id, name, base_url, is_active, created_at, updated_at FROM targets ORDER BY created_at"
         )
     return [_row_to_out(r) for r in rows]
 
@@ -59,13 +61,15 @@ async def create_target(body: TargetIn, request: Request):
             """
             INSERT INTO targets (name, base_url, is_active)
             VALUES ($1, $2, $3)
-            RETURNING id, name, base_url, is_active, created_at
+            RETURNING id, name, base_url, is_active, created_at, updated_at
             """,
             body.name,
             body.base_url,
             body.is_active,
         )
-    await record_action("TARGET_CREATED", "targets", _client_ip(request), user_id=current_user_id(request))
+    await record_action(
+        "TARGET_CREATED", "targets", _client_ip(request), user_id=current_user_id(request), record_id=row["id"]
+    )
     return _row_to_out(row)
 
 
@@ -74,8 +78,8 @@ async def update_target(target_id: str, body: TargetIn, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
-            UPDATE targets SET name = $2, base_url = $3, is_active = $4 WHERE id = $1
-            RETURNING id, name, base_url, is_active, created_at
+            UPDATE targets SET name = $2, base_url = $3, is_active = $4, updated_at = now() WHERE id = $1
+            RETURNING id, name, base_url, is_active, created_at, updated_at
             """,
             target_id,
             body.name,
@@ -84,7 +88,9 @@ async def update_target(target_id: str, body: TargetIn, request: Request):
         )
     if not row:
         raise HTTPException(status_code=404, detail="target not found")
-    await record_action("TARGET_UPDATED", "targets", _client_ip(request), user_id=current_user_id(request))
+    await record_action(
+        "TARGET_UPDATED", "targets", _client_ip(request), user_id=current_user_id(request), record_id=target_id
+    )
     return _row_to_out(row)
 
 
@@ -101,5 +107,7 @@ async def delete_target(target_id: str, request: Request):
         result = await conn.execute("DELETE FROM targets WHERE id = $1", target_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="target not found")
-    await record_action("TARGET_DELETED", "targets", _client_ip(request), user_id=current_user_id(request))
+    await record_action(
+        "TARGET_DELETED", "targets", _client_ip(request), user_id=current_user_id(request), record_id=target_id
+    )
     return {"status": "ok"}

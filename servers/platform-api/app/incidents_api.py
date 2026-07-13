@@ -256,6 +256,10 @@ async def update_status(incident_id: str, body: StatusUpdate, request: Request):
             body.status,
         )
     await record_action(
-        "INCIDENT_STATUS_CHANGED", "incidents", _client_ip(request), user_id=current_user_id(request)
+        "INCIDENT_STATUS_CHANGED",
+        "incidents",
+        _client_ip(request),
+        user_id=current_user_id(request),
+        record_id=incident_id,
     )
     return _row_to_incident(row)

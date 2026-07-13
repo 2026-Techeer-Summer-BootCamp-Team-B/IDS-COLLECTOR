@@ -40,6 +40,8 @@ class AllowListOut(BaseModel):
     target_id: Optional[str]
     reason: Optional[str]
     expires_at: Optional[str]
+    created_at: str
+    updated_at: str
 
 
 def _row_to_out(row) -> AllowListOut:
@@ -49,6 +51,8 @@ def _row_to_out(row) -> AllowListOut:
         target_id=str(row["target_id"]) if row["target_id"] else None,
         reason=row["reason"],
         expires_at=row["expires_at"].isoformat() if row["expires_at"] else None,
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
     )
 
 
@@ -58,14 +62,17 @@ async def list_allow_list(target_id: Optional[str] = None):
         if target_id:
             rows = await conn.fetch(
                 """
-                SELECT id, ip_or_cidr, target_id, reason, expires_at
+                SELECT id, ip_or_cidr, target_id, reason, expires_at, created_at, updated_at
                 FROM allow_list WHERE target_id = $1 ORDER BY id
                 """,
                 target_id,
             )
         else:
             rows = await conn.fetch(
-                "SELECT id, ip_or_cidr, target_id, reason, expires_at FROM allow_list ORDER BY id"
+                """
+                SELECT id, ip_or_cidr, target_id, reason, expires_at, created_at, updated_at
+                FROM allow_list ORDER BY id
+                """
             )
     return [_row_to_out(r) for r in rows]
 
@@ -82,7 +89,7 @@ async def create_allow_list_entry(body: AllowListIn, request: Request):
             """
             INSERT INTO allow_list (ip_or_cidr, target_id, reason, expires_at)
             VALUES ($1, $2, $3, $4)
-            RETURNING id, ip_or_cidr, target_id, reason, expires_at
+            RETURNING id, ip_or_cidr, target_id, reason, expires_at, created_at, updated_at
             """,
             body.ip_or_cidr,
             body.target_id,
@@ -90,7 +97,11 @@ async def create_allow_list_entry(body: AllowListIn, request: Request):
             _parse_iso(body.expires_at),
         )
     await record_action(
-        "ALLOW_LIST_CREATED", "allow_list", _client_ip(request), user_id=current_user_id(request)
+        "ALLOW_LIST_CREATED",
+        "allow_list",
+        _client_ip(request),
+        user_id=current_user_id(request),
+        record_id=row["id"],
     )
     return _row_to_out(row)
 
@@ -102,6 +113,10 @@ async def delete_allow_list_entry(entry_id: str, request: Request):
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="allow-list entry not found")
     await record_action(
-        "ALLOW_LIST_DELETED", "allow_list", _client_ip(request), user_id=current_user_id(request)
+        "ALLOW_LIST_DELETED",
+        "allow_list",
+        _client_ip(request),
+        user_id=current_user_id(request),
+        record_id=entry_id,
     )
     return {"status": "ok"}

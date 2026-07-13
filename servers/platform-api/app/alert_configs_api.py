@@ -61,7 +61,13 @@ async def create_alert_config(body: AlertConfigIn, request: Request):
             body.enabled,
             body.min_severity,
         )
-    await record_action("ALERT_CONFIG_CREATED", "alert_configs", _client_ip(request), user_id=current_user_id(request))
+    await record_action(
+        "ALERT_CONFIG_CREATED",
+        "alert_configs",
+        _client_ip(request),
+        user_id=current_user_id(request),
+        record_id=row["id"],
+    )
     return _row_to_out(row)
 
 
@@ -83,7 +89,13 @@ async def update_alert_config(config_id: str, body: AlertConfigIn, request: Requ
         )
     if not row:
         raise HTTPException(status_code=404, detail="alert config not found")
-    await record_action("ALERT_CONFIG_UPDATED", "alert_configs", _client_ip(request), user_id=current_user_id(request))
+    await record_action(
+        "ALERT_CONFIG_UPDATED",
+        "alert_configs",
+        _client_ip(request),
+        user_id=current_user_id(request),
+        record_id=config_id,
+    )
     return _row_to_out(row)
 
 
@@ -93,5 +105,11 @@ async def delete_alert_config(config_id: str, request: Request):
         result = await conn.execute("DELETE FROM alert_configs WHERE id = $1", config_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="alert config not found")
-    await record_action("ALERT_CONFIG_DELETED", "alert_configs", _client_ip(request), user_id=current_user_id(request))
+    await record_action(
+        "ALERT_CONFIG_DELETED",
+        "alert_configs",
+        _client_ip(request),
+        user_id=current_user_id(request),
+        record_id=config_id,
+    )
     return {"status": "ok"}
