@@ -1,78 +1,107 @@
 import React, { useMemo, useState } from "react";
-import { RAW_EVENTS, MOCK_NOW, latencyStatsFor } from "../data/mockLogs";
-import { ERROR_BAND } from "../data/logLevels";
+import { latencyStatsFor } from "../data/mockLogs";
 import { RANGE_PRESETS } from "../data/timeSeries";
+import { REAL_SEVERITY_LEVELS } from "../data/realSeverity";
+import { useLogs } from "../hooks/useLogs";
 import TimeRangePicker from "../components/TimeRangePicker";
 import RankedList from "../components/RankedList";
 import {
   KpiCard,
   LogVolumeChart,
-  LevelDistributionChart,
+  RealLevelDistributionChart,
   LatencyStatsPanel,
   ErrorRateGauge,
   RecentLogsTable,
 } from "./LogDashboard";
 
 /**
- * WAS 상세 — 애플리케이션 계층 전용 페이지. Overview가 3계층을 종합해서 보여준다면
- * 여기는 WAS 로그(RAW_EVENTS)만 깊게 파고든다: 요청량, 상태/레벨 분포, 레이턴시
- * p50/p90/p99, Top Paths, 최근 요청 드릴다운.
+ * WAS 상세 — GET /logs?module=was 실데이터 연동. event.severity는 normalizer가
+ * WAS 원본 access log엔 판단을 얹지 않고 항상 1(Info)로 고정하기 때문에(severity.yaml
+ * 참고), "Errors" KPI/Error Rate Gauge는 severity 대신 HTTP 상태코드(>=400)
+ * 기준으로 다시 정의했다 — 안 그러면 이 페이지에서만 상시 0으로 보여서 의미가 없다.
  */
 export default function WASView() {
   const [rangeKey, setRangeKey] = useState("24h");
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
+  const hours = preset.lookbackMs / (60 * 60 * 1000);
 
-  const events = useMemo(() => {
-    const cutoff = MOCK_NOW.getTime() - preset.lookbackMs;
-    return RAW_EVENTS.filter((e) => e.timestamp.getTime() > cutoff);
-  }, [rangeKey]);
+  const { logs, status, error } = useLogs({ lookbackMs: preset.lookbackMs, module: "was", limit: 300 });
 
-  const errorCount = events.filter((e) => ERROR_BAND.includes(e.level)).length;
-  const latency = latencyStatsFor(events);
+  const errorCount = useMemo(
+    () => logs.filter((e) => (e.raw["http.response.status_code"] ?? 0) >= 400).length,
+    [logs]
+  );
+  const latency = useMemo(() => latencyStatsFor(logs), [logs]);
+
+  // ErrorRateGauge는 events[].level이 ERROR_BAND(EMERGENCY/CRITICAL/MAJOR)에
+  // 속하는지로 비율을 낸다 — WAS는 severity가 항상 1이라 그대로 넘기면 0%로
+  // 고정되므로, HTTP 상태코드 기준으로 이 컴포넌트에 한해서만 level을 다시 매긴다.
+  const gaugeEvents = useMemo(
+    () =>
+      logs.map((e) => ({
+        ...e,
+        level: (e.raw["http.response.status_code"] ?? 0) >= 400 ? "MAJOR" : "INFO",
+      })),
+    [logs]
+  );
 
   const topPaths = useMemo(() => {
     const counts = {};
-    events.forEach((e) => {
-      counts[e.path] = (counts[e.path] || 0) + 1;
+    logs.forEach((e) => {
+      const key = e.path || "-";
+      counts[key] = (counts[key] || 0) + 1;
     });
     return Object.entries(counts)
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count);
-  }, [events]);
+  }, [logs]);
+
+  const statusCodes = useMemo(() => {
+    const counts = {};
+    logs.forEach((e) => {
+      const code = e.raw["http.response.status_code"];
+      if (code == null) return;
+      counts[code] = (counts[code] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [logs]);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-dash-fg text-base font-semibold mb-1">WAS 상세</h2>
-          <p className="text-dash-muted text-xs">애플리케이션 요청 로그 전용 뷰 · api-gateway / auth-service / payment-service 등</p>
+          <p className="text-dash-muted text-xs">애플리케이션 요청 로그 전용 뷰 (module=was) · nginx 액세스 로그 기반</p>
         </div>
         <TimeRangePicker value={rangeKey} onChange={setRangeKey} />
       </div>
 
       <div className="flex flex-wrap gap-4">
-        <KpiCard label={`Total Requests (${preset.label})`} value={events.length.toLocaleString()} />
-        <KpiCard label="Errors (Emergency~Major)" value={errorCount} accent="critical" />
+        <KpiCard label={`Total Requests (${preset.label})`} value={logs.length.toLocaleString()} />
+        <KpiCard label="Errors (HTTP 4xx/5xx)" value={errorCount} accent="critical" />
         <KpiCard label="p99 Latency" value={latency ? `${latency.p99}ms` : "-"} />
         <KpiCard label="Avg Latency" value={latency ? `${latency.avg}ms` : "-"} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2">
-          <LogVolumeChart rangeKey={rangeKey} />
+          <LogVolumeChart rangeKey={rangeKey} module="was" />
         </div>
-        <LevelDistributionChart events={events} />
+        <RealLevelDistributionChart hours={hours} module="was" />
       </div>
 
-      <LatencyStatsPanel events={events} />
+      <LatencyStatsPanel events={logs} />
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2">
-          <RecentLogsTable events={events} />
+          <RecentLogsTable events={logs} filterLevels={REAL_SEVERITY_LEVELS} status={status} error={error} />
         </div>
         <div className="space-y-6">
           <RankedList title="Top Paths" subtitle="선택 구간 기준" items={topPaths} valueSuffix=" hits" />
-          <ErrorRateGauge events={events} />
+          <RankedList title="상태 코드 분포" subtitle="HTTP status code" items={statusCodes} valueSuffix=" hits" />
+          <ErrorRateGauge events={gaugeEvents} title="Error Rate" subtitle="HTTP 4xx/5xx 비중" />
         </div>
       </div>
     </div>

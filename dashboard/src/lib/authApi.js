@@ -85,6 +85,7 @@ export async function apiFetch(path, { method = "GET", body, headers = {}, skipA
 export const apiGet = (path) => apiFetch(path);
 export const apiPost = (path, body) => apiFetch(path, { method: "POST", body });
 export const apiPatch = (path, body) => apiFetch(path, { method: "PATCH", body });
+export const apiDelete = (path) => apiFetch(path, { method: "DELETE" });
 
 // ---- /auth/* (servers/platform-api/app/auth.py) ----
 
