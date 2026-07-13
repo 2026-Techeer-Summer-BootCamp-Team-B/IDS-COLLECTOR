@@ -14,7 +14,7 @@ processors:
   batch:
     # 기존 5s - 이벤트를 최대 5초까지 묶어뒀다가 Kafka로 내보내는 구조라 저볼륨
     # 트래픽(데모/테스트)에서는 이게 곧 e2e 지연에 그대로 더해짐. 1s로 낮춤.
-    timeout: 1s
+    timeout: 500ms
     send_batch_size: 8192
 
 # resource attribute `log.source`(was/waf/falco/k8s-audit, Target 쪽 otel-collector가
