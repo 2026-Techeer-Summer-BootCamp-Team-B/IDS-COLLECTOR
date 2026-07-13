@@ -109,22 +109,87 @@ export const detectedTechniques = tactics.reduce(
   0
 );
  
+// 각 로그에 namespace/pod/sourceIp/raw를 더 채워서, 목록에서 로그 하나를 눌렀을 때
+// 펼쳐지는 상세 패널(AttackMatrixView.jsx)에 보여줄 정보가 있도록 함.
 export const matchedLogsByTechnique = {
   T1609: [
-    { time: "14:32:19", source: "Falco", title: "Terminal shell in container", detail: "proc=sh ppid=node container=juice-shop-7d9f" },
-    { time: "13:08:49", source: "Falco", title: "Shell spawned by web process", detail: "proc=bash ppid=node" },
-    { time: "12:26:39", source: "Falco", title: "Suspicious interpreter launch", detail: "proc=python -c" },
+    {
+      time: "14:32:19",
+      source: "Falco",
+      title: "Terminal shell in container",
+      detail: "proc=sh ppid=node container=juice-shop-7d9f",
+      namespace: "juice-shop",
+      pod: "juice-shop-7d9f",
+      sourceIp: "45.83.521.6",
+      raw: "14:32:19.402 falco.rule=\"Terminal shell in container\" proc=sh ppid=node container_id=7d9f21a user=root cmd=sh",
+    },
+    {
+      time: "13:08:49",
+      source: "Falco",
+      title: "Shell spawned by web process",
+      detail: "proc=bash ppid=node",
+      namespace: "juice-shop",
+      pod: "juice-shop-a231",
+      sourceIp: "91.202.14.8",
+      raw: "13:08:49.117 falco.rule=\"Shell spawned by web process\" proc=bash ppid=node container_id=a231cd0 user=node",
+    },
+    {
+      time: "12:26:39",
+      source: "Falco",
+      title: "Suspicious interpreter launch",
+      detail: "proc=python -c",
+      namespace: "payment",
+      pod: "payment-service-5c1a",
+      sourceIp: "103.44.9.201",
+      raw: "12:26:39.884 falco.rule=\"Suspicious interpreter launch\" proc=python args=\"-c import os;os.system('id')\"",
+    },
   ],
   T1190: [
-    { time: "14:32:07", source: "WAS", title: "SQL Injection in query param", detail: "GET /rest/products/search?q=') UNION SELECT ... · HTTP 403" },
+    {
+      time: "14:32:07",
+      source: "WAS",
+      title: "SQL Injection in query param",
+      detail: "GET /rest/products/search?q=') UNION SELECT ... · HTTP 403",
+      namespace: "juice-shop",
+      pod: "juice-shop-7d9f",
+      sourceIp: "45.83.521.6",
+      raw: "GET /rest/products/search?q=%27)%20UNION%20SELECT%20username,password%20FROM%20Users-- HTTP/1.1 403 · rule=942100 client=45.83.521.6",
+    },
   ],
   T1552: [
-    { time: "14:32:15", source: "Falco", title: "Read sensitive file untrusted", detail: "fd.name=/etc/shadow proc=sh" },
+    {
+      time: "14:32:15",
+      source: "Falco",
+      title: "Read sensitive file untrusted",
+      detail: "fd.name=/etc/shadow proc=sh",
+      namespace: "juice-shop",
+      pod: "juice-shop-7d9f",
+      sourceIp: "45.83.521.6",
+      raw: "14:32:15.220 falco.rule=\"Read sensitive file untrusted\" fd.name=/etc/shadow proc=sh evt=open user=root",
+    },
   ],
   T1611: [
-    { time: "12:21:11", source: "K8s Audit", title: "Privileged container created", detail: "user=dev-sa verb=create resource=pods" },
+    {
+      time: "12:21:11",
+      source: "K8s Audit",
+      title: "Privileged container created",
+      detail: "user=dev-sa verb=create resource=pods",
+      namespace: "payment",
+      pod: "payment-service-5c1a",
+      sourceIp: "103.44.9.201",
+      raw: "12:21:11.005 audit.k8s.io/v1 user=system:serviceaccount:payment:dev-sa verb=create resource=pods subresource=exec allowed=true",
+    },
   ],
   T1071: [
-    { time: "14:32:19", source: "Falco", title: "Unexpected outbound connection", detail: "proto=tcp dst=185.220.101.4:9001 (Tor exit)" },
+    {
+      time: "14:32:19",
+      source: "Falco",
+      title: "Unexpected outbound connection",
+      detail: "proto=tcp dst=185.220.101.4:9001 (Tor exit)",
+      namespace: "juice-shop",
+      pod: "juice-shop-7d9f",
+      sourceIp: "45.83.521.6",
+      raw: "14:32:19.998 falco.rule=\"Unexpected outbound connection\" proto=tcp dst=185.220.101.4:9001 fd.sip=185.220.101.4 container_id=7d9f21a",
+    },
   ],
 };

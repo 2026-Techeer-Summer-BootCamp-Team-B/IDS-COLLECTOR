@@ -1,18 +1,21 @@
 import React from "react";
 import { SOURCE_META } from "./badges";
 import { ATTACK_TYPES } from "../data/attackEvents";
+import { forTheme } from "../data/theme";
+import { useTheme } from "../hooks/useTheme";
 
-function describe(e) {
+function describe(e, theme) {
   const type = ATTACK_TYPES.find((t) => t.key === e.attackType);
-  const src = SOURCE_META[e.source] || { label: e.source, color: "#87888C" };
+  const src = SOURCE_META[e.source] || { label: e.source, color: "#8890B5" };
   const time = e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  return { time, type, src };
+  return { time, type, src: { ...src, color: forTheme(src.color, theme) } };
 }
 
 // Bottom marquee of the live feed — purely cosmetic/"presence" signal, driven
 // by useLiveFeed.js. Renders the item list twice back-to-back so the CSS
 // scroll loop (-50%) is seamless.
 export default function LiveTicker({ feed }) {
+  const { theme } = useTheme();
   const items = feed.slice(0, 20);
   if (items.length === 0) return null;
 
@@ -32,7 +35,7 @@ export default function LiveTicker({ feed }) {
         <div className="overflow-hidden flex-1 min-w-0">
           <div className="flex whitespace-nowrap ticker-track w-max">
             {[...items, ...items].map((e, i) => {
-              const { time, type, src } = describe(e);
+              const { time, type, src } = describe(e, theme);
               return (
                 <span
                   key={`${e._liveId || e.id}-${i}`}
@@ -40,7 +43,7 @@ export default function LiveTicker({ feed }) {
                 >
                   <span className="text-dash-faint">{time}</span>
                   <span style={{ color: src.color }}>{src.label}</span>
-                  <span className="text-white">{type?.label}</span>
+                  <span className="text-dash-fg">{type?.label}</span>
                   <span className="text-dash-faint">
                     · {e.namespace}/{e.pod}
                   </span>
