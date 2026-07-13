@@ -25,7 +25,7 @@ import { useLogs } from "../hooks/useLogs";
 import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } from "../data/realSeverity";
 import { getModuleMeta } from "../data/moduleMeta";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
-import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
+import { RANGE_PRESETS, formatBucketLabel, detectSpike, LIVE_POLL_MS } from "../data/timeSeries";
 import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import SearchDiscoverView from "./SearchDiscoverView";
@@ -196,6 +196,7 @@ export function LogVolumeChart({ rangeKey, module }) {
     lookbackMs: preset.lookbackMs,
     bucketMs: preset.bucketMs,
     module,
+    pollMs: LIVE_POLL_MS,
   });
 
   const data = useMemo(
@@ -285,7 +286,7 @@ export function LogVolumeChart({ rangeKey, module }) {
 export function RealLevelDistributionChart({ hours, module }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const { levels, total, status, error } = useLogLevels({ hours, module });
+  const { levels, total, status, error } = useLogLevels({ hours, module, pollMs: LIVE_POLL_MS });
 
   const data = REAL_SEVERITY_LEVELS.map((l) => {
     const found = levels.find((x) => x.severity === l.severity);
@@ -873,8 +874,9 @@ export function DashboardContent() {
   const hours = preset.lookbackMs / (60 * 60 * 1000);
 
   // GET /stats/kpi — 상단 4개 KPI 카드(Total/Errors/Warnings/Active Sources +
-  // 이전 구간 대비 델타).
-  const { data: kpi, status: kpiStatus } = useKpi({ hours });
+  // 이전 구간 대비 델타). pollMs로 2초마다 갱신 — 더미 로그 생성기 돌릴 때 화면이
+  // 수동 새로고침 없이 따라 올라가야 한다는 피드백 반영.
+  const { data: kpi, status: kpiStatus } = useKpi({ hours, pollMs: LIVE_POLL_MS });
 
   // GET /logs — 아래 차트/테이블에 실제로 흘려보내는 이벤트. kpiFilter에 따라
   // min_severity로 서버에서 미리 좁혀서 요청.
@@ -882,6 +884,7 @@ export function DashboardContent() {
     lookbackMs: preset.lookbackMs,
     minSeverity: KPI_MIN_SEVERITY[kpiFilter],
     limit: 300,
+    pollMs: LIVE_POLL_MS,
   });
   const displayEvents = useMemo(
     () => (kpiFilter === "WARNING" ? rawLogs.filter((e) => e.severity === REAL_WARNING_SEVERITY) : rawLogs),
@@ -894,6 +897,7 @@ export function DashboardContent() {
   const { items: topIps, status: topIpsStatus, error: topIpsError } = useTopIps({
     lookbackMs: preset.lookbackMs,
     limit: kpiFilter === "SOURCES" ? 10 : 5,
+    pollMs: LIVE_POLL_MS,
   });
 
   return (

@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
+import { usePoll } from "./usePoll";
 
 // GET /stats?start=&end= (servers/platform-api/app/stats_api.py)의 by_module을
-// 재사용 — "탐지 소스별 분포" 도넛의 실데이터 소스. WAF는 비활성화 상태라
-// by_module에 안 잡히거나 0건일 수 있음(정상 — backend/ 매니페스트가 주석 처리됨).
-export function useDetectionSources({ lookbackMs }) {
+// 재사용 — "탐지 소스별 분포" 도넛과 WAS/Falco/K8sAudit 상세 뷰의 "Total" 카드
+// 실데이터 소스. WAF는 비활성화 상태라 by_module에 안 잡히거나 0건일 수 있음
+// (정상 — backend/ 매니페스트가 주석 처리됨). pollMs를 주면 주기적으로 재요청.
+export function useDetectionSources({ lookbackMs, pollMs }) {
   const [byModule, setByModule] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
+  const pollTick = usePoll(pollMs);
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
+    setStatus((s) => (s === "ready" ? "ready" : "loading"));
     setError(null);
 
     const end = new Date();
@@ -34,7 +37,7 @@ export function useDetectionSources({ lookbackMs }) {
     return () => {
       cancelled = true;
     };
-  }, [lookbackMs]);
+  }, [lookbackMs, pollTick]);
 
   return { byModule, status, error };
 }

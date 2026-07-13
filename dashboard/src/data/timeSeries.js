@@ -8,6 +8,12 @@
 // returns the same `{ ts, label, counts }` shape, none of the chart
 // components need to change.
  
+// 실데이터 패널(Overview/WAS/Falco/K8sAudit)이 usePoll로 자동 새로고침할 때 쓰는
+// 공통 간격 — 더미 로그 생성기를 돌리면서 화면이 알아서 갱신되길 원하는 용도라
+// 사람이 "느리다"고 느끼지 않을 정도로 짧게 잡았다(백엔드는 단순 집계 쿼리라
+// 이 정도 빈도는 부담 없음). 값 하나를 여러 훅 호출부가 공유하도록 여기 둔다.
+export const LIVE_POLL_MS = 2000;
+
 // Full ladder, 1분 → 90일 (mirrors OpenSearch/Grafana "commonly used" quick
 // select). Used by TimeRangePicker.jsx's dropdown. Note: since the mock
 // datasets are static historical snapshots (not a true live stream), very

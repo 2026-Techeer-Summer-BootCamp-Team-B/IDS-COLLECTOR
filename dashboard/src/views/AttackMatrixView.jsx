@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useAttackCoverage } from "../hooks/useAttackCoverage";
 import { useTechniqueIncidents } from "../hooks/useTechniqueIncidents";
-import { SeverityBadge, StatusDot } from "../components/badges";
+import { useIncidentTimeline } from "../hooks/useIncidentTimeline";
+import { SeverityBadge, StatusDot, SourceBadge } from "../components/badges";
+import { getModuleMeta } from "../data/moduleMeta";
 
 // incidents.severity(1~4)를 badges.jsx의 SEVERITY_META 키로 별칭 처리.
 // IncidentsView.jsx의 동일 매핑과 맞춰둠(공용 모듈로 뺄 정도는 아니라 로컬 복제).
@@ -14,22 +16,25 @@ function statusDotStatus(status) {
   return status === "closed" ? "RESOLVED" : "IN_PROGRESS";
 }
 
+// hits > 0("탐지됨")는 실제로 공격이 관측된 기법이라 위험 신호다 — 초록/민트는
+// "안전"으로 오해되기 쉬워서 critical(빨강) 계열로 표시한다. 선택된(active) 셀은
+// 별도 테두리로만 구분하고 배경색은 탐지 여부를 그대로 따른다.
 function TechniqueCell({ tech, active, onClick }) {
   const detected = tech.hits > 0;
   return (
     <button
       onClick={onClick}
       className={`w-full text-left rounded-lg p-2.5 mb-2 border transition-colors ${
-        active
-          ? "border-dash-mint bg-dash-mint/10"
-          : detected
-          ? "border-transparent bg-dash-mint/15 hover:bg-dash-mint/20"
-          : "border-transparent bg-dash-surfaceAlt/60 hover:bg-dash-surfaceAlt"
+        active ? "border-dash-critical" : "border-transparent"
+      } ${
+        detected
+          ? "bg-dash-critical/15 hover:bg-dash-critical/25"
+          : "bg-dash-surfaceAlt/60 hover:bg-dash-surfaceAlt"
       }`}
     >
-      <p className={`text-[11px] font-semibold ${detected ? "text-dash-mint" : "text-dash-faint"}`}>{tech.id}</p>
+      <p className={`text-[11px] font-semibold ${detected ? "text-dash-critical" : "text-dash-faint"}`}>{tech.id}</p>
       <p className={`text-[11px] leading-snug ${detected ? "text-dash-fg" : "text-dash-muted"}`}>{tech.name}</p>
-      {detected && <p className="text-dash-muted text-[10px] mt-1">{tech.hits} hits</p>}
+      {detected && <p className="text-dash-critical text-[10px] mt-1">{tech.hits} hits</p>}
     </button>
   );
 }
@@ -52,6 +57,11 @@ export default function AttackMatrixView() {
 
   const { incidents, status: incidentsStatus, error: incidentsError } = useTechniqueIncidents(selected?.id);
 
+  // 펼쳐진 인시던트 행 하나("자세히보기")에 대해서만 실제 원본 로그(타임라인)를
+  // 불러온다 — expandedIdx가 곧 "지금 펼쳐진 행"이라 별도 상태 없이 그대로 파생.
+  const timelineIncidentId = expandedIdx !== null ? incidents[expandedIdx]?.id ?? null : null;
+  const { timeline, status: timelineStatus } = useIncidentTimeline(timelineIncidentId);
+
   const coveragePct = totalTechniques > 0 ? Math.round((detectedTechniques / totalTechniques) * 100) : 0;
 
   function selectTechnique(tech) {
@@ -73,7 +83,7 @@ export default function AttackMatrixView() {
           </p>
           <div className="flex gap-3 justify-end mt-1 text-[10px] text-dash-muted">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-sm bg-dash-mint/60 inline-block" /> 탐지됨
+              <span className="w-2 h-2 rounded-sm bg-dash-critical/60 inline-block" /> 탐지됨
             </span>
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-sm bg-dash-surfaceAlt inline-block" /> 미탐지
@@ -171,6 +181,39 @@ export default function AttackMatrixView() {
                             ? incident.mitre_tactics.join(", ")
                             : "-"}
                         </p>
+                      </div>
+
+                      {/* GET /incidents/{id}/timeline — 이 인시던트를 이루는 실제
+                          원본 로그(WAS/Falco/K8s Audit)를 시간순으로. IncidentsView의
+                          "공격 스토리라인"과 같은 API, 여기선 더 간략하게 표시. */}
+                      <div className="col-span-2 sm:col-span-3 pt-2 border-t border-dash-surfaceAlt">
+                        <p className="text-dash-faint mb-1.5">실제 로그 (원본 이벤트)</p>
+                        {timelineStatus === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
+                        {timelineStatus === "error" && (
+                          <p className="text-dash-critical text-xs">타임라인을 불러오지 못했습니다.</p>
+                        )}
+                        {timelineStatus === "ready" && timeline.length === 0 && (
+                          <p className="text-dash-muted text-xs">연결된 원본 로그가 없습니다.</p>
+                        )}
+                        <div className="space-y-1.5">
+                          {timelineStatus === "ready" &&
+                            timeline.map((t) => (
+                              <div key={t.event_id} className="bg-dash-surface rounded-lg p-2.5">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <SourceBadge source={getModuleMeta(t.event_module).label} />
+                                  <span className="text-dash-faint text-[10px]">
+                                    {new Date(t.added_at).toLocaleString("ko-KR")}
+                                  </span>
+                                </div>
+                                <p className="text-dash-fg text-xs font-medium">{t.title || "(원본 로그 없음)"}</p>
+                                {t.detail && (
+                                  <p className="text-dash-muted text-[11px] font-mono mt-0.5 whitespace-pre-wrap break-all">
+                                    {t.detail}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                        </div>
                       </div>
                     </div>
                   )}

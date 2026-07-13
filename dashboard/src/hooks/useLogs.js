@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
 import { mapLogDoc } from "../lib/normalizedEvent";
+import { usePoll } from "./usePoll";
 
 // GET /logs (servers/platform-api/app/logs_api.py) — Overview의 Recent Logs
 // 테이블 / Latency 패널 / Error Rate Gauge 실데이터 소스. RAW_EVENTS(mockLogs.js)
@@ -17,14 +18,18 @@ import { mapLogDoc } from "../lib/normalizedEvent";
 // 그대로 재사용할 수 있다. Log Levels 차트만은 이 4개 외 5개가 항상 0으로
 // 나오는 걸 피하려고 useLogLevels(전용 4단계 집계)를 따로 쓴다.
 
-export function useLogs({ lookbackMs, module, minSeverity, q, limit = 300 }) {
+// pollMs를 주면 그 간격으로 계속 다시 fetch한다(더미 로그 생성기를 돌리면서
+// 화면이 알아서 갱신되길 원할 때 사용) — 재요청마다 "불러오는 중"으로 깜빡이지
+// 않도록 이전 상태가 ready였으면 그대로 ready를 유지한 채 백그라운드에서 갈아치운다.
+export function useLogs({ lookbackMs, module, minSeverity, q, limit = 300, pollMs }) {
   const [logs, setLogs] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
+  const pollTick = usePoll(pollMs);
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
+    setStatus((s) => (s === "ready" ? "ready" : "loading"));
     setError(null);
 
     const end = new Date();
@@ -54,7 +59,7 @@ export function useLogs({ lookbackMs, module, minSeverity, q, limit = 300 }) {
     return () => {
       cancelled = true;
     };
-  }, [lookbackMs, module, minSeverity, q, limit]);
+  }, [lookbackMs, module, minSeverity, q, limit, pollTick]);
 
   return { logs, status, error };
 }

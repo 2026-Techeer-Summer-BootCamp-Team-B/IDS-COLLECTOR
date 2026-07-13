@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
+import { usePoll } from "./usePoll";
 
 // GET /stats/top-ips (servers/platform-api/app/stats_api.py) — mockLogs.js의
 // topSourcesFor를 대체. 실제 벽시계 시각 기준으로 start/end(ISO8601)를 계산해서
 // 보낸다 — mock 데이터의 고정된 MOCK_NOW와 달리 실제 API는 "진짜 지금"을 써야
-// 최근 데이터가 잡힌다. apiFetch가 Authorization 헤더를 자동으로 붙인다.
-export function useTopIps({ lookbackMs, limit = 10 }) {
+// 최근 데이터가 잡힌다. apiFetch가 Authorization 헤더를 자동으로 붙인다. pollMs를
+// 주면 주기적으로 재요청.
+export function useTopIps({ lookbackMs, limit = 10, pollMs }) {
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
+  const pollTick = usePoll(pollMs);
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
+    setStatus((s) => (s === "ready" ? "ready" : "loading"));
     setError(null);
 
     const end = new Date();
@@ -40,7 +43,7 @@ export function useTopIps({ lookbackMs, limit = 10 }) {
     return () => {
       cancelled = true;
     };
-  }, [lookbackMs, limit]);
+  }, [lookbackMs, limit, pollTick]);
 
   return { items, status, error };
 }
