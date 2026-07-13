@@ -1,7 +1,7 @@
-"""개별 정규화 이벤트 실시간 스트림 (/ws/events) - app/websocket.py(/ws/incidents)와
-역할이 다르다: 그쪽은 상관분석 엔진이 Redis에 발행한 "발화된 인시던트"만 흘려보내고,
-여긴 events.normalized 토픽을 직접 tail해서 was/waf/falco/k8s_audit 이벤트 하나하나를
-그대로 내보낸다(대시보드 하단 티커/CRITICAL 팝업이 원하는 "개별 탐지" 단위 스트림).
+"""개별 정규화 이벤트 실시간 스트림 (/ws/events) - 인시던트 단위 팝업(GET /incidents?since=
+폴링, app/incidents_api.py)과 역할이 다르다: 그쪽은 상관분석 엔진이 발화시킨 "인시던트"
+단위로만 갱신되고, 여긴 events.normalized 토픽을 직접 tail해서 was/waf/falco/k8s_audit
+이벤트 하나하나를 그대로 내보낸다(대시보드 하단 티커가 원하는 "개별 탐지" 단위 스트림).
 
 correlation-engine의 처리 경로와는 완전히 독립된 컨슈머 그룹으로 같은 토픽을 병렬
 구독한다 - ClickHouse의 Kafka 엔진 테이블(servers/datastore/clickhouse/init/

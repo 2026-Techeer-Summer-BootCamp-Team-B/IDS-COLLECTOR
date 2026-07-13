@@ -2,8 +2,11 @@
 상관분석 엔진 서비스 (P4).
 
 events.normalized를 실시간 소비 -> 시나리오 룰 평가(threshold/sequence, app/rules.py) ->
-발화 시 인시던트 upsert(PG, app/incidents.py) + Redis pub/sub 발행(대시보드 WebSocket
-푸시용 - 실제 WebSocket 서버는 platform-api/dashboard 쪽에서 이 채널을 구독한다).
+발화 시 인시던트 upsert(PG, app/incidents.py)만 한다. 예전엔 여기서 Redis pub/sub
+(incidents:events)도 같이 발행해서 platform-api의 WebSocket 릴레이 + Slack/Discord
+알림을 트리거했는데, 2026-07-13부로 platform-api가 그 자리를 incidents.notified_at
+폴링(app/incident_alerts.py)으로 대체하면서 이 서비스는 Postgres에 쓰기만 하면
+할 일이 끝나는 쪽으로 단순해졌다.
 
 시나리오 정의는 app/scenarios/ 디렉터리 밑의 *.yaml 파일들(카테고리별로 분리,
 app/scenarios/README.md 참고)에서 로드한다 - falcosecurity/plugins의 실제 K8s
@@ -15,7 +18,6 @@ audit 룰에 근거한 설계다(예시가 아님).
 """
 import asyncio
 import contextlib
-import json
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -37,8 +39,6 @@ _consumer: Optional[AIOKafkaConsumer] = None
 _consumer_task: Optional[asyncio.Task] = None
 _engine: Optional[ScenarioEngine] = None
 _redis: Optional["redis.Redis"] = None
-
-INCIDENT_CHANNEL = "incidents:events"
 
 
 def _load_scenarios() -> list:
@@ -118,7 +118,7 @@ async def _consume_loop():
 
             fired = await _engine.evaluate(event)
             for f in fired:
-                incident = await incidents.upsert_incident(
+                await incidents.upsert_incident(
                     f["scenario_db_id"],
                     f["scenario_name"],
                     f["correlation_key_type"],
@@ -127,7 +127,6 @@ async def _consume_loop():
                     mitre_mapping.tactics_for_technique(f["mitre_technique_id"]),
                     f["events"],
                 )
-                await _redis.publish(INCIDENT_CHANNEL, json.dumps(incident, default=str))
                 print(
                     f"[correlation] 인시던트 발화 - {f['scenario_name']} "
                     f"join_key={f['join_key']}"
