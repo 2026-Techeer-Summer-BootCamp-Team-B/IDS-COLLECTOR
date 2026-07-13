@@ -63,8 +63,26 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=siem-net"
+      - "traefik.http.services.platform-api.loadbalancer.server.port=8400"
+
+      # /api/auth/* (login/logout/session)은 인증 자체를 다루는 엔드포인트라 forwardAuth
+      # 없이 통과 - 이 라우터가 더 구체적인 rule이라 platform-api 라우터보다 우선순위가
+      # 높아야 하므로 priority를 명시적으로 더 크게 준다(Traefik 기본 룰 길이 기반 우선순위에
+      # 기대지 않음).
+      - "traefik.http.routers.platform-api-public.entrypoints=web"
+      - "traefik.http.routers.platform-api-public.rule=PathPrefix(`/api/auth`) || Path(`/api/health`)"
+      - "traefik.http.routers.platform-api-public.priority=20"
+      - "traefik.http.routers.platform-api-public.middlewares=platform-api-stripprefix"
+      - "traefik.http.routers.platform-api-public.service=platform-api"
+
+      # 나머지 /api/* 전부 - forwardAuth로 인증을 강제(P5-2, 앱 레벨 Depends는 다 뺐음).
+      # verify 엔드포인트가 200으로 응답하면서 실어주는 X-Auth-* 헤더를 그대로
+      # platform-api로 전달해서 감사 로그 등에서 실제 유저를 식별한다.
       - "traefik.http.routers.platform-api.entrypoints=web"
       - "traefik.http.routers.platform-api.rule=PathPrefix(`/api`)"
-      - "traefik.http.routers.platform-api.middlewares=platform-api-stripprefix"
+      - "traefik.http.routers.platform-api.priority=10"
+      - "traefik.http.routers.platform-api.middlewares=platform-api-stripprefix,platform-api-auth"
+
       - "traefik.http.middlewares.platform-api-stripprefix.stripprefix.prefixes=/api"
-      - "traefik.http.services.platform-api.loadbalancer.server.port=8400"
+      - "traefik.http.middlewares.platform-api-auth.forwardauth.address=http://platform-api:8400/auth/verify"
+      - "traefik.http.middlewares.platform-api-auth.forwardauth.authResponseHeaders=X-Auth-User-Id,X-Auth-Username,X-Auth-Role"

@@ -2,13 +2,12 @@
 (플랫폼 백엔드로 이관된 조회 전용 API, 색인 자체는 여전히 Data Prepper가 담당)."""
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from app.auth import get_current_session
 from app.opensearch_client import client as opensearch_client
 from app.config import settings
 
-router = APIRouter(prefix="/logs", tags=["logs"], dependencies=[Depends(get_current_session)])
+router = APIRouter(prefix="/logs", tags=["logs"])
 
 
 @router.get("")

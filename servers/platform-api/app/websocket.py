@@ -5,9 +5,8 @@ import json
 from typing import Set
 
 import redis.asyncio as redis
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.auth import Session, get_ws_session
 from app.config import settings
 from app.notifications import notify_incident
 
@@ -19,7 +18,7 @@ INCIDENT_CHANNEL = "incidents:events"
 
 
 @router.websocket("/ws/incidents")
-async def incidents_ws(websocket: WebSocket, session: Session = Depends(get_ws_session)):
+async def incidents_ws(websocket: WebSocket):
     await websocket.accept()
     _clients.add(websocket)
     try:

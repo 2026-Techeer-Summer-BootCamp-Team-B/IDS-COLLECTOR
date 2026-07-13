@@ -3,14 +3,14 @@ app/notifications.py가 이 테이블을 조회해서 실제 발송 여부/대�
 webhook_url, enabled, min_severity)을 결정한다."""
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.audit import record_action
-from app.auth import Session, get_current_session, require_admin
+from app.auth import current_user_id
 from app.db import pool
 
-router = APIRouter(prefix="/alert-configs", tags=["alert-configs"], dependencies=[Depends(get_current_session)])
+router = APIRouter(prefix="/alert-configs", tags=["alert-configs"])
 
 
 def _client_ip(request: Request) -> Optional[str]:
@@ -48,7 +48,7 @@ async def list_alert_configs():
 
 
 @router.post("", response_model=AlertConfigOut)
-async def create_alert_config(body: AlertConfigIn, request: Request, session: Session = Depends(require_admin)):
+async def create_alert_config(body: AlertConfigIn, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -61,14 +61,12 @@ async def create_alert_config(body: AlertConfigIn, request: Request, session: Se
             body.enabled,
             body.min_severity,
         )
-    await record_action("ALERT_CONFIG_CREATED", "alert_configs", _client_ip(request), user_id=session.user_id)
+    await record_action("ALERT_CONFIG_CREATED", "alert_configs", _client_ip(request), user_id=current_user_id(request))
     return _row_to_out(row)
 
 
 @router.patch("/{config_id}", response_model=AlertConfigOut)
-async def update_alert_config(
-    config_id: str, body: AlertConfigIn, request: Request, session: Session = Depends(require_admin)
-):
+async def update_alert_config(config_id: str, body: AlertConfigIn, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -85,15 +83,15 @@ async def update_alert_config(
         )
     if not row:
         raise HTTPException(status_code=404, detail="alert config not found")
-    await record_action("ALERT_CONFIG_UPDATED", "alert_configs", _client_ip(request), user_id=session.user_id)
+    await record_action("ALERT_CONFIG_UPDATED", "alert_configs", _client_ip(request), user_id=current_user_id(request))
     return _row_to_out(row)
 
 
 @router.delete("/{config_id}")
-async def delete_alert_config(config_id: str, request: Request, session: Session = Depends(require_admin)):
+async def delete_alert_config(config_id: str, request: Request):
     async with pool().acquire() as conn:
         result = await conn.execute("DELETE FROM alert_configs WHERE id = $1", config_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="alert config not found")
-    await record_action("ALERT_CONFIG_DELETED", "alert_configs", _client_ip(request), user_id=session.user_id)
+    await record_action("ALERT_CONFIG_DELETED", "alert_configs", _client_ip(request), user_id=current_user_id(request))
     return {"status": "ok"}

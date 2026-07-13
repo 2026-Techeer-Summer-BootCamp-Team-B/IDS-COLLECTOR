@@ -3,13 +3,12 @@
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from app.auth import get_current_session
 from app.config import settings
 from app.opensearch_client import client as opensearch_client
 
-router = APIRouter(prefix="/stats", tags=["stats"], dependencies=[Depends(get_current_session)])
+router = APIRouter(prefix="/stats", tags=["stats"])
 
 # Falco rule.name -> 공격 유형 카테고리. 이 저장소 시나리오 주석(workload.yaml 등)에
 # 실제로 나오는 falco 룰 이름 기준 - 가벼운 정적 매핑이라 여기 없는 rule.name은

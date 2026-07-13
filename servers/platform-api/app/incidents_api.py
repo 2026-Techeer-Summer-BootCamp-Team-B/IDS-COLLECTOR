@@ -4,16 +4,16 @@ datastore/postgres/init/001-schema.sql의 incidents/incident_events/scenario_rul
 참고."""
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.audit import record_action
-from app.auth import Session, get_current_session, require_admin
+from app.auth import current_user_id
 from app.config import settings
 from app.db import pool
 from app.opensearch_client import client as opensearch_client
 
-router = APIRouter(prefix="/incidents", tags=["incidents"], dependencies=[Depends(get_current_session)])
+router = APIRouter(prefix="/incidents", tags=["incidents"])
 
 _VALID_TRANSITIONS = {
     "open": {"investigating"},
@@ -234,9 +234,7 @@ async def get_incident_timeline(incident_id: str):
 
 
 @router.patch("/{incident_id}/status", response_model=IncidentOut)
-async def update_status(
-    incident_id: str, body: StatusUpdate, request: Request, session: Session = Depends(require_admin)
-):
+async def update_status(incident_id: str, body: StatusUpdate, request: Request):
     async with pool().acquire() as conn:
         current = await conn.fetchrow("SELECT status FROM incidents WHERE id = $1", incident_id)
         if not current:
@@ -257,5 +255,7 @@ async def update_status(
             incident_id,
             body.status,
         )
-    await record_action("INCIDENT_STATUS_CHANGED", "incidents", _client_ip(request), user_id=session.user_id)
+    await record_action(
+        "INCIDENT_STATUS_CHANGED", "incidents", _client_ip(request), user_id=current_user_id(request)
+    )
     return _row_to_incident(row)

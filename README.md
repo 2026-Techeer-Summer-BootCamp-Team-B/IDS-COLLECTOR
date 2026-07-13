@@ -109,13 +109,18 @@ Target 서버
   같은 origin(Traefik 경유)이면 사실 CORS가 필요 없지만, 프론트 개발 서버를 다른
   포트로 따로 띄워서 개발할 때를 위해 남겨둠.
 - 인증은 쿠키가 아니라 `/auth/login` 응답 토큰을 프론트가 직접 들고 다니는 방식.
-- **모든 REST 엔드포인트(로그인/헬스체크 제외)는 `Authorization: Bearer <token>` 필수** -
-  없거나 만료된 토큰이면 401. 읽기(GET)는 로그인만 되어 있으면 되고(`admin`/`viewer`
-  둘 다 허용), 쓰기(POST/PATCH/DELETE)는 `role=admin`만 허용(그 외는 403).
-- WebSocket(`/ws/incidents`, `/ws/events`)도 인증이 필요한데, 브라우저 `WebSocket` API가
-  커스텀 헤더를 못 보내므로 **쿼리스트링으로 토큰을 전달**:
-  `ws://<host>/api/ws/incidents?token=<token>` (토큰 없거나 무효면 핸드셰이크 단계에서
-  코드 1008로 닫힘).
+- **인증 강제는 platform-api 앱이 아니라 Traefik이 한다** (`servers/docker-compose.yml`의
+  `platform-api-auth` forwardAuth 미들웨어 -> platform-api의 `GET /auth/verify` 호출).
+  `/api/auth/*`, `/api/health`를 제외한 모든 `/api/*` 요청(REST + WebSocket 핸드셰이크)이
+  이 게이트를 거친다 - `Authorization: Bearer <token>`이 없거나 무효면 Traefik이 401을
+  그 자리에서 반환하고 platform-api까지 요청이 가지도 않는다. 읽기(GET)는 로그인만
+  되어 있으면 되고(`admin`/`viewer` 둘 다 허용), 쓰기(POST/PATCH/DELETE)는 `role=admin`만
+  허용(그 외는 403).
+- WebSocket(`/ws/incidents`, `/ws/events`)도 같은 게이트를 거치는데, 브라우저 `WebSocket`
+  API가 커스텀 헤더를 못 보내므로 **쿼리스트링으로 토큰을 전달**:
+  `ws://<host>/api/ws/incidents?token=<token>` (토큰 없거나 무효면 핸드셰이크가 401로 거절됨).
+- 주의: `platform-api:8400` 직결 포트(로컬 디버깅 편의용)는 Traefik을 거치지 않으므로
+  이 인증이 전혀 적용되지 않는다 - 운영 환경에서는 이 포트를 외부에 노출하면 안 된다.
 
 | 메서드/경로 | 설명 |
 | --- | --- |

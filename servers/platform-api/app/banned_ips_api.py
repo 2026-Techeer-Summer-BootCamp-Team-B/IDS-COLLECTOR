@@ -4,14 +4,14 @@
 트레일만 남기는 용도다(audit_logs의 IP_BANNED/IP_UNBANNED)."""
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.audit import record_action
-from app.auth import Session, get_current_session, require_admin
+from app.auth import current_user_id
 from app.db import pool
 
-router = APIRouter(prefix="/banned-ips", tags=["banned-ips"], dependencies=[Depends(get_current_session)])
+router = APIRouter(prefix="/banned-ips", tags=["banned-ips"])
 
 
 class BanIn(BaseModel):
@@ -55,7 +55,7 @@ async def list_banned_ips():
 
 
 @router.post("", response_model=BannedIpOut)
-async def ban_ip(body: BanIn, request: Request, session: Session = Depends(require_admin)):
+async def ban_ip(body: BanIn, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -66,12 +66,12 @@ async def ban_ip(body: BanIn, request: Request, session: Session = Depends(requi
             body.ip_or_cidr,
             body.reason,
         )
-    await record_action("IP_BANNED", "banned_ips", _client_ip(request), user_id=session.user_id)
+    await record_action("IP_BANNED", "banned_ips", _client_ip(request), user_id=current_user_id(request))
     return _row_to_out(row)
 
 
 @router.delete("/{banned_ip_id}", response_model=BannedIpOut)
-async def unban_ip(banned_ip_id: str, request: Request, session: Session = Depends(require_admin)):
+async def unban_ip(banned_ip_id: str, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -83,5 +83,5 @@ async def unban_ip(banned_ip_id: str, request: Request, session: Session = Depen
         )
     if not row:
         raise HTTPException(status_code=404, detail="banned ip not found (or already unbanned)")
-    await record_action("IP_UNBANNED", "banned_ips", _client_ip(request), user_id=session.user_id)
+    await record_action("IP_UNBANNED", "banned_ips", _client_ip(request), user_id=current_user_id(request))
     return _row_to_out(row)

@@ -44,8 +44,11 @@ def _parse_timestamp(value: Any) -> datetime:
 def _was_source_ip(payload: Dict[str, Any]) -> Any:
     """XFF 첫 홉 우선, 없으면 remote_addr.
 
-    TODO [Target 액션]: nginx log format에 $http_x_forwarded_for가 아직 없어서
-    지금은 대부분 remote_addr로 떨어진다 - S4(join_on=source_ip) 정확도에 영향.
+    [Target 액션 완료, 2026-07-12] nginx log format(juice-shop-nginx-configmap.yaml)에
+    $http_x_forwarded_for 추가됨 - 단 tests/dummy_generator.py가 아직 이 헤더를 안 보내서
+    지금도 대부분 remote_addr로 폴백 중(S4 join_on=source_ip 정확도에 영향). 여러 공격자
+    IP를 재현하려면 생성기가 요청마다 랜덤 X-Forwarded-For를 보내도록 수정 필요 - 정규화
+    문서(Notion "정규화" §4-1/§6) 참고.
     """
     xff = payload.get("http_x_forwarded_for") or payload.get("x_forwarded_for")
     if xff:

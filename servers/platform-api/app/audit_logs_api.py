@@ -1,13 +1,12 @@
 """AuditLog API (/audit-logs) - 관리자 행위 감사 로그 조회 (스켈레톤)."""
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.auth import get_current_session
 from app.db import pool
 
-router = APIRouter(prefix="/audit-logs", tags=["audit-logs"], dependencies=[Depends(get_current_session)])
+router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
 
 class AuditLogOut(BaseModel):
