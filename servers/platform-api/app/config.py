@@ -26,11 +26,6 @@ class Settings(BaseSettings):
     clickhouse_user: str = "admin"
     clickhouse_password: str = "mypassword"
 
-    # 인증 (P5-2) - 스펙 미설계. Target에서 이관될 실제 역할 모델이 정해지기 전까지
-    # 단일 관리자 계정 스텁으로만 동작.
-    admin_username: str = "admin"
-    admin_password: str = "changeme"
-
     # AI 트렌드 리포트 (P5-4) - 비어있으면 "미설정" 응답만 반환.
     anthropic_api_key: str = ""
 

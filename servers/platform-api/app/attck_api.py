@@ -7,13 +7,14 @@ ids_shared.mitre_mapping.CONTAINERS_MATRIX(전체 Containers 매트릭스 카탈
 from collections import defaultdict
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from ids_shared.mitre_mapping import CONTAINERS_MATRIX
 
+from app.auth import get_current_session
 from app.db import pool
 from app.incidents_api import IncidentOut, _row_to_incident
 
-router = APIRouter(prefix="/attck", tags=["attck"])
+router = APIRouter(prefix="/attck", tags=["attck"], dependencies=[Depends(get_current_session)])
 
 
 async def _hit_counts_by_technique() -> Dict[str, int]:

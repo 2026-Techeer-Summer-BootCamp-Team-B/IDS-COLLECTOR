@@ -7,11 +7,12 @@ ClickHouse(servers/datastore/clickhouse/init/001-kafka-engine.sql이 events.norm
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.auth import get_current_session
 from app.clickhouse_client import client
 
-router = APIRouter(prefix="/stats", tags=["stats"])
+router = APIRouter(prefix="/stats", tags=["stats"], dependencies=[Depends(get_current_session)])
 
 # 대시보드 timeSeries.js의 RANGE_PRESETS와 동일한 키/lookback/bucket 매핑
 # (lookbackMs/1000, bucketMs/1000) - 프론트가 쓰는 프리셋 키를 그대로 받는다.

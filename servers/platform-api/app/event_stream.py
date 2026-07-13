@@ -12,8 +12,9 @@ import asyncio
 from typing import Optional, Set
 
 from aiokafka import AIOKafkaConsumer
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from app.auth import Session, get_ws_session
 from app.config import settings
 
 router = APIRouter()
@@ -23,7 +24,7 @@ _consumer: Optional[AIOKafkaConsumer] = None
 
 
 @router.websocket("/ws/events")
-async def events_ws(websocket: WebSocket):
+async def events_ws(websocket: WebSocket, session: Session = Depends(get_ws_session)):
     await websocket.accept()
     _clients.add(websocket)
     try:

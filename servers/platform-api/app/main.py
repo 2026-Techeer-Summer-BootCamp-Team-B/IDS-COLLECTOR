@@ -8,7 +8,11 @@
   timeline(incident_events를 OpenSearch와 조인한 스토리라인)
 - ATT&CK 커버리지 API: app/attck_api.py - ids_shared.mitre_mapping 카탈로그 + incidents 집계
 - IP 차단 기록 API: app/banned_ips_api.py - 기록/감사 트레일만(실제 방화벽 제어 없음)
-- 인증 (P5-2): app/auth.py - login/logout/session 스텁, 실제 이관/역할 모델은 팀 설계 후 채울 것
+- 인증 (P5-2): app/auth.py - login/logout/session, users 테이블(pgcrypto 해시) 실사용자 검증.
+  get_current_session/require_admin 의존성으로 아래 모든 라우터에 로그인/role 강제 적용
+  (읽기는 로그인만, 쓰기는 role=admin). WebSocket 릴레이는 헤더를 못 쓰는 브라우저 WS API
+  특성상 `?token=` 쿼리스트링(get_ws_session)으로 검증. 세션은 아직 메모리 토큰 스토어
+  (재시작 시 무효화), 영속화는 팀 설계 후 채울 것
 - 알림 채널 (P5-3): app/notifications.py - WebSocket 릴레이에서 CRITICAL이면 발송
 - AI 트렌드 리포트 (P5-4): app/ai_report.py - Anthropic API 미설정이면 통계만 반환
 - Logs API: app/logs_api.py - attack-logs-* OpenSearch 인덱스 조회
@@ -33,7 +37,7 @@ import asyncio
 import contextlib
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import clickhouse_client, db
@@ -42,6 +46,7 @@ from app.alert_configs_api import router as alert_configs_router
 from app.analytics_api import router as analytics_router
 from app.attck_api import router as attck_router
 from app.audit_logs_api import router as audit_logs_router
+from app.auth import get_current_session
 from app.auth import router as auth_router
 from app.banned_ips_api import router as banned_ips_router
 from app.config import settings
@@ -108,6 +113,6 @@ def health_check():
     return {"status": "ok"}
 
 
-@app.get("/reports/trend")
+@app.get("/reports/trend", dependencies=[Depends(get_current_session)])
 async def trend_report(days: int = 7):
     return await generate_trend_report(days)

@@ -109,16 +109,23 @@ Target 서버
   같은 origin(Traefik 경유)이면 사실 CORS가 필요 없지만, 프론트 개발 서버를 다른
   포트로 따로 띄워서 개발할 때를 위해 남겨둠.
 - 인증은 쿠키가 아니라 `/auth/login` 응답 토큰을 프론트가 직접 들고 다니는 방식.
+- **모든 REST 엔드포인트(로그인/헬스체크 제외)는 `Authorization: Bearer <token>` 필수** -
+  없거나 만료된 토큰이면 401. 읽기(GET)는 로그인만 되어 있으면 되고(`admin`/`viewer`
+  둘 다 허용), 쓰기(POST/PATCH/DELETE)는 `role=admin`만 허용(그 외는 403).
+- WebSocket(`/ws/incidents`, `/ws/events`)도 인증이 필요한데, 브라우저 `WebSocket` API가
+  커스텀 헤더를 못 보내므로 **쿼리스트링으로 토큰을 전달**:
+  `ws://<host>/api/ws/incidents?token=<token>` (토큰 없거나 무효면 핸드셰이크 단계에서
+  코드 1008로 닫힘).
 
 | 메서드/경로 | 설명 |
 | --- | --- |
 | `GET /incidents?status=&limit=` | 인시던트 목록. `status`는 `open`/`investigating`/`closed` |
 | `GET /incidents/{id}` | 인시던트 상세 |
 | `GET /incidents/{id}/events` | 인시던트에 묶인 이벤트 목록 (`event_id`, `event_module`, `added_at`) |
-| `PATCH /incidents/{id}/status` | 상태 변경. `open`→`investigating`→`closed` 선형 전이만 허용 (역행/건너뛰기는 400) |
-| `POST /auth/login` | `{username, password}` -> `{token}`. 스펙 미설계 스텁, 단일 관리자 계정 |
+| `PATCH /incidents/{id}/status` | 상태 변경. `open`→`investigating`→`closed` 선형 전이만 허용 (역행/건너뛰기는 400). admin만 |
+| `POST /auth/login` | `{username, password}` -> `{token}`. `users` 테이블(비밀번호는 pgcrypto bcrypt 해시) 실사용자 검증, 세션은 메모리 토큰 스토어. 인증 불필요 |
 | `GET /reports/trend?days=7` | AI 트렌드 리포트. `ANTHROPIC_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
-| `WS /ws/incidents` | 상관분석 엔진이 발화할 때마다 인시던트 객체(JSON)를 그대로 push (연결 유지용 outbound는 없음) |
+| `WS /ws/incidents?token=` | 상관분석 엔진이 발화할 때마다 인시던트 객체(JSON)를 그대로 push (연결 유지용 outbound는 없음) |
 
 인시던트 JSON 형태(REST/WS 공통):
 ```json
@@ -214,7 +221,7 @@ servers/
                           설치해서 쓴다(수동 복제 금지, 아래 참고)
   normalizer/         - Kafka 컨슈머 + dedupe + 파서 4종 + 정규화 + enrichment + emit
   correlation-engine/  - 시나리오 룰 엔진(sequence/threshold) + 인시던트 생명주기
-  platform-api/        - 인시던트 API + 인증 스텁 + 알림 + AI 리포트 스텁 + WebSocket 릴레이
+  platform-api/        - 인시던트 API + 인증(실사용자 검증, 세션은 메모리 스토어) + 알림 + AI 리포트 스텁 + WebSocket 릴레이
                           (프론트엔드가 Traefik 경유로 붙는 유일한 연동 지점)
   docker-compose.yml   - normalizer/correlation-engine/platform-api 3개 서비스 정의.
                           normalizer/correlation-engine은 shared/를 이미지에 넣어야 해서
@@ -308,7 +315,7 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 
 ### `servers/platform-api`
 - 프론트엔드(별도 팀/레포)의 유일한 연동 지점 - 위 "프론트엔드 연동 API" 참고, CORS 허용
-- 인시던트 API, 인증 스텁, Slack/Discord 알림, AI 트렌드 리포트 스텁, WebSocket 릴레이
+- 인시던트 API, 인증(users 테이블 실사용자 검증), Slack/Discord 알림, AI 트렌드 리포트 스텁, WebSocket 릴레이
 
 ## 아직 안 된 것 / 스텁인 것
 

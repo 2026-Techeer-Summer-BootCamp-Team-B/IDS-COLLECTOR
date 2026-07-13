@@ -13,14 +13,15 @@ Postgres 값으로 Redis를 다시 시드하므로(app/main.py) 최악의 경우
 from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.audit import record_action
+from app.auth import Session, get_current_session, require_admin
 from app.config import settings
 from app.db import pool
 
-router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+router = APIRouter(prefix="/scenarios", tags=["scenarios"], dependencies=[Depends(get_current_session)])
 
 _redis = redis.from_url(settings.redis_url, decode_responses=True)
 
@@ -89,7 +90,9 @@ async def list_scenarios():
 
 
 @router.patch("/{scenario_id}/enabled", response_model=ScenarioOut)
-async def set_enabled(scenario_id: str, body: EnabledUpdate, request: Request):
+async def set_enabled(
+    scenario_id: str, body: EnabledUpdate, request: Request, session: Session = Depends(require_admin)
+):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -105,6 +108,9 @@ async def set_enabled(scenario_id: str, body: EnabledUpdate, request: Request):
         raise HTTPException(status_code=404, detail="scenario not found")
     await _set_enabled_flag(scenario_id, body.enabled)
     await record_action(
-        "RULE_ENABLED" if body.enabled else "RULE_DISABLED", "scenario_rules", _client_ip(request)
+        "RULE_ENABLED" if body.enabled else "RULE_DISABLED",
+        "scenario_rules",
+        _client_ip(request),
+        user_id=session.user_id,
     )
     return _row_to_out(row)
