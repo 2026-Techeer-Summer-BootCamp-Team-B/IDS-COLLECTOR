@@ -37,6 +37,7 @@ services:
       - ./config/data-prepper/pipelines.yaml:/usr/share/data-prepper/pipelines/pipelines.yaml:ro
       - ./config/data-prepper/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml:ro
       - ./config/data-prepper/attack-logs-template.json:/usr/share/data-prepper/config/attack-logs-template.json:ro
+      - ./config/data-prepper/otel-logs-raw-template.json:/usr/share/data-prepper/config/otel-logs-raw-template.json:ro
     depends_on:
       opensearch:
         condition: service_healthy
