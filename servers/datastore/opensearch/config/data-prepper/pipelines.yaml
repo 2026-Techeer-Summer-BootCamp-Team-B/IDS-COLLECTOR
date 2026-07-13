@@ -68,4 +68,4 @@ attack-logs-normalized-pipeline:
         template_file: "/usr/share/data-prepper/config/attack-logs-template.json"
         # 대시보드가 실제로 읽는 인덱스라 여기가 핵심 - flush_timeout 기본값 60초를
         # 1초로 낮춰서 저볼륨 트래픽에서도 거의 실시간으로 색인되게 함.
-        flush_timeout: 1000
+        flush_timeout: 500
