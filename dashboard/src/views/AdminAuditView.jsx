@@ -9,32 +9,23 @@ import { useAlertConfigs } from "../hooks/useAlertConfigs";
 import { useTrendReport } from "../hooks/useTrendReport";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
 
-// ON/OFF 텍스트 + 켜짐 상태를 더 뚜렷하게 보여주는 토글. 기존엔 색만으로
-// 상태를 구분해서(특히 꺼짐 상태가 배경색이랑 거의 안 구분돼서) 잘 안 보인다는
-// 피드백을 반영 - 꺼짐 상태에 테두리를 추가하고 글씨로도 상태를 명시한다.
+// 스위치형 knob 대신 ON/OFF 텍스트만 있는 단순 버튼 - knob이 튀어보이고
+// 켜짐 색(mint 솔리드)이 너무 밝다는 피드백을 반영해 배경을 반투명 톤으로
+// 낮췄다 (다른 곳의 "활성/비활성" 배지와 동일한 mint/15 톤 재사용).
 function RuleToggle({ enabled, onToggle }) {
   return (
     <button
       role="switch"
       aria-checked={enabled}
       onClick={onToggle}
-      className={`relative w-14 h-6 rounded-full transition-colors shrink-0 ${
-        enabled ? "bg-dash-mint" : "bg-dash-surfaceAlt border border-dash-muted/50"
+      className={`shrink-0 text-[10px] font-bold tracking-wider px-2.5 py-1 rounded-md transition-colors ${
+        enabled
+          ? "bg-dash-mint/20 text-dash-mint"
+          : "bg-dash-surfaceAlt text-dash-muted border border-dash-muted/40"
       }`}
       title={enabled ? "클릭하여 비활성화" : "클릭하여 활성화"}
     >
-      <span
-        className={`absolute top-1/2 -translate-y-1/2 text-[9px] font-bold tracking-wider ${
-          enabled ? "left-2 text-dash-bg" : "right-2 text-dash-muted"
-        }`}
-      >
-        {enabled ? "ON" : "OFF"}
-      </span>
-      <span
-        className={`absolute top-0.5 w-5 h-5 rounded-full bg-dash-bg shadow-sm transition-transform ${
-          enabled ? "translate-x-[33px]" : "translate-x-0.5"
-        }`}
-      />
+      {enabled ? "ON" : "OFF"}
     </button>
   );
 }

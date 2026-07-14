@@ -38,6 +38,7 @@ import WorldMap from "../components/WorldMap";
 // 별도 청크로 로드되게 한다.
 const Globe3D = lazy(() => import("../components/Globe3D"));
 import { useGeoStats } from "../hooks/useGeoStats";
+import { useK8sTargets } from "../hooks/useK8sTargets";
 
 /**
  * Log Analytics Dashboard — first-pass layout
@@ -139,18 +140,23 @@ export function Card({ title, subtitle, action, children, className = "" }) {
 }
 
 // Doubles as a filter toggle when `onClick` is passed (Overview/Incidents KPI
-// rows) — active state gets a neon ring so it reads as "currently selected",
-// not just another static stat card.
+// rows) — active state used to be a neon glow ring, but that read more like
+// "look here" than "this is selected". Switched to a darker fill + inset
+// border, closer to how a pressed button looks.
 export function KpiCard({ label, value, delta, positive = true, onClick, active = false, accent = "mint" }) {
   const Tag = onClick ? "button" : "div";
-  const accentClass = accent === "critical" ? "glow-box-critical" : "glow-box-mint";
+  const accentBorder = accent === "critical" ? "border-dash-critical/50" : "border-dash-mint/50";
   const displayValue = useCountUp(value);
   return (
     <Tag
       onClick={onClick}
-      className={`bg-dash-surface rounded-2xl p-5 flex-1 min-w-[160px] text-left transition-shadow ${
-        onClick ? "cursor-pointer hover:bg-dash-surfaceAlt/60" : ""
-      } ${active ? accentClass : ""}`}
+      className={`rounded-2xl p-5 flex-1 min-w-[160px] text-left transition-colors border ${
+        onClick ? "cursor-pointer" : ""
+      } ${
+        active
+          ? `bg-dash-bg/60 ${accentBorder}`
+          : `bg-dash-surface border-transparent ${onClick ? "hover:bg-dash-surfaceAlt/60" : ""}`
+      }`}
     >
       <p className="text-dash-muted text-xs mb-2">{label}</p>
       <p className="text-dash-fg text-2xl font-semibold tabular-nums">{displayValue}</p>
@@ -599,6 +605,145 @@ function DetectionSourceDonutCompact({ lookbackMs }) {
   );
 }
 
+// 심각도 분포 도넛 — 위 Log Levels 막대그래프(RealLevelDistributionChart)와
+// 같은 데이터(GET /stats/levels)를 비율로 한눈에 보여주는 버전. 탐지 소스별
+// 분포 도넛과 나란히 둬서 "어느 계층에서" + "얼마나 심각한 로그가 많은지"를
+// 같은 화면에서 비교할 수 있게 한다.
+function SeverityDonutCompact({ hours }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const { levels, total, status, error } = useLogLevels({ hours, pollMs: LIVE_POLL_MS });
+  const data = useMemo(
+    () =>
+      REAL_SEVERITY_LEVELS.map((l) => {
+        const found = levels.find((x) => x.severity === l.severity);
+        return { key: l.key, count: found ? found.count : 0, label: l.label, color: forTheme(l.color, theme) };
+      }).filter((d) => d.count > 0),
+    [levels, theme]
+  );
+  const [activeIndex, setPaused] = useAutoCycleIndex(data.length);
+
+  return (
+    <Card title="심각도 분포" subtitle={status === "ready" ? `선택 구간 · 총 ${total}건` : "불러오는 중..."}>
+      {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
+      {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
+      {data.length > 0 && (
+        <div className="flex items-center gap-4">
+          <ResponsiveContainer width={110} height={110}>
+            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+              <Pie
+                data={data}
+                dataKey="count"
+                nameKey="label"
+                innerRadius={32}
+                outerRadius={52}
+                stroke="none"
+                isAnimationActive
+                animationDuration={700}
+                animationEasing="ease-out"
+                activeIndex={activeIndex}
+                activeShape={renderGlowActiveShape}
+              >
+                {data.map((d) => (
+                  <Cell key={d.key} fill={d.color} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={tooltipStyle(C)} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex-1 space-y-1.5 text-xs">
+            {data.map((d, i) => (
+              <div
+                key={d.key}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
+                  i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
+                }`}
+              >
+                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
+                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+                  {d.label}
+                </span>
+                <span className="text-dash-fg">{d.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// K8s 네임스페이스별 분포 도넛 — GET /stats/k8s-targets(namespace/리소스별 집계)를
+// 네임스페이스 단위로 합쳐서 보여준다. 지금은 관찰 대상(Juice Shop)이 하나뿐이라
+// 조각이 하나일 수 있지만, 나중에 인스턴스가 늘어나면(네임스페이스 여러 개)
+// 여기서 바로 비교가 된다 — Infrastructure 탭의 K8s 타깃 랭킹과 같은 소스.
+function K8sNamespaceDonutCompact() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const { targets, status, error } = useK8sTargets({ limit: 20 });
+  const palette = useMemo(() => [C.mint, C.pink, C.was, C.high, C.medium, C.low], [C]);
+  const data = useMemo(() => {
+    const byNamespace = {};
+    targets.forEach((t) => {
+      byNamespace[t.namespace] = (byNamespace[t.namespace] || 0) + t.count;
+    });
+    return Object.entries(byNamespace)
+      .sort((a, b) => b[1] - a[1])
+      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: palette[i % palette.length] }));
+  }, [targets, palette]);
+  const total = data.reduce((s, d) => s + d.count, 0);
+  const [activeIndex, setPaused] = useAutoCycleIndex(data.length);
+
+  return (
+    <Card title="K8s 네임스페이스별 분포" subtitle={status === "ready" ? `전체 기간 · 총 ${total}건` : "불러오는 중..."}>
+      {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
+      {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">데이터가 없습니다.</p>}
+      {data.length > 0 && (
+        <div className="flex items-center gap-4">
+          <ResponsiveContainer width={110} height={110}>
+            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+              <Pie
+                data={data}
+                dataKey="count"
+                nameKey="label"
+                innerRadius={32}
+                outerRadius={52}
+                stroke="none"
+                isAnimationActive
+                animationDuration={700}
+                animationEasing="ease-out"
+                activeIndex={activeIndex}
+                activeShape={renderGlowActiveShape}
+              >
+                {data.map((d) => (
+                  <Cell key={d.key} fill={d.color} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={tooltipStyle(C)} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex-1 space-y-1.5 text-xs">
+            {data.map((d, i) => (
+              <div
+                key={d.key}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
+                  i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
+                }`}
+              >
+                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
+                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+                  {d.label}
+                </span>
+                <span className="text-dash-fg">{d.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // 공격 발원지 요약 — Infrastructure 탭엔 자세히 훑어보는 평면 WorldMap이 이미
 // 있어서, Overview는 같은 데이터(GET /stats/geo)를 회전하는 3D 지구본으로
 // 보여주는 쪽을 택함 — 랜딩 화면의 "화려한" 대표 비주얼 역할. 자세히 보려면
@@ -988,7 +1133,11 @@ export function DashboardContent() {
 
       <div>
         <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">보안 탐지 요약</p>
-        <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />
+          <SeverityDonutCompact hours={hours} />
+          <K8sNamespaceDonutCompact />
+        </div>
       </div>
 
       <LatencyStatsPanel events={wasEventsForLatency} />
