@@ -5,18 +5,32 @@
 사이에 발화된 인시던트는 pub/sub 특성상 알림이 영구 유실되는 문제가 있었다.
 
 2026-07-13부로 push를 걷어내고 incidents.notified_at(010 마이그레이션) 컬럼을 보고
-"아직 알림 안 보낸 행"만 주기 폴링(settings.alert_poll_interval_seconds)해서 보내는
-방식으로 바꿨다 - 재시작해도 notified_at IS NULL인 행이 다음 폴링에 그대로 잡히므로
-유실이 없다. 대신 최대 폴링 주기만큼 알림이 지연된다. 프론트엔드 실시간 팝업도 같은
-이유로 WebSocket(/ws/incidents)에서 GET /incidents?since= 폴링으로 대체됐다
-(app/incidents_api.py 참고) - 이제 이 파일이 여는 WebSocket 엔드포인트는 없다."""
+"아직 알림 안 보낸 행"만 주기 폴링해서 보내는 방식으로 바꿨다 - 재시작해도
+notified_at IS NULL인 행이 다음 폴링에 그대로 잡히므로 유실이 없다. 대신 최대 폴링
+주기만큼 알림이 지연된다. 프론트엔드 실시간 팝업도 같은 이유로 WebSocket
+(/ws/incidents)에서 GET /incidents?since= 폴링으로 대체됐다(app/incidents_api.py
+참고) - 이제 이 파일이 여는 WebSocket 엔드포인트는 없다.
+
+폴링 주기는 더 이상 settings.alert_poll_interval_seconds(env var, 바꾸려면 재시작
+필요) 고정값이 아니라 poll_intervals 테이블(013-poll-intervals.sql, GET/PATCH
+/poll-intervals API)에서 매 반복마다 다시 읽는다(2026-07-15) - admin이 API로
+바꾸면 재시작 없이 다음 반복부터 바로 반영된다."""
 import asyncio
 
-from app.config import settings
 from app.db import pool
 from app.notifications import notify_incident
 
 _POLL_LIMIT = 100
+_DEFAULT_INTERVAL_SECONDS = 5  # poll_intervals 행이 없는 극단적 상황(마이그레이션
+# 누락 등)에 대비한 fail-open 기본값 - 이전 하드코딩 기본값과 동일하게 맞췄다.
+
+
+async def _current_interval_seconds() -> float:
+    async with pool().acquire() as conn:
+        value = await conn.fetchval(
+            "SELECT seconds FROM poll_intervals WHERE key = 'alert_poll_interval_seconds'"
+        )
+    return value if value is not None else _DEFAULT_INTERVAL_SECONDS
 
 
 async def _dispatch_pending() -> None:
@@ -49,4 +63,5 @@ async def poll_loop() -> None:
             raise
         except Exception as e:
             print(f"[platform-api] 인시던트 알림 폴링 실패, 다음 주기에 재시도: {e}")
-        await asyncio.sleep(settings.alert_poll_interval_seconds)
+        interval = await _current_interval_seconds()
+        await asyncio.sleep(interval)
