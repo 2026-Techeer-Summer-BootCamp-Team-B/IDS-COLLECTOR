@@ -26,8 +26,11 @@ class Settings(BaseSettings):
     clickhouse_user: str = "admin"
     clickhouse_password: str = "mypassword"
 
-    # AI 트렌드 리포트 (P5-4) - 비어있으면 "미설정" 응답만 반환.
-    anthropic_api_key: str = ""
+    # AI 트렌드 리포트 (P5-4) - 비어있으면 "미설정" 응답만 반환. Gemini API 무료 티어 사용
+    # (Google AI Studio에서 키 발급). 다른 모델로 바꾸고 싶으면 GEMINI_MODEL 환경변수만
+    # 바꾸면 됨.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.1-flash-lite"
 
     # 인증 세션 (P5-2) - app/auth.py가 Redis에 session:{token} 키로 저장, TTL 지나면
     # Redis가 알아서 지워줘서 별도 만료 처리 로직이 필요 없다.

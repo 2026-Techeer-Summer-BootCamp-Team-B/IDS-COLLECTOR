@@ -19,7 +19,7 @@
   직결 포트(로컬 디버깅용)는 Traefik을 안 거치므로 이 인증이 전혀 적용되지 않는다
 - 알림 채널 (P5-3): app/notifications.py - app/incident_alerts.py가 notified_at IS NULL인
   인시던트를 폴링해서 발송(트리거)
-- AI 트렌드 리포트 (P5-4): app/ai_report.py - Anthropic API 미설정이면 통계만 반환
+- AI 트렌드 리포트 (P5-4): app/ai_report.py - Gemini API 미설정이면 통계만 반환
 - Logs API: app/logs_api.py - attack-logs-* OpenSearch 인덱스 조회
 - Stats API: app/stats_api.py(OpenSearch module/severity terms agg) +
   app/analytics_api.py(ClickHouse 시계열/GeoIP/K8s타겟/Top IP 집계) +

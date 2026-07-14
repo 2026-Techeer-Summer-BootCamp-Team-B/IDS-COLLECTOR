@@ -147,7 +147,7 @@ Target 서버
 | `GET /stats/volume?hours=24&buckets=25&module=` | Log Volume 차트용 - `@timestamp` date_histogram, 버킷별 `{ts, total, errors}` (errors = severity>=3). `module`은 선택 - 주면 WAS/Falco/K8s Audit 상세 뷰처럼 해당 event.module로만 필터링 |
 | `GET /stats/levels?hours=24&module=` | Log Levels 차트용 - `event.severity`(1~4) terms agg -> `{total, levels:[{severity,count}]}`. `module`은 volume과 동일하게 선택적 필터 |
 | `GET /logs?module=&min_severity=&q=&start=&end=&limit=` | 정규화 이벤트 원본 조회 (Recent Logs 테이블/검색바) - `q`는 OpenSearch `query_string` 그대로 전달 |
-| `GET /reports/trend?days=7` | AI 트렌드 리포트. `ANTHROPIC_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
+| `GET /reports/trend?days=7` | AI 트렌드 리포트 (Gemini API). `GEMINI_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
 
 인증/통계 엔드포인트는 현재 어느 것도 서버 쪽에서 Authorization을 강제하지 않는다
 (auth.py의 login/session/logout만 예외 — 토큰 발급/검증 자체가 목적이라 당연히
@@ -366,7 +366,6 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   http.response.body.bytes는 이미 채워지고 있었을 것
 - `users`/`targets`/`allow_list`: 테이블만 있고 이걸 다루는 API/화면이 없음
 - 인증(P5-2): Target에서 실제 이관될 역할(RBAC) 모델 미반영
-- AI 트렌드 리포트: Anthropic API 호출 자체가 TODO
 - 프론트엔드 팀에게 인계해야 할 집계 API 갭: 컨슈머 lag, DLQ 깊이, 클록 차
   (event.ingested - @timestamp), 4소스 계층별 통계, ATT&CK 커버리지, ground-truth
   라벨 매칭(precision/recall) - 지금은 `GET /reports/trend`(시나리오별 집계)만 있음
