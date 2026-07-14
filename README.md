@@ -141,11 +141,19 @@ Target 서버
 | `POST /auth/login` | `{username, password}` -> `{token}`. 스펙 미설계 스텁, 단일 관리자 계정 |
 | `GET /auth/session` | `Authorization: Bearer <token>` 검증 -> `{valid, username?}`. **role 필드 없음** (RBAC 미반영) |
 | `POST /auth/logout` | `Authorization: Bearer <token>` 필요. 토큰 폐기 -> `{status:"ok"}` |
-| `GET /stats?start=&end=` | ISO8601 구간 module/severity별 집계 |
-| `GET /stats/top-ips?start=&end=&limit=` | 공격 발원지 IP Top-N (`source.ip` terms agg) -> `{items:[{source_ip,count}]}` |
+| `GET /stats?start=&end=` | ISO8601 구간 module(4계층: was/waf/falco/k8s_audit)/severity별 집계 -> `{total, by_module:[{module,count}], by_severity:[{severity,count}]}` |
+| `GET /stats/top-ips?start=&end=&limit=` | 공격 발원지 IP Top-N (ClickHouse `security_events_analytics` 집계, 2026-07-14부터 - 이전엔 OpenSearch terms agg였는데 같은 경로로 중복 정의돼 있던 걸 정리) -> `{items:[{source_ip,count}]}` |
 | `GET /stats/kpi?hours=24` | Overview KPI 카드용 - 현재/직전 동일 길이 구간의 total/errors(severity>=3)/warnings(severity==2)/sources(고유 event.module 수) + `delta_pct`, `sources_delta` |
 | `GET /stats/volume?hours=24&buckets=25&module=` | Log Volume 차트용 - `@timestamp` date_histogram, 버킷별 `{ts, total, errors}` (errors = severity>=3). `module`은 선택 - 주면 WAS/Falco/K8s Audit 상세 뷰처럼 해당 event.module로만 필터링 |
 | `GET /stats/levels?hours=24&module=` | Log Levels 차트용 - `event.severity`(1~4) terms agg -> `{total, levels:[{severity,count}]}`. `module`은 volume과 동일하게 선택적 필터 |
+| `GET /stats/timeseries?range=24h` | ClickHouse 기반 시계열(range 프리셋: 15m/1h/6h/24h/7d/30d) - 버킷별 `{bucket, total, by_severity:{1,2,3,4}}`, 빈 구간도 0으로 채워서 고정 간격으로 반환 |
+| `GET /stats/geo?start=&end=&limit=` | 국가별 탐지 건수(GeoIP, 현재 MaxMind 미연동이라 사설 IP 외엔 전부 `KR` 더미) -> `[{country_iso_code,count}]` |
+| `GET /stats/k8s-targets?start=&end=&limit=` | namespace/리소스별 탐지 건수(Infrastructure 표용) -> `[{namespace,resource_name,count}]` |
+| `GET /stats/consumer-lag` | Kafka 컨슈머 그룹별(normalizer-workers/correlation-engine/platform-api-event-stream) lag - 파이프라인 자체 헬스 |
+| `GET /stats/dlq-depth` | `events.dlq` 토픽 절대 적재량(컨슈머가 없어 lag 개념이 없음 - 깊이만) |
+| `GET /stats/clock-skew` | `event.ingested - @timestamp` 표본(OpenSearch attack-logs-* 기준) - 수집 지연 측정용 |
+| `GET /attck/coverage` | MITRE ATT&CK Containers 매트릭스 커버리지 - `ids_shared.mitre_mapping.CONTAINERS_MATRIX`(공식 카탈로그 전체) 기준으로 전술→기법 트리를 만들고 실제 발화한 인시던트로 기법별 hit count를 채움. 카탈로그에 있지만 hit=0인 기법도 그대로 포함 |
+| `GET /attck/coverage/{technique_id}/incidents` | 그 기법과 연결된 시나리오로 실제 발화한 인시던트 목록 - 커버리지 화면에서 기법 클릭 시 드릴다운 |
 | `GET /logs?module=&min_severity=&q=&start=&end=&limit=` | 정규화 이벤트 원본 조회 (Recent Logs 테이블/검색바) - `q`는 OpenSearch `query_string` 그대로 전달 |
 | `GET /reports/trend?days=7` | AI 트렌드 리포트 (Gemini API). `GEMINI_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
 
@@ -395,9 +403,21 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   하나의 프로세스가 여러 업스트림을 다루는 방식은 아님) - 실제로 두 번째 target을
   띄워보는 것 자체는 이 세션 환경 밖의 일이라 코드/설정만 준비해뒀다.
 - 인증(P5-2): Target에서 실제 이관될 역할(RBAC) 모델 미반영
-- 프론트엔드 팀에게 인계해야 할 집계 API 갭: 컨슈머 lag, DLQ 깊이, 클록 차
-  (event.ingested - @timestamp), 4소스 계층별 통계, ATT&CK 커버리지, ground-truth
-  라벨 매칭(precision/recall) - 지금은 `GET /reports/trend`(시나리오별 집계)만 있음
+- 집계 API 갭 (2026-07-14 재확인 - 이 문단이 오래돼서 실제 상태와 어긋나 있었음):
+  컨슈머 lag/DLQ 깊이/클록 차(`GET /stats/consumer-lag`, `/stats/dlq-depth`,
+  `/stats/clock-skew` - `pipeline_health_api.py`),
+  4소스 계층별 통계(`GET /stats`, `stats_api.py`), ATT&CK 커버리지(`GET /attck/coverage`,
+  `attck_api.py`) 셋 다 이미 구현돼 있다 - `GET /reports/trend`만 있다는 서술은 이
+  셋이 만들어지기 전에 쓰인 채 갱신이 안 된 것. **아직 없는 건 ground-truth 라벨
+  매칭(precision/recall) 하나뿐**이고, 이건 빠뜨린 게 아니라 "정답이 뭔가"부터
+  막혀서 보류된 것 - `incidents.status`는 open/investigating/closed뿐이라
+  true/false positive를 표시할 필드 자체가 스키마에 없다(분석가 판정 라벨을 새로
+  추가할지, dummy_generator.py가 스스로 낸 공격만 검증하는 파이프라인 테스트용
+  ground truth로 할지 결정이 필요 - 논의 후 착수 예정, 스키마 변경 없이 지레짐작으로
+  만들지 않기로 함). 별개로 `GET /stats/top-ips`가 한때 `stats_api.py`(OpenSearch)와
+  `analytics_api.py`(ClickHouse) 양쪽에 같은 경로로 중복 정의돼 있어서 후자가
+  `main.py`의 include_router 순서 때문에 영원히 안 잡히는 죽은 코드였던 것도
+  같이 발견/수정함 - IP 집계는 ClickHouse 쪽을 정본으로 남겼다(응답 계약은 불변).
 - `mitre_mapping.py`: CONTAINERS_MATRIX(공식 Containers 매트릭스 카탈로그, MITRE
   공식 페이지 대조 확인 완료)는 채워져 있으나, app/scenarios/*.yaml이 실제로 쓰는
   technique_id는 아직 일부(T1609/T1552/T1190/T1136/T1098/T1485/T1133/T1613/T1685/

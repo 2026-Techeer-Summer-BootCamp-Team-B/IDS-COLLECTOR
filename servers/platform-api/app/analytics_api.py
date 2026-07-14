@@ -3,7 +3,15 @@
 같은 "/stats" prefix를 나눠 쓰는 별도 라우터다. OpenSearch는 검색/역인덱스용,
 ClickHouse(servers/datastore/clickhouse/init/001-kafka-engine.sql이 events.normalized를
 직접 구독해서 채우는 security_events_analytics 테이블)는 대량 컬럼형 집계용으로
-역할이 나뉜다(README 참고) - 시계열 버킷/Top-N류는 전부 여기서 처리한다."""
+역할이 나뉜다(README 참고) - 시계열 버킷/Top-N류는 전부 여기서 처리한다.
+
+주의(2026-07-14 실측 발견 및 정리): source IP Top-N은 한때 이 파일과 app/stats_api.py
+양쪽에 같은 경로(GET /stats/top-ips)로 중복 정의돼 있었다 - main.py가
+stats_router를 analytics_router보다 먼저 include_router()해서 stats_api.py(OpenSearch
+terms agg) 쪽만 실제로 라우팅되고 이 파일의 ClickHouse 버전은 영원히 안 잡히는 죽은
+코드였다. IP 집계는 이 모듈의 존재 이유 그대로(고카디널리티 컬럼 대상 고속 집계)
+ClickHouse가 맞는 저장소라 OpenSearch 쪽을 지우고 이 버전을 정본으로 남겼다 - 응답
+계약(`{items:[{source_ip,count}]}`)은 README 문서화된 그대로 유지."""
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -145,11 +153,14 @@ async def get_k8s_targets(
 @router.get("/top-ips")
 async def get_top_ips(
     start: Optional[str] = None, end: Optional[str] = None, limit: int = 10
-) -> List[Dict[str, Any]]:
+) -> Dict[str, List[Dict[str, Any]]]:
     """출발지 IP별 탐지 건수 (README의 "최근 1시간 최다 공격 IP Top 10" 예시가 이 API) -
     IP 없음 센티널(all-zero IPv6)은 제외. clickhouse-connect가 IPv4-mapped 주소는
     이미 ipaddress.IPv4Address로, 순수 IPv6은 IPv6Address로 자동 변환해서 돌려주므로
-    str()로 직렬화하면 된다(실측 확인 - .ipv4_mapped 따로 안 봐도 됨)."""
+    str()로 직렬화하면 된다(실측 확인 - .ipv4_mapped 따로 안 봐도 됨). 응답을
+    `{items:[...]}`로 감싸는 건 이 프로젝트 스타일이 아니라, README가 이미 문서화한
+    (그리고 한때 이 경로를 실제로 라우팅하던) stats_api.py 버전의 계약과 맞추기 위함 -
+    프론트가 그 계약을 보고 만들어졌을 수 있어 응답 모양은 바꾸지 않는다."""
     where, params = _time_filter(start, end)
     empty_clause = "source_ip != toIPv6OrDefault('')"
     where = f"{where} AND {empty_clause}" if where else f"WHERE {empty_clause}"
@@ -166,4 +177,4 @@ async def get_top_ips(
         """,
         parameters=params,
     )
-    return [{"source_ip": str(ip), "count": cnt} for ip, cnt in result.result_rows]
+    return {"items": [{"source_ip": str(ip), "count": cnt} for ip, cnt in result.result_rows]}

@@ -87,32 +87,12 @@ async def get_stats(start: Optional[str] = None, end: Optional[str] = None) -> D
     }
 
 
-@router.get("/top-ips")
-async def get_top_ips(start: Optional[str] = None, end: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
-    """공격 발원지 IP Top-N — source.ip(attack-logs-* 템플릿에서 type: ip) terms
-    aggregation. 프론트 대시보드 Overview의 "Top Sources" 패널이 소비 (원래는
-    api-gateway 같은 서비스 이름 기준 mock 집계였는데, 실제 데이터 연동하면서
-    "어떤 IP가 제일 많이 찍히는지" 기준으로 의미가 바뀜)."""
-    query: Dict[str, Any] = {"match_all": {}}
-    if start or end:
-        time_range: Dict[str, str] = {}
-        if start:
-            time_range["gte"] = start
-        if end:
-            time_range["lte"] = end
-        query = {"bool": {"filter": [{"range": {"@timestamp": time_range}}]}}
-
-    result = await opensearch_client.search(
-        index=settings.attack_log_index_pattern,
-        body={
-            "size": 0,
-            "query": query,
-            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": min(limit, 50)}}},
-        },
-    )
-
-    buckets = result["aggregations"]["by_ip"]["buckets"]
-    return {"items": [{"source_ip": b["key"], "count": b["doc_count"]} for b in buckets]}
+# GET /top-ips는 여기 없다 - app/analytics_api.py(ClickHouse) 참고. 한때 이 파일에도
+# OpenSearch terms agg 기반 버전이 같은 경로로 있었는데(2026-07-14 실측 발견),
+# main.py가 stats_router를 analytics_router보다 먼저 등록해서 이 파일 버전만 실제로
+# 라우팅되고 analytics_api.py의 ClickHouse 버전은 죽은 코드였다 - IP 집계는
+# ClickHouse가 맞는 저장소(고카디널리티 컬럼 대상 고속 집계)라 그쪽을 정본으로 남기고
+# 이 버전은 지웠다(응답 계약 `{items:[{source_ip,count}]}`는 그대로 유지됨).
 
 
 async def _window_kpi(start: datetime, end: datetime) -> Dict[str, int]:
