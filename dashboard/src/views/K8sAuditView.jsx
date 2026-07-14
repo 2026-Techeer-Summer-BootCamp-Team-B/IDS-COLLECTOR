@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { RANGE_PRESETS, LIVE_POLL_MS } from "../data/timeSeries";
+import { RANGE_PRESETS } from "../data/timeSeries";
 import { useLogs } from "../hooks/useLogs";
 import { useDetectionSources } from "../hooks/useDetectionSources";
+import { usePollInterval } from "../context/PollIntervalContext";
 import TimeRangePicker from "../components/TimeRangePicker";
 import RankedList from "../components/RankedList";
 import { Card, KpiCard, LogVolumeChart, ErrorRateGauge } from "./LogDashboard";
@@ -104,17 +105,18 @@ function RecentAuditEvents({ events, status, error }) {
 export default function K8sAuditView() {
   const [rangeKey, setRangeKey] = useState("24h");
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
+  const { pollMs } = usePollInterval();
 
   const { logs, status, error } = useLogs({
     lookbackMs: preset.lookbackMs,
     module: "k8s_audit",
     limit: 300,
-    pollMs: LIVE_POLL_MS,
+    pollMs,
   });
 
   // Total 카드는 logs.length(limit=300 캡) 대신 GET /stats의 by_module count(정확한
   // 총량)를 쓴다 — WASView.jsx와 동일한 이유.
-  const { byModule } = useDetectionSources({ lookbackMs: preset.lookbackMs, pollMs: LIVE_POLL_MS });
+  const { byModule } = useDetectionSources({ lookbackMs: preset.lookbackMs, pollMs });
   const totalAuditEvents = byModule.find((m) => m.module === "k8s_audit")?.count ?? 0;
 
   const deniedCount = useMemo(

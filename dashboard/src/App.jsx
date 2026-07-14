@@ -16,6 +16,8 @@ import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { PollIntervalProvider } from "./context/PollIntervalContext";
+import { OverviewLayoutProvider } from "./context/OverviewLayoutContext";
 import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy";
 
 /**
@@ -347,7 +349,11 @@ function Gate() {
 export default function App() {
   return (
     <AuthProvider>
-      <Gate />
+      <PollIntervalProvider>
+        <OverviewLayoutProvider>
+          <Gate />
+        </OverviewLayoutProvider>
+      </PollIntervalProvider>
     </AuthProvider>
   );
 }
