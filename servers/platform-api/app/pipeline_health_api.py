@@ -23,10 +23,12 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 # group_id -> 그 그룹이 구독하는 토픽. servers/docker-compose.yml의 각 서비스
 # KAFKA_CONSUMER_GROUP/KAFKA_SOURCE_TOPICS/KAFKA_NORMALIZED_TOPIC 환경변수를 그대로
 # 옮겨 적은 것 - 저쪽이 바뀌면 여기도 같이 바꿔야 한다(자동 동기화 아님).
+# "platform-api-event-stream" 그룹(구 app/event_stream.py의 /ws/events 직접 tail
+# 컨슈머)은 2026-07-14 계약 v1.1 §7에 따라 제거됨 - 더 이상 존재하지 않는 컨슈머
+# 그룹의 lag을 모니터링하면 커밋이 영원히 안 되는 허수 lag만 나오므로 목록에서 뺐다.
 _MONITORED_GROUPS: Dict[str, List[str]] = {
     "normalizer-workers": ["events.was", "events.waf", "events.falco", "events.audit"],
     "correlation-engine": ["events.normalized"],
-    "platform-api-event-stream": ["events.normalized"],
 }
 
 # normalizer가 파싱/정규화 실패 시 버리는 대신 보내는 토픽(KAFKA_DLQ_TOPIC) - 이걸
@@ -71,7 +73,14 @@ async def _beginning_offsets(topics: List[str]) -> Dict[TopicPartition, int]:
 @router.get("/consumer-lag")
 async def get_consumer_lag() -> List[Dict[str, Any]]:
     """그룹별 (최신 오프셋 - 커밋된 오프셋) 합산 - 값이 클수록 그 컨슈머가 실시간
-    유입 속도를 못 따라가고 있다는 뜻. 그룹 하나가 조회 실패해도 나머지는 반환한다."""
+    유입 속도를 못 따라가고 있다는 뜻. 그룹 하나가 조회 실패해도 나머지는 반환한다.
+
+    [실측 확인, 2026-07-14] 컨슈머 그룹이 막 시작해서 아직 한 번도 커밋한 적이
+    없는 파티션은 committed_offset을 0으로 폴백하면 안 된다 - 그러면 "실제로는
+    막 시작해서 곧 따라잡을 것"인 상태가 "토픽 전체 분량만큼 뒤처졌다"는 가짜
+    lag(예: 재시작 직후 실측 54565)으로 보인다. 이런 파티션은 합산에서 빼고
+    uncommitted_partitions로 별도 표시한다 - 프론트는 이 목록이 비어있지 않으면
+    total_lag 숫자를 그대로 경보에 쓰지 말고 "막 시작함"으로 취급할 것."""
     admin = AIOKafkaAdminClient(bootstrap_servers=settings.kafka_brokers)
     await admin.start()
     results: List[Dict[str, Any]] = []
@@ -83,18 +92,35 @@ async def get_consumer_lag() -> List[Dict[str, Any]]:
 
                 by_topic: Dict[str, int] = {}
                 total_lag = 0
+                uncommitted_partitions: List[str] = []
                 for tp, end_offset in end_offsets.items():
                     offset_meta = committed.get(tp)
-                    committed_offset = offset_meta.offset if offset_meta else 0
-                    lag = max(end_offset - committed_offset, 0)
+                    if offset_meta is None:
+                        uncommitted_partitions.append(f"{tp.topic}-{tp.partition}")
+                        continue
+                    lag = max(end_offset - offset_meta.offset, 0)
                     by_topic[tp.topic] = by_topic.get(tp.topic, 0) + lag
                     total_lag += lag
 
                 results.append(
-                    {"group": group_id, "total_lag": total_lag, "by_topic": by_topic, "error": None}
+                    {
+                        "group": group_id,
+                        "total_lag": total_lag,
+                        "by_topic": by_topic,
+                        "uncommitted_partitions": uncommitted_partitions,
+                        "error": None,
+                    }
                 )
             except Exception as e:
-                results.append({"group": group_id, "total_lag": None, "by_topic": {}, "error": str(e)})
+                results.append(
+                    {
+                        "group": group_id,
+                        "total_lag": None,
+                        "by_topic": {},
+                        "uncommitted_partitions": [],
+                        "error": str(e),
+                    }
+                )
     finally:
         await admin.close()
     return results

@@ -1,4 +1,4 @@
-# WAF/외부 노출 경로 시나리오. 엔진 동작과 설계 근거 출처는 ../README.md 참고.
+# WAF/WAS/외부 노출 경로 시나리오. 엔진 동작과 설계 근거 출처는 ../README.md 참고.
 
 scenarios:
   # S4 (threshold, join_on=source_ip): 같은 IP에서 60초 안에 WAF 이벤트가 5건 이상
@@ -70,5 +70,60 @@ scenarios:
       audit_verb: [create, update, patch]
       orchestrator_resource_type: services
       audit_service_type: NodePort
+    severity: 3
+    mitre_technique_id: "T1133"
+
+  # S19 (threshold, join_on=source_ip): 동일 IP에서 60초 안에 로그인 실패가 5건
+  # 이상이면 발화 - T1110(Brute Force). S4(WAF 다발 차단)와 같은 threshold
+  # 패턴이지만 소스가 다르다: S4는 WAF backend가 자체 판정해서 만든 WafAlert를
+  # 보고, 이건 nginx-was-logger가 남긴 WAS 원본 access log를 직접 본다 - WAF
+  # 프록시를 거치지 않고 Juice Shop에 바로 온 요청도 nginx는 무조건 잡으므로
+  # (Target 저장소 juice-shop-with-nginx-sidecar.yaml 참고) WAF 계층과 독립적인
+  # 탐지 경로다. 로그인 엔드포인트/실패 판정 기준(POST + 401/403)은 Target
+  # 저장소 backend/app/middleware/gateway.py의 LOGIN_PATH_KEYWORDS/
+  # LOGIN_FAILURE_STATUS_CODES와 맞춰뒀다(그쪽은 WAF 자체 브루트포스 탐지용으로
+  # 별도로 이미 있음 - 이 시나리오와는 독립적인 신호라 중복이 아니라 이중화).
+  # Juice Shop 실제 로그인 엔드포인트가 /rest/user/login이라 하드코딩(단일 타깃
+  # 전제, 다른 프로젝트와 동일한 한계).
+  - id: S19
+    name: "동일 IP 로그인 실패 다발 (Brute Force)"
+    type: threshold
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [was]
+    window_seconds: 60
+    threshold: 5
+    cooldown_seconds: 300
+    match:
+      event_module: was
+      url_path_prefix: "/rest/user/login"
+      http_request_method: POST
+      http_response_status_code: [401, 403]
+    severity: 3
+    mitre_technique_id: "T1110"
+
+  # S24 (threshold, threshold=1, 2026-07-14): TLS 인증서 없이 Ingress가 생성되면
+  # 발화 - falcosecurity/plugins의 "Ingress Object without TLS Certificate
+  # Created" 룰(ingress_tls 매크로: requestObject.spec.tls 키 존재 여부)을 그대로
+  # 옮겼다(WebFetch로 원본 재확인). 원래 이 프로젝트의 감사정책은 ingress를 아예
+  # 안 봤다(README "스킵/보류" 항목이었음) - k3d-audit-policy.yaml에
+  # networking.k8s.io/ingresses의 create를 Request 레벨로 새로 추가해서 request
+  # body(spec.tls)를 받을 수 있게 됐다. NodePort(S17)와 같은 이유로 T1133(External
+  # Remote Services) - 평문(HTTP)으로 클러스터 밖에 노출되는 새 경로가 생기는 것도
+  # "경계 밖에서 접근 가능한 새 경로"라는 같은 위협군.
+  - id: S24
+    name: "TLS 없는 Ingress 노출"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: ingresses
+      audit_ingress_has_tls: false
     severity: 3
     mitre_technique_id: "T1133"

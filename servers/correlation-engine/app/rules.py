@@ -16,8 +16,9 @@ evaluate()가 반환하는 "발화" 결과는 PostgreSQL의 Incident/IncidentEve
 join_key=Incident의 correlation_key_type/correlation_key_value, events=IncidentEvent
 행들).
 """
+import ipaddress
 import json
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ids_shared.schemas import NormalizedEvent
 
@@ -80,11 +81,18 @@ _MATCHERS: List[Tuple[str, str, Callable[[Any, Any], bool]]] = [
     ("user_name", "user_name", _match_value),
     ("event_outcome", "event_outcome", _match_value),
     ("orchestrator_resource_name_prefix", "orchestrator_resource_name", _match_prefix),
+    # S19(로그인 브루트포스) 재료 - WAS 원본 access log의 요청 경로/메서드/응답
+    # 코드로 "로그인 실패"를 판정한다. url_path_prefix는 orchestrator_resource_name_prefix와
+    # 같은 이유로 접두사 매칭(정확한 로그인 엔드포인트 하위 경로까지 허용).
+    ("url_path_prefix", "url_path", _match_prefix),
+    ("http_request_method", "http_request_method", _match_value),
+    ("http_response_status_code", "http_response_status_code", _match_value),
     ("audit_role_rule_flags_any", "audit_role_rule_flags", _match_any_flag),
     ("audit_binding_role_name", "audit_binding_role_name", _match_any_flag),
     ("audit_pod_security_flags_any", "audit_pod_security_flags", _match_any_flag),
     ("audit_service_type", "audit_service_type", _match_any_flag),
     ("audit_configmap_has_credentials", "audit_configmap_has_credentials", _match_value),
+    ("audit_ingress_has_tls", "audit_ingress_has_tls", _match_value),
     ("min_severity", "event_severity", _match_min_severity),
 ]
 
@@ -106,9 +114,55 @@ class ScenarioEngine:
         # P7-3 헬스 뷰용 결측 카운터. 지금은 in-memory라 재시작하면 0으로 리셋된다 -
         # 영속시키려면 Redis INCR로 바꿀 것.
         self.missing_join_count = 0
+        # allow_list 캐시(app/main.py의 주기 리프레시가 set_allow_list()로 갱신) -
+        # (network, target_name) 튜플 목록. target_name이 None이면 전역(모든
+        # 타깃에 적용) 항목. ip_or_cidr 문자열은 미리 ipaddress 객체로 파싱해둬서
+        # 이벤트마다 문자열 파싱을 반복하지 않는다.
+        self._allow_list: List[
+            Tuple[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], Optional[str]]
+        ] = []
+
+    def set_allow_list(self, entries: List[Dict[str, Optional[str]]]) -> None:
+        """allow_list 전체(전역 + target_name으로 스코프된 항목)를 반영한다 -
+        entries는 incidents.fetch_active_allow_list()가 만든
+        [{ip_or_cidr, target_name}] 형태(target 테이블과 이미 JOIN돼서 이름으로
+        나옴). 파싱 실패한 항목(잘못된 CIDR 등)은 조용히 건너뛴다 - 입력 검증은
+        platform-api의 allow_list_api.py 책임."""
+        parsed = []
+        for entry in entries:
+            try:
+                network = ipaddress.ip_network(entry["ip_or_cidr"], strict=False)
+            except ValueError:
+                continue
+            parsed.append((network, entry.get("target_name")))
+        self._allow_list = parsed
+
+    def _is_allow_listed(self, source_ip: Optional[str], target_name: Optional[str]) -> bool:
+        if not source_ip or not self._allow_list:
+            return False
+        try:
+            ip = ipaddress.ip_address(source_ip)
+        except ValueError:
+            return False
+        return any(
+            ip in network and (entry_target is None or entry_target == target_name)
+            for network, entry_target in self._allow_list
+        )
 
     async def evaluate(self, event: NormalizedEvent) -> List[Dict[str, Any]]:
         """이 이벤트로 새로 발화하는 인시던트 목록을 반환 (없으면 빈 리스트).
+
+        event.source_ip가 allow_list에 있으면(전역 항목, 또는 event.target_name과
+        일치하는 target_name으로 스코프된 항목) 어느 시나리오와도 상관분석
+        대상으로 삼지 않는다 - "이 발신지는 (이 타깃 기준으로) 신뢰됨"이라는
+        판단이므로 join_on이 source_ip가 아닌 시나리오(pod/user_or_sa 기준)에도
+        동일하게 적용한다(예: 신뢰된 스캐너가 우연히 다른 상관 축으로도 튀는 걸
+        막음). was/waf가 아닌 이벤트(falco/k8s_audit)는 event.target_name이
+        항상 None이라, target_name으로 스코프된 항목은 이런 이벤트에 적용되지
+        않는다(전역 항목만 적용됨) - 애초에 falco/k8s_audit은 특정 앱이 아니라
+        클러스터 단위 이벤트라 "이 타깃에서 온 트래픽" 개념 자체가 없다. 원본
+        로그 자체는 정규화/저장 단계에서 이미 끝나 있어 여기서 걸러도 raw
+        조회/포렌식에는 영향 없다 - 상관분석(인시던트 발화)만 면제된다.
 
         scenario["required_modules"]에 이 이벤트의 event_module이 없으면 애초에
         무관한 시나리오라 _matches()까지 가지 않고 건너뛴다 - 예전엔 이 필터가
@@ -123,6 +177,9 @@ class ScenarioEngine:
         SET한다(app/main.py가 엔진 기동 시 Postgres 값으로 시드도 함). 키가 없거나
         "1"이면 평가 진행 - 새로 추가된 시나리오가 기본 활성 상태인 것과 같은
         fail-open 기본값이다."""
+        if self._is_allow_listed(event.source_ip, event.target_name):
+            return []
+
         fired = []
         for scenario in self._scenarios:
             if event.event_module not in scenario["required_modules"]:

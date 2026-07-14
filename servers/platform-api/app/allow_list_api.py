@@ -1,9 +1,17 @@
 """Allow-list API (/allow-list) - 탐지 예외 IP/대역 등록. target_id를 주면 해당
 target에만 적용, 생략하면 전역 예외(001-schema.sql 참고).
 
-주의: 여기 등록한 예외를 실제로 걸러내는 코드(correlation-engine/normalizer)는 아직
-없다 - 이번 작업은 등록/관리 API까지고, "이 IP는 탐지 제외"를 파이프라인에 실제로
-반영하는 건 별도 범위다."""
+[2026-07-14] correlation-engine이 전역/target_id 스코프 항목 둘 다 실제로 집행한다
+(app/rules.py의 ScenarioEngine._is_allow_listed, app/main.py의 30초 주기 폴링) -
+등록된 IP/CIDR에서 온 이벤트는 어느 시나리오와도 상관분석 대상이 되지 않아 인시던트가
+안 뜬다(원본 로그 자체는 그대로 쌓여서 raw 조회/포렌식엔 영향 없음, 상관분석만 면제).
+target_id 스코프는 Target 저장소(Techeer-12th-b)의 WAF backend/WAS 사이드카가
+TARGET_NAME을 이벤트에 실어 보내고(WafAlert.target_name/WAS access log)
+normalizer가 NormalizedEvent.target_name으로 정규화해서 가능해졌다 - correlation-
+engine이 target_id를 targets.name으로 JOIN해서 event.target_name과 비교한다
+(같은 IP라도 등록된 target과 다른 target 소속 이벤트면 억제 안 됨, 실측 확인됨).
+falco/k8s_audit 이벤트는 앱 단위가 아니라 클러스터 단위라 target_name이 항상
+없으므로 target_id로 스코프된 항목은 이런 이벤트엔 적용되지 않는다(전역 항목만 적용)."""
 from datetime import datetime
 from typing import List, Optional
 

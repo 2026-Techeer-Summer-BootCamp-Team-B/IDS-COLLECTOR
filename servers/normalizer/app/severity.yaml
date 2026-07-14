@@ -4,8 +4,14 @@
 # 프로세스 기동 시 1회 로드).
 
 was:
-  # WAS raw access log는 판단 없음 -> 항상 1 고정. HTTP 계층의 '판단(alert)'은
-  # WAF 센서의 역할이고, raw access log는 맥락/통계/포렌식용으로만 흐른다.
+  # WAS raw access log는 기본적으로 판단 없음 -> 1 고정. HTTP 계층의 '판단(alert)'은
+  # 원래 WAF 센서의 역할이고, raw access log는 맥락/통계/포렌식용으로만 흐른다 -
+  # 다만 로그인 실패만은 예외로 둔다(S19 로그인 브루트포스 재료, Target 저장소
+  # backend/app/middleware/gateway.py의 LOGIN_FAILURE_STATUS_CODES(401/403)와
+  # 동일 기준). Juice Shop 실제 로그인 엔드포인트 경로 하드코딩(단일 타깃 전제).
+  rules:
+    - match: { path_prefix: "/rest/user/login", method: POST, status: [401, 403] }
+      severity: 2
   default: 1
 
 waf:
@@ -103,6 +109,12 @@ audit:
     # body 기반이라 그 값으로 매칭.
     - match: { verb: [create, update, patch], resource: [configmaps], configmap_has_credentials: true }
       severity: 4
+    # 3 high: TLS 없는 Ingress 생성 (S24 재료, 2026-07-14) - 클러스터 밖에서 평문으로
+    # 접근 가능한 새 경로가 생기는 것이라 NodePort Service(바로 위)와 같은 급.
+    # ingress_has_tls가 request body 기반이라 그 값으로 매칭 - None(판정 불가)은
+    # 이 규칙에 안 걸리고 아래 default로 떨어진다.
+    - match: { verb: [create], resource: [ingresses], ingress_has_tls: false }
+      severity: 3
     # 2 medium: 워크로드 변경 맥락
     - match: { verb: [create, update, patch], resource: [pods, deployments] }
       severity: 2

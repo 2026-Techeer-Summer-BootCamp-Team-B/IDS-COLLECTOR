@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
-// servers/platform-api/app/auth.py 기준 — 기본 계정은 admin/changeme
-// (servers/platform-api/app/config.py의 admin_username/admin_password 기본값,
-// 배포 시 환경변수로 바꿀 것).
+// servers/platform-api/app/auth.py 기준 — users 테이블(pgcrypto) 실사용자 로그인.
+// 초기 관리자 계정은 postgres init/005-seed-admin-user.sh가
+// ADMIN_INITIAL_PASSWORD(.env)로 시드한다 - 화면에 기본 자격증명을 노출하지 않는다.
 export default function LoginScreen() {
   const { login, error } = useAuth();
   const [username, setUsername] = useState("");
@@ -40,7 +40,6 @@ export default function LoginScreen() {
               autoFocus
               autoComplete="username"
               className="w-full bg-dash-bg text-dash-fg text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-1 focus:ring-dash-mint"
-              placeholder="admin"
             />
           </div>
           <div>
@@ -67,10 +66,6 @@ export default function LoginScreen() {
             {submitting ? "로그인 중..." : "로그인"}
           </button>
         </form>
-
-        <p className="text-dash-faint text-[11px] text-center mt-4">
-          servers/platform-api 인증 스텁 · 기본 계정 admin/changeme
-        </p>
       </div>
     </div>
   );

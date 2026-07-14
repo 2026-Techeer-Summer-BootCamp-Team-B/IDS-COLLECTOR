@@ -87,32 +87,12 @@ async def get_stats(start: Optional[str] = None, end: Optional[str] = None) -> D
     }
 
 
-@router.get("/top-ips")
-async def get_top_ips(start: Optional[str] = None, end: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
-    """공격 발원지 IP Top-N — source.ip(attack-logs-* 템플릿에서 type: ip) terms
-    aggregation. 프론트 대시보드 Overview의 "Top Sources" 패널이 소비 (원래는
-    api-gateway 같은 서비스 이름 기준 mock 집계였는데, 실제 데이터 연동하면서
-    "어떤 IP가 제일 많이 찍히는지" 기준으로 의미가 바뀜)."""
-    query: Dict[str, Any] = {"match_all": {}}
-    if start or end:
-        time_range: Dict[str, str] = {}
-        if start:
-            time_range["gte"] = start
-        if end:
-            time_range["lte"] = end
-        query = {"bool": {"filter": [{"range": {"@timestamp": time_range}}]}}
-
-    result = await opensearch_client.search(
-        index=settings.attack_log_index_pattern,
-        body={
-            "size": 0,
-            "query": query,
-            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": min(limit, 50)}}},
-        },
-    )
-
-    buckets = result["aggregations"]["by_ip"]["buckets"]
-    return {"items": [{"source_ip": b["key"], "count": b["doc_count"]} for b in buckets]}
+# GET /top-ips는 여기 없다 - app/analytics_api.py(ClickHouse) 참고. 한때 이 파일에도
+# OpenSearch terms agg 기반 버전이 같은 경로로 있었는데(2026-07-14 실측 발견),
+# main.py가 stats_router를 analytics_router보다 먼저 등록해서 이 파일 버전만 실제로
+# 라우팅되고 analytics_api.py의 ClickHouse 버전은 죽은 코드였다 - IP 집계는
+# ClickHouse가 맞는 저장소(고카디널리티 컬럼 대상 고속 집계)라 그쪽을 정본으로 남기고
+# 이 버전은 지웠다(응답 계약 `{items:[{source_ip,count}]}`는 그대로 유지됨).
 
 
 async def _window_kpi(start: datetime, end: datetime) -> Dict[str, int]:
@@ -145,9 +125,12 @@ def _pct_delta(current: int, previous: int) -> Optional[float]:
 
 
 @router.get("/kpi")
-async def get_kpi(hours: int = 24) -> Dict[str, Any]:
+async def get_kpi(hours: float = 24) -> Dict[str, Any]:
     """Overview 상단 KPI 카드 4개(Total/Errors/Warnings/Active Sources) - 현재
-    구간과 바로 직전 동일 길이 구간을 함께 계산해서 델타(%)도 같이 내려준다."""
+    구간과 바로 직전 동일 길이 구간을 함께 계산해서 델타(%)도 같이 내려준다.
+
+    hours가 int면 1시간 미만 RANGE_PRESETS(1분/5분/15분/30분)에서 422가 난다 -
+    /stats/volume과 동일한 이유로 float (2026-07-14)."""
     now = datetime.now(timezone.utc)
     current_start = now - timedelta(hours=hours)
     previous_start = current_start - timedelta(hours=hours)
@@ -168,12 +151,17 @@ async def get_kpi(hours: int = 24) -> Dict[str, Any]:
 
 
 @router.get("/volume")
-async def get_volume(hours: int = 24, buckets: int = 25, module: Optional[str] = None) -> Dict[str, Any]:
+async def get_volume(hours: float = 24, buckets: int = 25, module: Optional[str] = None) -> Dict[str, Any]:
     """Log Volume 차트 - date_histogram으로 시간대별 total/errors(severity>=3)
     카운트. 프론트가 timeSeries.js의 formatBucketLabel로 라벨을 입힌다(버킷 폭
     계산은 여기서, 라벨 포맷은 프론트에서 - RANGE_PRESETS와 동일한 표기 유지).
     module이 주어지면 WAS/Falco/K8s Audit 상세 뷰가 event.module로 필터링해서
-    같은 차트를 재사용한다."""
+    같은 차트를 재사용한다.
+
+    hours는 int가 아니라 float이어야 한다 - 프론트 RANGE_PRESETS의 1분/5분/15분/30분
+    같은 1시간 미만 구간은 lookbackMs/3600000이 정수가 아니라서(예: 1분=0.0167)
+    int로 받으면 422(Input should be a valid integer)로 거부당한다(2026-07-14,
+    "Last 1 minute" 선택 시 Log Volume이 안 뜨던 원인 - 실측 확인)."""
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
     interval_seconds = max(int(hours * 3600 / max(buckets, 1)), 60)
@@ -211,10 +199,12 @@ async def get_volume(hours: int = 24, buckets: int = 25, module: Optional[str] =
 
 
 @router.get("/levels")
-async def get_levels(hours: int = 24, module: Optional[str] = None) -> Dict[str, Any]:
+async def get_levels(hours: float = 24, module: Optional[str] = None) -> Dict[str, Any]:
     """Log Levels 차트 - event.severity(1~4) 분포. WAF가 비활성화된 뒤로는
     1~4 정수 스케일이 전부라, 예전 9단계 mock과 달리 그대로 4개 막대로 나간다.
-    module이 주어지면 해당 event.module로만 필터링한다."""
+    module이 주어지면 해당 event.module로만 필터링한다.
+
+    hours는 float (2026-07-14, /stats/kpi·/stats/volume과 동일 이유)."""
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
 

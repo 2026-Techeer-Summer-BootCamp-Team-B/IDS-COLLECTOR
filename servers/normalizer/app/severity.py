@@ -44,12 +44,33 @@ def _match_any_flag(actual_flags: Optional[List[str]], wanted: Any) -> bool:
     return any(flag in flags for flag in wanted)
 
 
+def _match_prefix(actual: Optional[str], prefix: str) -> bool:
+    return (actual or "").startswith(prefix)
+
+
 def get_severity(
     source: str, payload: Dict[str, Any], audit_flags: Optional[Dict[str, Any]] = None
 ) -> int:
     rules = _RULES.get(source, {})
 
     if source == "was":
+        # S19(로그인 브루트포스, correlation-engine/app/scenarios/network.yaml) 재료 -
+        # 로그인 실패 이벤트만 audit와 같은 rules 매칭 방식으로 severity를 올린다
+        # (전체 트래픽과 구분 안 되는 기본값 1로 묻히면 개별 이벤트 조회/필터에서
+        # 안 보임 - threshold 상관분석 자체는 severity와 무관하게 동작하지만, 그
+        # "재료"가 된 이벤트도 심각도로는 구분 가능해야 한다).
+        path = payload.get("path") or ""
+        method = payload.get("method")
+        status = payload.get("status")
+        for rule in rules.get("rules", []):
+            match = rule.get("match", {})
+            if "path_prefix" in match and not _match_prefix(path, match["path_prefix"]):
+                continue
+            if "method" in match and not _match_value(method, match["method"]):
+                continue
+            if "status" in match and not _match_value(status, match["status"]):
+                continue
+            return rule.get("severity", rules.get("default", 1))
         return rules.get("default", 1)
 
     if source == "waf":
@@ -71,6 +92,7 @@ def get_severity(
         pod_security_flags = audit_flags.get("pod_security_flags")
         service_type = audit_flags.get("service_type")
         configmap_has_credentials = bool(audit_flags.get("configmap_has_credentials"))
+        ingress_has_tls = audit_flags.get("ingress_has_tls")
 
         for rule in rules.get("rules", []):
             match = rule.get("match", {})
@@ -92,6 +114,11 @@ def get_severity(
                 "configmap_has_credentials" in match
                 and match["configmap_has_credentials"] != configmap_has_credentials
             ):
+                continue
+            # ingress_has_tls는 configmap_has_credentials와 달리 3값(True/False/None,
+            # None=요청 본문을 못 받아 판정 불가)이라 bool()로 뭉개지 않고 그대로 비교한다
+            # - None을 False로 뭉개면 판정 불가 케이스가 "TLS 없음"으로 오탐된다.
+            if "ingress_has_tls" in match and match["ingress_has_tls"] != ingress_has_tls:
                 continue
             return rule.get("severity", rules.get("default", 2))
         return rules.get("default", 2)

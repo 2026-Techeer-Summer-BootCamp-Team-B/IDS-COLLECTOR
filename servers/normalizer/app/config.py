@@ -22,7 +22,9 @@ class Settings(BaseSettings):
 
     # dedupe (P3-2). audit=auditID, was/waf/falco=원본 해시. TTL 지나면 같은 이벤트가
     # 다시 들어와도 중복으로 안 걸러지는데, 리플레이 윈도우로는 1시간이면 충분하다고 판단.
-    redis_url: str = "redis://redis:6379/0"
+    # 비밀번호는 servers/datastore/redis/.env의 REDIS_PASSWORD와 일치해야 함(servers/
+    # docker-compose.yml 상단 주석 참고).
+    redis_url: str = "redis://:CHANGE_ME_dev@redis:6379/0"
     dedupe_ttl_seconds: int = 3600
 
     # severity.yaml 경로 - app 패키지 기준 상대경로 (app/severity.py에서 resolve).

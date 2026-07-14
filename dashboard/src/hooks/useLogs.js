@@ -9,8 +9,8 @@ import { usePoll } from "./usePoll";
 // (servers/normalizer/app/schemas.py) — 소스마다 있는 필드가 달라서(WAS만
 // path/duration, Falco/Audit는 namespace/pod 위주) 테이블 한 줄에 필요한
 // message 등을 소스별로 합성한다. mapLogDoc은 lib/normalizedEvent.js로 옮겨서
-// useLiveFeed.js(WS /ws/events)와 파싱 로직을 공유한다 — 둘 다 같은 직렬화
-// 포맷(이벤트 하나를 점 표기 flat dict로)을 받기 때문.
+// useLiveFeed.js(GET /events/recent 폴링)와 파싱 로직을 공유한다 — 둘 다 같은
+// 직렬화 포맷(이벤트 하나를 점 표기 flat dict로)을 받기 때문.
 //
 // level: 기존 9단계 mock 스케일(logLevels.js) 중 정확히 이름이 겹치는 4개
 // (CRITICAL/MAJOR/MINOR/INFO)로 real severity(1~4)를 별칭 처리 — FalcoView/

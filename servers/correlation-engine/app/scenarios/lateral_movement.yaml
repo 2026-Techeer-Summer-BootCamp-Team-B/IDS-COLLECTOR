@@ -1,0 +1,40 @@
+# Lateral Movement 시나리오. 엔진 동작과 설계 근거 출처는 ../README.md 참고.
+#
+# 이 프로젝트 카탈로그(ids_shared.mitre_mapping.CONTAINERS_MATRIX)에서 Lateral
+# Movement 전술에 해당하는 기법은 T1550(Use Alternate Authentication Material)
+# 하나뿐이고, 2026-07-14 이전까지는 이 전술 커버리지가 0%였다(Notion TODO #1).
+
+scenarios:
+  # S25 (threshold, threshold=1, 2026-07-14): ServiceAccount 토큰이 TokenRequest
+  # API(create serviceaccounts/token)로 명시적으로 발급되면 발화 - falcosecurity/
+  # plugins의 k8s_audit_rules.yaml에는 이 리소스를 다루는 룰이 아예 없다(WebFetch로
+  # 원본 재확인, 2026-07-14) - S20/S21과 같은 방식으로 MITRE 공식 기법 설명을 직접
+  # 근거로 삼았다. T1550.001(Application Access Token)의 탐지 전략 설명: "Compromised
+  # service account tokens mounted inside containers and reused for external API
+  # calls or lateral movement across services" - 카탈로그는 sub-technique를 안 담는
+  # 컨벤션이라 부모 T1550으로 기록(S20/S21과 동일 컨벤션).
+  #
+  # 이 이벤트 자체는 k3d-audit-policy.yaml이 처음부터 Metadata 레벨로 수집하고
+  # 있었다(SA 탈취 시도 탐지 목적, 파일 최상단 주석 참고) - 다만 실측 확인 결과
+  # (2026-07-14) create serviceaccounts/token은 kubelet이 매 pod의 projected volume
+  # bound-token을 몇 분 주기로 자동 갱신하면서(user=system:node:*) 압도적으로 많이
+  # 발생했고, kube-controller-manager 내부 호출도 섞여 있었다 - 이 두 신원을 걸러내지
+  # 않으면 상관분석 자체가 의미 없는 노이즈로 뒤덮인다. k3d-audit-policy.yaml에 이
+  # 두 신원만 걸러내는 전용 제외 규칙을 추가했다(파일 상단 주석 참고) - 남는 요청은
+  # 사람/외부 신원이 TokenRequest API를 명시적으로 호출한 드문 이벤트가 된다.
+  # severity는 severity.yaml의 동일 이벤트(create serviceaccounts/token) 판정과
+  # 맞춰 3(자격증명 탈취 재사용 정황, 확정 악성은 아니라도 드문 이상 신호).
+  - id: S25
+    name: "ServiceAccount 토큰 명시적 발급 정황"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      event_action: "create serviceaccounts/token"
+    severity: 3
+    mitre_technique_id: "T1550"

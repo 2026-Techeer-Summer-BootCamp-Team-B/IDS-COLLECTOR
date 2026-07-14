@@ -524,9 +524,9 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onToggleActive, o
   );
 }
 
-// GET /reports/trend — 최근 N일 scenario별 인시던트 집계 + (설정돼 있으면) AI 요약.
-// 백엔드의 Anthropic 호출부가 아직 TODO라 지금은 항상 원본 통계만 오고 message가
-// 그 상태를 안내한다 — scenarios 목록과 조인해서 scenario_id를 이름으로 보여준다.
+// GET /reports/trend — 최근 N일 scenario별 인시던트 집계 + (GEMINI_API_KEY 설정 시)
+// Gemini AI 요약. message에 미설정 안내문 또는 실제 요약문이 온다 — scenarios
+// 목록과 조인해서 scenario_id를 이름으로 보여준다.
 function TrendReportPanel({ scenarios }) {
   const { report, status, error } = useTrendReport({ days: 7 });
   const scenarioNameById = useMemo(() => {

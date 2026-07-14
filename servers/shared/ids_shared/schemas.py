@@ -50,6 +50,11 @@ class NormalizedEvent(BaseModel):
     orchestrator_resource_name: Optional[str] = Field(
         default=None, alias="orchestrator.resource.name"
     )  # S1 join_on (pod)
+    # was/waf 전용 - 이 이벤트가 어느 보호 대상 앱(targets 테이블의 name) 소속인지.
+    # Falco/k8s_audit은 앱 단위가 아니라 클러스터 단위 이벤트라 이 필드를 안 채운다.
+    # allow_list의 target_id 스코프 집행이 이 값으로 이뤄진다(correlation-engine/
+    # app/rules.py 참고).
+    target_name: Optional[str] = Field(default=None, alias="target.name")
 
     # HTTP / 컨테이너 컨텍스트 (WAS/WAF)
     container_name: Optional[str] = Field(default=None, alias="container.name")
@@ -116,6 +121,13 @@ class NormalizedEvent(BaseModel):
     audit_configmap_has_credentials: Optional[bool] = Field(
         default=None, alias="kubernetes.audit.configmap.has_credentials"
     )  # data/binaryData에 aws_access_key_id/password/passphrase류 문자열이 있는지
+
+    # K8s Audit - Ingress request body 분석 (2026-07-14, k3d-audit-policy.yaml이
+    # networking.k8s.io/ingresses의 create를 Request 레벨로 승격한 뒤 가능해짐. S24 재료).
+    audit_ingress_has_tls: Optional[bool] = Field(
+        default=None, alias="kubernetes.audit.ingress.has_tls"
+    )  # spec.tls 키 존재 여부(falcosecurity/plugins의 ingress_tls 매크로와 동일 판정 -
+    # 값이 비어있는 배열이어도 "존재"로 친다)
 
     # GeoIP enrichment (P3-6)
     geo_country_iso_code: Optional[str] = Field(

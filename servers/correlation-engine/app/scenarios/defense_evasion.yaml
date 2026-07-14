@@ -1,0 +1,30 @@
+# 컨테이너 내 흔적 인멸(Defense Evasion) 시나리오. 엔진 동작과 설계 근거 출처는
+# ../README.md 참고.
+
+scenarios:
+  # S23 (threshold, threshold=1): 시스템 로그 파일(auth.log/syslog/cron 등)을
+  # O_TRUNC로 잘라내면 발화 - S1/S3/S6~S18/S22처럼 falcosecurity 근거를 옮긴
+  # 시나리오지만, S20/S21(falcosecurity에 대응 룰 자체가 없어 MITRE 공식 설명을
+  # 직접 근거로 씀)과도 다르다: 이번엔 falcosecurity/rules의 코어 falco_rules.yaml
+  # (S22의 sandbox 룰셋이 아니라 기본 번들 룰셋)에 있는 "Clear Log Activities"
+  # 룰을 그대로 쓴다(2026-07-14, WebFetch로 원본 재확인) - Target 저장소
+  # falco-values.yaml에 별도 customRules 추가가 필요 없다(기본 활성화 룰이라
+  # 이미 켜져 있음). 태그가 이례적으로 전술 단위(mitre_defense_evasion)가 아니라
+  # 기법 ID(T1070) 그대로 박혀 있는 룰이다. 조건은 access_log_files 목록
+  # (syslog/auth.log/secure/kern.log/cron/user.log/dpkg.log/last.log/yum.log/
+  # access_log/mysql.log/mysqld.log)에 있는 "파일 이름"을 O_TRUNC로 열면
+  # 매칭 - bash_history는 이 목록에 없어서 안 잡힘(README/Notion에 명시).
+  - id: S23
+    name: "시스템 로그 삭제 시도 (흔적 인멸)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Clear Log Activities"
+    severity: 3
+    mitre_technique_id: "T1070"

@@ -146,3 +146,56 @@ scenarios:
       audit_pod_security_flags_any: [privileged, host_network, host_pid, host_ipc, host_path_volume]
     severity: 4
     mitre_technique_id: "T1611"
+
+  # S20 (threshold, threshold=1): DaemonSet 생성 - falcosecurity/plugins의
+  # k8s_audit_rules.yaml에는 DaemonSet/CronJob 관련 룰이 아예 없다(2026-07-14 실측
+  # 확인, WebFetch로 원본 재확인함) - S1/S3/S6~S18처럼 그 저장소 룰을 옮긴 게
+  # 아니라, S10(정찰 burst)과 같은 방식으로 MITRE 공식 기법 설명을 직접 근거로
+  # 삼아 이 프로젝트가 설계했다. T1543.005(Container Service, MITRE 공식 페이지:
+  # "In Kubernetes environments, DaemonSets allow an adversary to persistently
+  # Deploy Containers on all nodes, including ones added later to the cluster")
+  # 인용 - 카탈로그(ids_shared.mitre_mapping)는 sub-technique를 안 담는 컨벤션이라
+  # 부모 T1543으로 기록. S15(시스템 네임스페이스 pod)와 달리 네임스페이스를
+  # 제한하지 않는다 - DaemonSet은 어느 네임스페이스에 만들든 클러스터의 모든
+  # 노드에 pod를 하나씩 심는다는 위협 자체가 네임스페이스와 무관해서(S16의
+  # Escape to Host급 파급력) 좁히면 핵심 공격 경로를 놓친다.
+  - id: S20
+    name: "DaemonSet 생성 (전체 노드 지속성 확보)"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: daemonsets
+    severity: 4
+    mitre_technique_id: "T1543"
+
+  # S21 (threshold, threshold=1): CronJob 생성 - S20과 같은 이유로 falcosecurity/
+  # plugins 근거 없이 MITRE 공식 기법 설명을 직접 인용해 설계
+  # (T1053.007 Container Orchestration Job, MITRE 공식 페이지: "In Kubernetes,
+  # a CronJob may be used to schedule a Job that runs one or more containers...
+  # An adversary therefore may utilize a CronJob to schedule deployment of a Job
+  # that executes malicious code" - 카탈로그는 부모 T1053으로 기록, S20과 동일
+  # 컨벤션). DaemonSet(즉시·전체 노드 장악)보다는 공격 표면이 좁아서(재접속 없이
+  # 코드를 반복 실행시키는 "예약된 백도어"에 가까움 - S14 ephemeral container와
+  # 비슷한 급) severity는 한 단계 낮춘다.
+  - id: S21
+    name: "CronJob 생성 (예약 실행 지속성 확보)"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: cronjobs
+    severity: 3
+    mitre_technique_id: "T1053"

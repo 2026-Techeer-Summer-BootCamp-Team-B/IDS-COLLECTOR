@@ -19,6 +19,9 @@
 events.normalized를 구독해서 담당한다 (P6-4, 자체 색인 코드 대체).
 
 FastAPI는 /health 체크 용도로만 쓰고, 진짜 작업은 백그라운드 asyncio 태스크가 함.
+/health는 이 컨슈머 태스크가 죽었으면(started된 적 없거나 done()) 503을 반환한다 -
+프로세스는 살아있는데 컨슈머만 죽어서 파이프라인이 조용히 멈추는 걸 감지하기 위함
+(servers/docker-compose.yml의 healthcheck가 이 엔드포인트를 주기 폴링).
 
 실행 방법 (컨테이너, 기본):
     servers/docker-compose.yml에 포함되어 있음 - 저장소 루트에서 `make up`
@@ -28,7 +31,9 @@ FastAPI는 /health 체크 용도로만 쓰고, 진짜 작업은 백그라운드 
 로컬에서 uvicorn 직접 실행 시:
     uvicorn app.main:app --host 0.0.0.0 --port 8200
     .env에서 kafka_brokers를 EXTERNAL 리스너(localhost:9094)로, redis_url을
-    redis://localhost:6379/0으로 바꿀 것 (kafka/docker-compose.yml 리스너 매핑 주석 참고).
+    redis://:<servers/datastore/redis/.env의 REDIS_PASSWORD>@localhost:6379/0으로
+    바꿀 것 (kafka/docker-compose.yml 리스너 매핑 주석 참고. Redis는 requirepass가
+    걸려 있어 비밀번호 없이는 연결이 거부된다).
 """
 import asyncio
 import contextlib
@@ -37,6 +42,7 @@ from typing import Any, Dict, Optional
 
 from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from app import producer
 from app.config import settings
@@ -219,6 +225,19 @@ async def on_shutdown():
             await _consumer_task
 
 
+def _dead_task_reason() -> Optional[str]:
+    """백그라운드 컨슈머 태스크가 살아있지 않은 이유(있으면) - /health가 503을
+    반환할지 판단하는 근거. None이면 정상."""
+    if _consumer_task is None:
+        return "consumer task not started"
+    if _consumer_task.done():
+        return "consumer task exited"
+    return None
+
+
 @app.get("/health")
 def health_check():
+    reason = _dead_task_reason()
+    if reason:
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": reason})
     return {"status": "ok"}
