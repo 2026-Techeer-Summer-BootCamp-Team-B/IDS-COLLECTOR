@@ -37,6 +37,13 @@ export const CHART_COLORS = {
   },
 };
 
+// 도넛/막대 차트의 카테고리 색상용 무채도 순환 팔레트 — 모듈/심각도별 "의미
+// 있는" 고정색(MODULE_META, REAL_SEVERITY_LEVELS)과는 별개로, Overview의
+// 차트 묶음(탐지 소스별/심각도/K8s 네임스페이스 도넛 + Log Levels 막대)만
+// 이 톤 다운된 팔레트를 인덱스 순서로 돌려쓴다. 뱃지 등 다른 곳의 의미색은
+// 그대로 유지 (예: severity 배지는 여전히 REAL_SEVERITY_LEVELS.color 사용).
+export const DONUT_PALETTE = ["#C05B4D", "#D68C3E", "#5B9A5E", "#4A7FB5", "#8890B5"];
+
 // logLevels.js (9 levels) and attackEvents.js (9 attack types) each define
 // their own larger per-category palettes as pastel/neon hex tuned for the
 // dark background. Full no-op (both themes identical) turned out too bright

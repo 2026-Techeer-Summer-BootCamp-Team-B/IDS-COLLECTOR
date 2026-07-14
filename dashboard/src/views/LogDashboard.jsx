@@ -26,7 +26,7 @@ import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } 
 import { getModuleMeta } from "../data/moduleMeta";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
 import { RANGE_PRESETS, formatBucketLabel, detectSpike, LIVE_POLL_MS } from "../data/timeSeries";
-import { CHART_COLORS, forTheme } from "../data/theme";
+import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
@@ -295,9 +295,9 @@ export function RealLevelDistributionChart({ hours, module }) {
   const C = CHART_COLORS[theme];
   const { levels, total, status, error } = useLogLevels({ hours, module, pollMs: LIVE_POLL_MS });
 
-  const data = REAL_SEVERITY_LEVELS.map((l) => {
+  const data = REAL_SEVERITY_LEVELS.map((l, i) => {
     const found = levels.find((x) => x.severity === l.severity);
-    return { key: l.key, level: l.label, count: found ? found.count : 0, color: forTheme(l.color, theme) };
+    return { key: l.key, level: l.label, count: found ? found.count : 0, color: DONUT_PALETTE[i % DONUT_PALETTE.length] };
   });
 
   return (
@@ -546,9 +546,9 @@ function DetectionSourceDonutCompact({ lookbackMs }) {
     () =>
       byModule
         .filter((d) => d.count > 0)
-        .map((d) => {
+        .map((d, i) => {
           const meta = getModuleMeta(d.module);
-          return { key: d.module, count: d.count, label: meta.label, color: forTheme(meta.color, theme) };
+          return { key: d.module, count: d.count, label: meta.label, color: DONUT_PALETTE[i % DONUT_PALETTE.length] };
         }),
     [byModule, theme]
   );
@@ -615,11 +615,14 @@ function SeverityDonutCompact({ hours }) {
   const { levels, total, status, error } = useLogLevels({ hours, pollMs: LIVE_POLL_MS });
   const data = useMemo(
     () =>
-      REAL_SEVERITY_LEVELS.map((l) => {
-        const found = levels.find((x) => x.severity === l.severity);
-        return { key: l.key, count: found ? found.count : 0, label: l.label, color: forTheme(l.color, theme) };
-      }).filter((d) => d.count > 0),
-    [levels, theme]
+      REAL_SEVERITY_LEVELS.map((l) => ({
+        key: l.key,
+        count: levels.find((x) => x.severity === l.severity)?.count ?? 0,
+        label: l.label,
+      }))
+        .filter((d) => d.count > 0)
+        .map((d, i) => ({ ...d, color: DONUT_PALETTE[i % DONUT_PALETTE.length] })),
+    [levels]
   );
   const [activeIndex, setPaused] = useAutoCycleIndex(data.length);
 
@@ -681,7 +684,6 @@ function K8sNamespaceDonutCompact() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { targets, status, error } = useK8sTargets({ limit: 20 });
-  const palette = useMemo(() => [C.mint, C.pink, C.was, C.high, C.medium, C.low], [C]);
   const data = useMemo(() => {
     const byNamespace = {};
     targets.forEach((t) => {
@@ -689,8 +691,8 @@ function K8sNamespaceDonutCompact() {
     });
     return Object.entries(byNamespace)
       .sort((a, b) => b[1] - a[1])
-      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: palette[i % palette.length] }));
-  }, [targets, palette]);
+      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
+  }, [targets]);
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused] = useAutoCycleIndex(data.length);
 
