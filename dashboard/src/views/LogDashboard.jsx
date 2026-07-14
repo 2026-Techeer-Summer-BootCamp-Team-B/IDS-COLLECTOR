@@ -911,16 +911,23 @@ export function DashboardContent() {
         onResultsCountChange={setSearchHits}
       />
 
-      <button
-        onClick={() => setSearchExpanded((e) => !e)}
-        className="w-full flex items-center justify-between gap-3 bg-dash-surface hover:bg-dash-surfaceAlt/60 rounded-xl px-4 py-2.5 text-xs transition-colors"
-      >
-        <span className="flex items-center gap-2 text-dash-muted">
-          <span className="text-dash-fg font-semibold">{searchHits.toLocaleString()} hits</span>
-          검색 결과 패널 {searchExpanded ? "접기" : "펼치기"}
-        </span>
-        <span className="text-dash-faint">{searchExpanded ? "▴" : "▾"}</span>
-      </button>
+      {/* 예전엔 전체 폭 바였는데, 관리자 페이지 탭 스위처처럼 우측 상단에
+          작은 버튼 형태로 - 화면을 덜 차지하면서 상태(펼침/접힘)도 pill
+          active 색으로 바로 구분되게 바꿨다. */}
+      <div className="flex items-center justify-end">
+        <button
+          onClick={() => setSearchExpanded((e) => !e)}
+          className={`inline-flex items-center gap-2 text-xs font-medium px-3.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+            searchExpanded
+              ? "bg-dash-mint/15 text-dash-mint"
+              : "bg-dash-surface text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+          }`}
+        >
+          <span className="font-semibold">{searchHits.toLocaleString()} hits</span>
+          검색 결과 {searchExpanded ? "접기" : "펼치기"}
+          <span>{searchExpanded ? "▴" : "▾"}</span>
+        </button>
+      </div>
 
       <div className="flex flex-wrap gap-4">
         <KpiCard
