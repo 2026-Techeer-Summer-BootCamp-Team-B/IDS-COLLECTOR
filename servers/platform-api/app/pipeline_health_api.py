@@ -8,7 +8,6 @@ event.ingested 컬럼이 없어서).
 주의: Kafka 관련 부분은 aiokafka==0.12.0(requirements.txt) API 기준으로 작성했고, 이
 세션 환경에는 컴파일러가 없어 aiokafka를 직접 설치해 API를 검증하지 못했다 - 실제
 브로커 대상으로 배포 후 한 번은 반드시 실측 확인할 것."""
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from aiokafka import AIOKafkaConsumer, TopicPartition
@@ -17,6 +16,7 @@ from fastapi import APIRouter
 
 from app.config import settings
 from app.opensearch_client import client as opensearch_client
+from app.timeparse import parse_iso8601_safe
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -140,15 +140,6 @@ def _percentile(sorted_data: List[float], pct: float) -> float:
     return sorted_data[idx]
 
 
-def _parse_iso(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 @router.get("/clock-skew")
 async def get_clock_skew(
     start: Optional[str] = None, end: Optional[str] = None, sample: int = 1000
@@ -180,8 +171,8 @@ async def get_clock_skew(
     deltas_ms: List[float] = []
     for hit in result["hits"]["hits"]:
         source = hit["_source"]
-        ts = _parse_iso(source.get("@timestamp"))
-        ingested = _parse_iso(source.get("event.ingested"))
+        ts = parse_iso8601_safe(source.get("@timestamp"))
+        ingested = parse_iso8601_safe(source.get("event.ingested"))
         if ts is None or ingested is None:
             continue
         deltas_ms.append((ingested - ts).total_seconds() * 1000)

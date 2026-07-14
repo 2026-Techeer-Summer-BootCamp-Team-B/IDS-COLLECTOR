@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 
 from app.clickhouse_client import client
+from app.timeparse import parse_iso8601
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -39,16 +40,16 @@ def _time_filter(start: Optional[str], end: Optional[str]) -> tuple[str, Dict[st
 
     `timestamp` 컬럼이 DateTime64가 아니라 DateTime이라 ISO8601 문자열('T'/'Z'/밀리초
     포함)을 그대로 바인딩하면 ClickHouse가 파싱을 거부한다(Code 53 TYPE_MISMATCH,
-    2026-07-14 /stats/top-ips 500 에러로 실측) - datetime 객체로 변환해서 넘기면
-    clickhouse-connect가 DateTime 컬럼에 맞게 알아서 직렬화한다."""
+    2026-07-14 /stats/top-ips 500 에러로 실측) - app.timeparse.parse_iso8601로 datetime
+    객체로 변환해서 넘기면 clickhouse-connect가 DateTime 컬럼에 맞게 알아서 직렬화한다."""
     clauses = []
     params: Dict[str, Any] = {}
     if start:
         clauses.append("timestamp >= %(start)s")
-        params["start"] = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        params["start"] = parse_iso8601(start)
     if end:
         clauses.append("timestamp <= %(end)s")
-        params["end"] = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        params["end"] = parse_iso8601(end)
     return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
 
