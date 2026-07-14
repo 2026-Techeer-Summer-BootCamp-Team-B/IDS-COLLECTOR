@@ -77,6 +77,7 @@ from app.incident_alerts import poll_loop as incident_alerts_poll_loop
 from app.incidents_api import router as incidents_router
 from app.logs_api import router as logs_router
 from app.pipeline_health_api import router as pipeline_health_router
+from app.poll_intervals_api import router as poll_intervals_router
 from app.scenarios_api import router as scenarios_router
 from app.stats_api import router as stats_router
 from app.targets_api import router as targets_router
@@ -109,6 +110,7 @@ app.include_router(targets_router)
 app.include_router(users_router)
 app.include_router(allow_list_router)
 app.include_router(events_router)
+app.include_router(poll_intervals_router)
 
 _alert_poll_task: Optional[asyncio.Task] = None
 

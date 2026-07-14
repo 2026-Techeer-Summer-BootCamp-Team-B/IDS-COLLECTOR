@@ -4,7 +4,7 @@ datastore/postgres/init/001-schema.sql의 incidents/incident_events/scenario_rul
 참고."""
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.audit import record_action
@@ -12,6 +12,7 @@ from app.auth import current_user_id
 from app.config import settings
 from app.db import pool
 from app.opensearch_client import client as opensearch_client
+from app.pagination import decode_cursor, set_next_cursor_header
 from app.timeparse import parse_iso8601
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -77,12 +78,26 @@ def _row_to_incident(row) -> IncidentOut:
 
 
 @router.get("", response_model=List[IncidentOut])
-async def list_incidents(status: Optional[str] = None, since: Optional[str] = None, limit: int = 50):
+async def list_incidents(
+    response: Response,
+    status: Optional[str] = None,
+    since: Optional[str] = None,
+    limit: int = 50,
+    cursor: Optional[str] = None,
+):
     """since(ISO8601)를 주면 그 시각 이후 생성된 인시던트만 오래된순으로 반환한다 -
     프론트가 실시간 CRITICAL 팝업을 WebSocket 대신 이 파라미터로 3~5초 주기 폴링해서
     구현한다(2026-07-13, 마지막으로 확인한 시각을 다음 호출의 since로 그대로 넘기면 됨).
-    since가 없는 기본 호출(목록 화면)은 기존대로 최신순."""
+    since가 없는 기본 호출(목록 화면)은 기존대로 최신순.
+
+    limit은 한 페이지 크기다(이전엔 이게 "전체 조회 가능한 최대치"였다 - 2026-07-15
+    페이지네이션 추가로 해소). 응답이 꽉 찼으면(=limit건 그대로 돌아옴, 더 있을 수
+    있음) X-Next-Cursor 헤더가 실려온다 - 그 값을 다음 호출의 cursor로 그대로
+    넘기면 이어서 페이지가 나온다. sort_col(정렬 기준 컬럼)+id를 튜플로 비교하는
+    키셋 방식이라(OFFSET이 아님) 페이지가 깊어져도 성능이 떨어지지 않는다."""
     limit = min(limit, 500)
+    sort_col = "created_at" if since else "updated_at"
+    ascending = bool(since)
     clauses = []
     params: List[Any] = []
     if status:
@@ -95,8 +110,19 @@ async def list_incidents(status: Optional[str] = None, since: Optional[str] = No
         # 한다(2026-07-14, since 폴링이 항상 500이던 원인 - 실측 확인).
         params.append(parse_iso8601(since))
         clauses.append(f"created_at > ${len(params)}")
+    if cursor:
+        cursor_value, cursor_id = decode_cursor(cursor)
+        params.append(parse_iso8601(cursor_value))
+        ts_param = len(params)
+        params.append(cursor_id)
+        id_param = len(params)
+        op = ">" if ascending else "<"
+        # 튜플(row constructor) 비교 - sort_col이 같은 값이 여러 행에 걸쳐 있어도
+        # id(uuid, 항상 유일)를 2차 정렬키로 같이 비교해서 건너뛰거나 중복되지 않는다.
+        clauses.append(f"({sort_col}, id) {op} (${ts_param}, ${id_param})")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    order = "created_at ASC" if since else "updated_at DESC"
+    direction = "ASC" if ascending else "DESC"
+    order = f"{sort_col} {direction}, id {direction}"
     params.append(limit)
 
     async with pool().acquire() as conn:
@@ -109,6 +135,11 @@ async def list_incidents(status: Optional[str] = None, since: Optional[str] = No
             """,
             *params,
         )
+
+    if len(rows) == limit:
+        last = rows[-1]
+        set_next_cursor_header(response, [last[sort_col].isoformat(), str(last["id"])])
+
     return [_row_to_incident(r) for r in rows]
 
 
