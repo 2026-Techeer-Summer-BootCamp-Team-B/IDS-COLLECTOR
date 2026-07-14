@@ -68,6 +68,28 @@ async def fetch_enabled_map() -> Dict[str, bool]:
     return {str(row["id"]): row["enabled"] for row in rows}
 
 
+async def fetch_active_allow_list() -> List[Dict[str, Optional[str]]]:
+    """만료되지 않은 allow_list 전체를 [{ip_or_cidr, target_name}] 형태로 반환.
+    app/main.py가 주기적으로 호출해서 ScenarioEngine.set_allow_list()에 반영한다
+    (매 이벤트마다 DB를 치면 안 되니 폴링+캐시). target_id는 allow_list 테이블의
+    FK일 뿐이고 이벤트 쪽(NormalizedEvent)은 target_id가 아니라 target_name을
+    들고 있으므로(정규화 단계에서 UUID 조회 없이 그대로 전파, normalizer/app/
+    normalizer.py 참고) targets와 JOIN해서 이름으로 변환해둔다. 전역 항목은
+    target_name이 None으로 나가고, rules.py의 _is_allow_listed()가 이걸 "모든
+    타깃에 적용"으로 해석한다."""
+    assert _pool is not None, "incidents.start()를 먼저 호출해야 함"
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT a.ip_or_cidr, t.name AS target_name
+            FROM allow_list a
+            LEFT JOIN targets t ON t.id = a.target_id
+            WHERE a.expires_at IS NULL OR a.expires_at > now()
+            """
+        )
+    return [{"ip_or_cidr": row["ip_or_cidr"], "target_name": row["target_name"]} for row in rows]
+
+
 async def upsert_incident(
     scenario_db_id: str,
     scenario_name: str,

@@ -341,8 +341,20 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   로 끝 - platform-api로의 push는 없음(2026-07-13 이전엔 Redis pub/sub(`incidents:events`)
   발행도 했으나 제거됨, 아래 platform-api 절 참고). MITRE 전술은 `mitre_mapping.py`
   (MITRE 공식 Containers 매트릭스 대조 완료)로 technique_id -> tactics 변환해서 저장
-- 18개 시나리오(S1~S18) 전부 falcosecurity/plugins의 실제 K8s audit 룰에 근거한
-  설계 - 엔진 검증용 예시가 아님(`app/scenarios/README.md` 참고)
+- 23개 시나리오(S1~S23) - S10/S19/S20/S21/S22/S23을 제외한 나머지는 falcosecurity/
+  plugins의 실제 K8s audit 룰에 근거한 설계, 엔진 검증용 예시가 아님
+  (`app/scenarios/README.md` 참고). 나머지 6개는 falcosecurity/plugins(k8s_audit
+  전용 저장소)에 대응 룰이 없어 다른 근거로 이 프로젝트가 설계함 - S19(로그인
+  브루트포스, T1110, WAS 원본 access log 기반), S20/S21(DaemonSet/CronJob 생성,
+  T1543/T1053, MITRE 공식 기법 설명 직접 근거), S22(컨테이너 내 크립토마이닝,
+  T1496, falcosecurity/**rules**(plugins가 아님) 저장소의 falco-sandbox_rules.yaml
+  룰 3개를 Target 저장소 `backend/falco-values.yaml`의 customRules로 이식),
+  S23(시스템 로그 삭제 시도, T1070, falcosecurity/rules **코어** falco_rules.yaml에
+  이미 기본 활성화돼 있던 "Clear Log Activities" 룰을 그대로 사용 - 별도 이식
+  불필요, 전부 2026-07-14). 같은 조사에서 T1036/T1550/T1499/T1498은 코어/sandbox
+  룰셋 어디에도 대응 룰이 없음을 확인(WebFetch로 원본 재확인) - 이 4개는 여전히
+  falcosecurity 근거가 없어 미구현. Notion "상관분석 시나리오" 페이지의 TODO
+  갭 분석에서 나온 항목
 
 ### `servers/platform-api`
 - 프론트엔드(별도 팀/레포)의 유일한 연동 지점 - 위 "프론트엔드 연동 API" 참고, CORS 허용
@@ -364,7 +376,24 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   값이 실려오는지는 실측 확인 필요. `request_time`/`body_bytes_sent`는 확인 결과
   이미 log_format에 있었음(README의 예전 서술이 틀렸었음) - was.request_time/
   http.response.body.bytes는 이미 채워지고 있었을 것
-- `users`/`targets`/`allow_list`: 테이블만 있고 이걸 다루는 API/화면이 없음
+- ~~`users`/`targets`/`allow_list`: 테이블만 있고 이걸 다루는 API/화면이 없음~~
+  **(2026-07-14 해결, 이어서 같은 날 target_name 전파까지 완료)**: 셋 다 CRUD API
+  완비(`users_api.py`/`targets_api.py`/`allow_list_api.py`). Target 저장소
+  (Techeer-12th-b)의 WAF backend/WAS 사이드카가 이제 `TARGET_NAME`(배포 시점
+  고정값 - `backend/app/config.py`, `juice-shop-with-nginx-sidecar.yaml`)을 각각
+  `WafAlert.target_name`/WAS access log에 실어 보내고, normalizer가
+  `NormalizedEvent.target_name`(ECS `target.name`)으로 정규화한다 - was/waf
+  이벤트는 이제 "이게 어느 target 소속인지"를 실측으로 안다(falco/k8s_audit은
+  앱 단위가 아니라 클러스터 단위 이벤트라 여전히 None). 이 덕분에 `allow_list`가
+  전역(target_id=NULL)뿐 아니라 **target_id로 스코프된 항목도 실제로 집행**된다
+  (correlation-engine이 target_id를 targets.name으로 JOIN해서
+  event.target_name과 비교, `rules.py`의 `ScenarioEngine._is_allow_listed`) -
+  같은 IP라도 등록된 target과 다른 target 소속 이벤트면 억제되지 않는 것까지
+  실측 확인(진짜/가짜 타깃 대조 테스트). 여러 target을 실제로 "동시에" 보호하려면
+  Target 저장소에 WAF backend+WAS 사이드카 세트를 target마다 복제 배포하고
+  `TARGET_NAME`/`TARGET_SERVICE_URL`만 바꾸면 된다(Traefik이 라우팅 담당,
+  하나의 프로세스가 여러 업스트림을 다루는 방식은 아님) - 실제로 두 번째 target을
+  띄워보는 것 자체는 이 세션 환경 밖의 일이라 코드/설정만 준비해뒀다.
 - 인증(P5-2): Target에서 실제 이관될 역할(RBAC) 모델 미반영
 - AI 트렌드 리포트: Anthropic API 호출 자체가 TODO
 - 프론트엔드 팀에게 인계해야 할 집계 API 갭: 컨슈머 lag, DLQ 깊이, 클록 차

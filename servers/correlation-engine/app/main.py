@@ -39,6 +39,8 @@ _consumer: Optional[AIOKafkaConsumer] = None
 _consumer_task: Optional[asyncio.Task] = None
 _engine: Optional[ScenarioEngine] = None
 _redis: Optional["redis.Redis"] = None
+_allow_list_task: Optional[asyncio.Task] = None
+_ALLOW_LIST_REFRESH_SECONDS = 30
 
 
 def _load_scenarios() -> list:
@@ -71,8 +73,25 @@ def _load_scenarios() -> list:
     return scenarios
 
 
+async def _allow_list_refresh_loop():
+    """allow_list(전역 항목)를 주기적으로 Postgres에서 다시 읽어 ScenarioEngine
+    캐시에 반영한다 - 매 이벤트마다 DB를 치면 상관분석 hot path에 지연이 그대로
+    더해지니 폴링+캐시로 뺐다(incidents.fetch_active_allow_list() 참고).
+    관리자가 allow_list에 새 항목을 추가/삭제해도 최대 이 주기만큼만 지나면
+    반영된다 - 즉시 반영이 필요해지면 나중에 Redis pub/sub 등으로 바꿀 것."""
+    global _engine
+    while True:
+        try:
+            entries = await incidents.fetch_active_allow_list()
+            if _engine is not None:
+                _engine.set_allow_list(entries)
+        except Exception as e:
+            print(f"[correlation] allow_list 갱신 실패, {_ALLOW_LIST_REFRESH_SECONDS}초 후 재시도: {e}")
+        await asyncio.sleep(_ALLOW_LIST_REFRESH_SECONDS)
+
+
 async def _consume_loop():
-    global _consumer, _engine, _redis
+    global _consumer, _engine, _redis, _allow_list_task
 
     _redis = redis.from_url(settings.redis_url, decode_responses=True)
     scenarios = _load_scenarios()
@@ -95,6 +114,7 @@ async def _consume_loop():
 
     await incidents.start()
     await incidents.sync_scenario_rules(scenarios)
+    _allow_list_task = asyncio.create_task(_allow_list_refresh_loop())
 
     # platform-api의 PATCH /scenarios/{id}/enabled 토글은 Redis 키
     # scenario:enabled:{id}로 실시간 반영된다(ScenarioEngine.evaluate() 참고) -
@@ -136,6 +156,10 @@ async def _consume_loop():
     except asyncio.CancelledError:
         raise
     finally:
+        if _allow_list_task:
+            _allow_list_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _allow_list_task
         await incidents.stop()
         await _consumer.stop()
 

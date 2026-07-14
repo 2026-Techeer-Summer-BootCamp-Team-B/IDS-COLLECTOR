@@ -99,6 +99,10 @@ def normalize_was(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "orchestrator.namespace": payload.get("orchestrator_namespace") or None,
             "orchestrator.resource.type": "pod" if payload.get("orchestrator_pod") else None,
             "orchestrator.resource.name": payload.get("orchestrator_pod") or None,
+            # nginx-was-logger의 TARGET_NAME(배포 시점 고정값, juice-shop-nginx-
+            # configmap.yaml/juice-shop-with-nginx-sidecar.yaml 참고) - 여러 타깃을
+            # 보호하게 되면 타깃마다 이 값이 다르게 설정된다.
+            "target.name": payload.get("target_name") or None,
         }
     )
 
@@ -113,7 +117,7 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
 
     wire 필드: attack_type / risk_level / matched_rule_id / matched_rule_name /
     payload_snippet / target_endpoint / http_method / user_agent / blocked / mode /
-    source_ip (+ target_pod_name / target_namespace).
+    source_ip / target_name (+ target_pod_name / target_namespace).
     센서 개편으로 필드명이 바뀌면 이 파서와 본 계약 문서를 같이 갱신할 것.
     """
     return NormalizedEvent(
@@ -146,6 +150,9 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "orchestrator.namespace": payload.get("target_namespace") or None,
             "orchestrator.resource.type": "pod" if payload.get("target_pod_name") else None,
             "orchestrator.resource.name": payload.get("target_pod_name") or None,
+            # WAF backend의 TARGET_NAME(배포 시점 고정값, config.py 참고) - WafAlert에
+            # 이미 있던(그동안 아무도 안 채우던) target_name 필드를 이제 실제로 쓴다.
+            "target.name": payload.get("target_name") or None,
         }
     )
 
@@ -321,6 +328,21 @@ _CREDENTIAL_MARKERS = (
 )
 
 
+def _audit_ingress_has_tls(payload: Dict[str, Any]) -> Any:
+    """ingress의 request body(spec)에 tls 키가 있는지 검사한다(값이 빈 배열이어도
+    "존재"로 친다 - falcosecurity/plugins의 ingress_tls 매크로
+    `jevt.value[/requestObject/spec/tls] exists`와 동일 판정). requestObject
+    자체가 없으면(예: 감사정책이 안 맞아 body가 안 온 경우) 판정 불가라 None을
+    반환 - False(명시적으로 tls 없음)와 구분해서 오탐을 막는다. requestObject가
+    JSON Patch 배열이면 배열 안 dict 원소 중 하나라도 tls 키가 있으면 True를
+    반환한다(다른 _audit_* 함수들과 같은 패턴)."""
+    request_objects = _audit_request_objects(payload)
+    if not request_objects:
+        return None
+
+    return any("tls" in (request_object.get("spec") or {}) for request_object in request_objects)
+
+
 def _audit_configmap_has_credentials(payload: Dict[str, Any]) -> Any:
     """configmap의 request body(data/binaryData)에 평문 자격증명으로 보이는
     문자열이 있는지 검사한다. Secret과 달리 ConfigMap은 암호화/난독화 없이
@@ -383,6 +405,9 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
         if (resource == "configmaps" and verb in ("create", "update", "patch"))
         else None
     )
+    ingress_has_tls = (
+        _audit_ingress_has_tls(payload) if (resource == "ingresses" and verb == "create") else None
+    )
 
     return NormalizedEvent(
         **{
@@ -403,6 +428,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
                     "pod_security_flags": pod_security_flags,
                     "service_type": service_type,
                     "configmap_has_credentials": configmap_has_credentials,
+                    "ingress_has_tls": ingress_has_tls,
                 },
             ),
             "event.original": original,
@@ -419,6 +445,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "kubernetes.audit.pod.security_flags": pod_security_flags,
             "kubernetes.audit.service.type": service_type,
             "kubernetes.audit.configmap.has_credentials": configmap_has_credentials,
+            "kubernetes.audit.ingress.has_tls": ingress_has_tls,
             "http.response.status_code": status_code,
         }
     )
