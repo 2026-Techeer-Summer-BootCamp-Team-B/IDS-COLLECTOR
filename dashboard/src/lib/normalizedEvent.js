@@ -1,11 +1,10 @@
 import { getModuleMeta } from "../data/moduleMeta";
 
 // 정규화 이벤트(servers/normalizer/app/main.py가 event.model_dump_json(by_alias=True)로
-// 내보내는 점 표기 flat dict)를 프론트에서 쓰기 좋은 모양으로 매핑. GET /logs
-// (OpenSearch attack-logs-* _source)와 WS /ws/events(events.normalized 토픽을
-// 그대로 tail)가 정확히 같은 직렬화 포맷을 쓰기 때문에 useLogs.js/useLiveFeed.js
-// 둘 다 이 함수 하나를 공유한다 — 필드 파싱 로직이 두 곳에서 따로 놀다 어긋나는
-// 걸 방지.
+// 내보내는 점 표기 flat dict)를 프론트에서 쓰기 좋은 모양으로 매핑. GET /logs와
+// GET /events/recent(둘 다 attack-logs-* OpenSearch 인덱스의 _source를 그대로 반환)가
+// 정확히 같은 직렬화 포맷을 쓰기 때문에 useLogs.js/useLiveFeed.js 둘 다 이 함수
+// 하나를 공유한다 — 필드 파싱 로직이 두 곳에서 따로 놀다 어긋나는 걸 방지.
 const SEVERITY_TO_LEVEL_KEY = { 4: "CRITICAL", 3: "MAJOR", 2: "MINOR", 1: "INFO" };
 
 function synthesizeMessage(doc) {

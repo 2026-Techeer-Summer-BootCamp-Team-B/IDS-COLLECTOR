@@ -345,8 +345,8 @@ function StorylineEntry({ entry, isLast }) {
 }
 
 /**
- * Incidents 뷰 — GET /incidents + GET /incidents/{id}/timeline + /ws/incidents
- * 실데이터 연동. 상태(open/investigating/closed)는 실제 Postgres 상태 머신을
+ * Incidents 뷰 — GET /incidents(useIncidentsSocket.js가 ?since= 폴링) + GET
+ * /incidents/{id}/timeline 실데이터 연동. 상태(open/investigating/closed)는 실제 Postgres 상태 머신을
  * 그대로 반영하고(PATCH /incidents/{id}/status), "소스 IP 차단"은 POST
  * /banned-ips로 감사 트레일을 남긴다(실제 트래픽 차단은 아님).
  *

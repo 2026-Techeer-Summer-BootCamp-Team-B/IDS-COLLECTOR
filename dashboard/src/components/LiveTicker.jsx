@@ -13,7 +13,7 @@ function describe(e, theme) {
 }
 
 // Bottom marquee of the live feed — purely cosmetic/"presence" signal, driven
-// by useLiveFeed.js (real WS /ws/events stream). Renders the item list twice
+// by useLiveFeed.js (GET /events/recent polling). Renders the item list twice
 // back-to-back so the CSS scroll loop (-50%) is seamless.
 export default function LiveTicker({ feed }) {
   const { theme } = useTheme();

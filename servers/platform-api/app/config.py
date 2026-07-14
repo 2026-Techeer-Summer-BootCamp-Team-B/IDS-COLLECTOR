@@ -7,13 +7,11 @@ class Settings(BaseSettings):
     opensearch_url: str = "http://opensearch:9200"
     attack_log_index_pattern: str = "attack-logs-*"
 
-    # 개별 이벤트 실시간 스트림 (app/event_stream.py) - events.normalized를 직접
-    # tail해서 /ws/events로 릴레이한다. correlation-engine/normalizer와 값은 같지만
-    # (kafka/docker-compose.yml 리스너 매핑 참고) platform-api는 이 토픽을 "쓰지"
-    # 않고 별도 컨슈머 그룹으로 "읽기"만 하므로 그쪽 처리 경로와 완전히 독립적이다.
+    # app/pipeline_health_api.py의 컨슈머 lag/DLQ 깊이 조회(AIOKafkaConsumer/
+    # AIOKafkaAdminClient)가 참조하는 브로커 주소 - platform-api는 이제 Kafka 토픽을
+    # 직접 구독하지 않는다(2026-07-14, /ws/events + events.normalized 직접 tail
+    # 컨슈머 제거 - 계약 v1.1 §7). 조회 전용 AdminClient 연결에만 쓰인다.
     kafka_brokers: str = "kafka:9092"
-    kafka_normalized_topic: str = "events.normalized"
-    kafka_event_stream_group: str = "platform-api-event-stream"
 
     # ClickHouse (P6-3) - servers/datastore/clickhouse/init/001-kafka-engine.sql의
     # Kafka 엔진 테이블이 events.normalized를 직접 구독해서 security_events_analytics
@@ -40,7 +38,7 @@ class Settings(BaseSettings):
     # 알림이 지연된다.
     alert_poll_interval_seconds: int = 5
 
-    # 프론트엔드가 별도 레포/팀이라 다른 origin에서 REST/WS를 호출한다 - CORS 허용
+    # 프론트엔드가 별도 레포/팀이라 다른 origin에서 REST를 호출한다 - CORS 허용
     # origin 목록(콤마 구분). "*"면 전체 허용(개발 기본값, 쿠키/인증정보 없는
     # 토큰 방식이라 "*"라도 안전).
     cors_allowed_origins: str = "*"
