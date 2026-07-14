@@ -28,6 +28,7 @@ import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from 
 import { RANGE_PRESETS, formatBucketLabel, detectSpike, LIVE_POLL_MS } from "../data/timeSeries";
 import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
 import WorldMap from "../components/WorldMap";
 // three.js는 이 카드에서만 쓰이는데도 LogDashboard.jsx가 Card/KpiCard 등 공용
@@ -779,7 +780,7 @@ export function RecentLogsTable({ events, filterLevels, status = "ready", error 
                   >
                     <td className="py-2.5 text-dash-faint text-xs w-4">{isOpen ? "▾" : "▸"}</td>
                     <td className="py-2.5 text-dash-faint whitespace-nowrap pr-4">
-                      {log.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {log.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: DISPLAY_TIMEZONE })}
                     </td>
                     <td className="py-2.5 pr-4">
                       <LevelBadge level={log.level} />
@@ -793,7 +794,7 @@ export function RecentLogsTable({ events, filterLevels, status = "ready", error 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 text-xs">
                           <div>
                             <p className="text-dash-faint mb-0.5">전체 시각</p>
-                            <p className="text-dash-fg">{log.timestamp.toLocaleString("ko-KR")}</p>
+                            <p className="text-dash-fg">{log.timestamp.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}</p>
                           </div>
                           <div>
                             <p className="text-dash-faint mb-0.5">경로</p>

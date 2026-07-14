@@ -13,6 +13,7 @@ import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
 import { REAL_SEVERITY_LEVELS, getRealSeverityMeta } from "../data/realSeverity";
 import { apiPatch, apiPost, apiDelete, ApiError } from "../lib/authApi";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 // incidents.severity(1~4, event.severity와 같은 실 스케일)를 badges.jsx의
 // SEVERITY_META 키(CRITICAL/HIGH/MEDIUM/LOW)로 별칭 처리.
@@ -269,7 +270,7 @@ function BannedIpsTable({ bannedIps, status, error, onBan, onUnban }) {
                   <td className="py-2.5 pr-3 text-dash-fg font-mono">{b.ip_or_cidr}</td>
                   <td className="py-2.5 pr-3 text-dash-muted text-xs">{b.reason || "-"}</td>
                   <td className="py-2.5 pr-3 text-dash-faint text-xs whitespace-nowrap">
-                    {new Date(b.created_at).toLocaleString("ko-KR")}
+                    {new Date(b.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
                   </td>
                   <td className="py-2.5">
                     <button
@@ -315,7 +316,7 @@ function IncidentCard({ incident, active, onClick }) {
         ))}
       </div>
       <p className="text-dash-muted text-xs">
-        {incident.correlation_key_type}={incident.correlation_key_value} · {new Date(incident.updated_at).toLocaleString("ko-KR")}
+        {incident.correlation_key_type}={incident.correlation_key_value} · {new Date(incident.updated_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
       </p>
     </button>
   );
@@ -445,7 +446,7 @@ export default function IncidentsView({ pushToast }) {
       target: `${selected.correlation_key_type}=${selected.correlation_key_value}`,
       sourceIp: selected.correlation_key_type === "source_ip" ? selected.correlation_key_value : "-",
       sourceCountry: "-",
-      firstDetected: new Date(selected.created_at).toLocaleString("ko-KR"),
+      firstDetected: new Date(selected.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE }),
       storyline: timeline.map((t) => ({
         offset: `+${Math.max(0, Math.round((new Date(t.added_at) - new Date(selected.created_at)) / 1000))}s`,
         source: getModuleMeta(t.event_module).label,
@@ -502,7 +503,7 @@ export default function IncidentsView({ pushToast }) {
                 </div>
                 <p className="text-dash-muted text-xs">
                   {selected.id} · {selected.correlation_key_type}={selected.correlation_key_value} · 최초탐지{" "}
-                  {new Date(selected.created_at).toLocaleString("ko-KR")}
+                  {new Date(selected.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0 flex-wrap">

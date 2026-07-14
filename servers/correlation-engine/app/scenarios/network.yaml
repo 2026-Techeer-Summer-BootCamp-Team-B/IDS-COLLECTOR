@@ -23,6 +23,11 @@ scenarios:
   # 실제로 성공해서 컨테이너 내부까지 침투했는지를 본다. join_on=pod는 workload.yaml의
   # S1과 같은 근거로 성립 - waf/falco 둘 다 orchestrator.resource.name을 신뢰성
   # 있게 채운다(waf는 enrichment.py 정적 매핑, falco는 k8s.pod.name).
+  #
+  # stage2 event_action의 "Contact K8S API Server From Container"는 대소문자까지
+  # falco_rules.yaml 룰 이름과 완전히 똑같아야 한다(workload.yaml S1 주석 참고) -
+  # 예전엔 "K8s"(소문자 s)라 Falco가 정상 탐지해도 이 stage2가 영원히 안 걸리는
+  # 버그였다(실측 확인 후 수정, 2026-07-14).
   - id: S5
     name: "WAF CRITICAL 차단 이후 실제 컨테이너 침투 확인"
     type: sequence

@@ -6,6 +6,7 @@ import { useDetectionSources } from "../hooks/useDetectionSources";
 import TimeRangePicker from "../components/TimeRangePicker";
 import RankedList from "../components/RankedList";
 import { Card, KpiCard, LogVolumeChart, RealLevelDistributionChart } from "./LogDashboard";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 function RecentFalcoEvents({ events, status, error }) {
   const [expandedId, setExpandedId] = useState(null);
@@ -28,7 +29,7 @@ function RecentFalcoEvents({ events, status, error }) {
               >
                 <span className="text-dash-faint shrink-0">{isOpen ? "▾" : "▸"}</span>
                 <span className="text-dash-faint whitespace-nowrap w-16 shrink-0">
-                  {e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: DISPLAY_TIMEZONE })}
                 </span>
                 <span
                   className="text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0"
@@ -58,7 +59,7 @@ function RecentFalcoEvents({ events, status, error }) {
                   </div>
                   <div>
                     <p className="text-dash-faint mb-0.5">전체 시각</p>
-                    <p className="text-dash-fg">{e.timestamp.toLocaleString("ko-KR")}</p>
+                    <p className="text-dash-fg">{e.timestamp.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}</p>
                   </div>
                   <div>
                     <p className="text-dash-faint mb-0.5">Image</p>

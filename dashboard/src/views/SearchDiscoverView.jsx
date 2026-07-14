@@ -9,6 +9,7 @@ import { getRealSeverityMeta } from "../data/realSeverity";
 import TimeRangePicker from "../components/TimeRangePicker";
 import { CHART_COLORS, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 /**
  * Discover-style search bar over GET /logs (servers/platform-api/app/logs_api.py).
@@ -67,7 +68,7 @@ function HitRow({ doc, terms }) {
     <div className="border-t border-dash-surfaceAlt">
       <button onClick={() => setOpen((o) => !o)} className="w-full flex items-start gap-3 py-2.5 text-left">
         <span className="text-dash-faint text-xs shrink-0 mt-0.5">{open ? "▾" : "▸"}</span>
-        <span className="text-dash-faint text-xs shrink-0 w-36">{doc.timestamp.toLocaleString("ko-KR")}</span>
+        <span className="text-dash-faint text-xs shrink-0 w-36">{doc.timestamp.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}</span>
         <span className="shrink-0" style={{ color: forTheme(src.color, theme) }}>
           <span className="text-[10px] font-medium">{src.label}</span>
         </span>

@@ -2,13 +2,14 @@ import React from "react";
 import { SOURCE_META } from "./badges";
 import { forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 // e = mapLogDoc() 결과(lib/normalizedEvent.js) — mock 시절의 attackType/blocked/
 // country 필드는 실제 이벤트엔 없어서(공격 유형 분류·차단 여부·GeoIP 국가명은
 // 파이프라인이 안 만듦) time/source/message/namespace·pod로만 구성한다.
 function describe(e, theme) {
   const src = SOURCE_META[e.source] || { label: e.source, color: "#8890B5" };
-  const time = e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const time = e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: DISPLAY_TIMEZONE });
   return { time, src: { ...src, color: forTheme(src.color, theme) } };
 }
 

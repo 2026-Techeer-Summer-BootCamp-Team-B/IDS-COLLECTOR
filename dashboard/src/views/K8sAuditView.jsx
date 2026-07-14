@@ -5,6 +5,7 @@ import { useDetectionSources } from "../hooks/useDetectionSources";
 import TimeRangePicker from "../components/TimeRangePicker";
 import RankedList from "../components/RankedList";
 import { Card, KpiCard, LogVolumeChart, ErrorRateGauge } from "./LogDashboard";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 // K8s API 서버가 RBAC로 요청을 막으면 HTTP 403을 낸다 — 감사 로그엔 mock처럼
 // 별도 allowed/denied 불리언이 없어서, 상태코드 403을 "거부"로 취급한다(다른
@@ -34,7 +35,7 @@ function RecentAuditEvents({ events, status, error }) {
               >
                 <span className="text-dash-faint shrink-0">{isOpen ? "▾" : "▸"}</span>
                 <span className="text-dash-faint whitespace-nowrap w-16 shrink-0">
-                  {e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: DISPLAY_TIMEZONE })}
                 </span>
                 <span
                   className={`text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 ${
@@ -80,7 +81,7 @@ function RecentAuditEvents({ events, status, error }) {
                   </div>
                   <div className="col-span-2 sm:col-span-2">
                     <p className="text-dash-faint mb-0.5">전체 시각</p>
-                    <p className="text-dash-fg">{e.timestamp.toLocaleString("ko-KR")}</p>
+                    <p className="text-dash-fg">{e.timestamp.toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}</p>
                   </div>
                 </div>
               )}

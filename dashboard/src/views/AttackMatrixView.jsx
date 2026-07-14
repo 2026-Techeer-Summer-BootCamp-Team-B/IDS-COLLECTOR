@@ -4,6 +4,7 @@ import { useTechniqueIncidents } from "../hooks/useTechniqueIncidents";
 import { useIncidentTimeline } from "../hooks/useIncidentTimeline";
 import { SeverityBadge, StatusDot, SourceBadge } from "../components/badges";
 import { getModuleMeta } from "../data/moduleMeta";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 // incidents.severity(1~4)를 badges.jsx의 SEVERITY_META 키로 별칭 처리.
 // IncidentsView.jsx의 동일 매핑과 맞춰둠(공용 모듈로 뺄 정도는 아니라 로컬 복제).
@@ -145,7 +146,7 @@ export default function AttackMatrixView() {
                   >
                     <span className="text-dash-faint shrink-0 mt-0.5">{isOpen ? "▾" : "▸"}</span>
                     <span className="text-dash-faint whitespace-nowrap w-32 shrink-0">
-                      {new Date(incident.updated_at).toLocaleString("ko-KR")}
+                      {new Date(incident.updated_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
                     </span>
                     <span className="shrink-0">
                       <SeverityBadge level={severityBadgeKey(incident.severity)} />
@@ -172,7 +173,7 @@ export default function AttackMatrixView() {
                       </div>
                       <div>
                         <p className="text-dash-faint mb-0.5">최초 탐지</p>
-                        <p className="text-dash-fg">{new Date(incident.created_at).toLocaleString("ko-KR")}</p>
+                        <p className="text-dash-fg">{new Date(incident.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}</p>
                       </div>
                       <div className="col-span-2 sm:col-span-3">
                         <p className="text-dash-faint mb-0.5">연관 MITRE 전술</p>
@@ -202,7 +203,7 @@ export default function AttackMatrixView() {
                                 <div className="flex items-center gap-2 mb-1">
                                   <SourceBadge source={getModuleMeta(t.event_module).label} />
                                   <span className="text-dash-faint text-[10px]">
-                                    {new Date(t.added_at).toLocaleString("ko-KR")}
+                                    {new Date(t.added_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
                                   </span>
                                 </div>
                                 <p className="text-dash-fg text-xs font-medium">{t.title || "(원본 로그 없음)"}</p>

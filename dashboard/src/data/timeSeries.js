@@ -7,7 +7,9 @@
 // time-bucketed counts, step = your `bucketMs`). As long as the real fetch
 // returns the same `{ ts, label, counts }` shape, none of the chart
 // components need to change.
- 
+
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
+
 // 실데이터 패널(Overview/WAS/Falco/K8sAudit)이 usePoll로 자동 새로고침할 때 쓰는
 // 공통 간격 — 더미 로그 생성기를 돌리면서 화면이 알아서 갱신되길 원하는 용도라
 // 사람이 "느리다"고 느끼지 않을 정도로 짧게 잡았다(백엔드는 단순 집계 쿼리라
@@ -44,9 +46,9 @@ export const QUICK_RANGE_KEYS = ["15m", "1h", "6h", "24h", "7d", "30d"];
 export function formatBucketLabel(date, bucketMs) {
   const isDayBucket = bucketMs >= 24 * 60 * 60 * 1000;
   const isHourPlus = bucketMs >= 60 * 60 * 1000;
-  if (isDayBucket) return date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
-  if (isHourPlus) return date.toLocaleTimeString("ko-KR", { hour: "2-digit", hour12: false }) + "시";
-  return date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (isDayBucket) return date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", timeZone: DISPLAY_TIMEZONE });
+  if (isHourPlus) return date.toLocaleTimeString("ko-KR", { hour: "2-digit", hour12: false, timeZone: DISPLAY_TIMEZONE }) + "시";
+  return date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: DISPLAY_TIMEZONE });
 }
  
 // Evenly-spaced empty buckets from (now - lookback) to now.

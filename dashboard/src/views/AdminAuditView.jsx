@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "../data/logPolicy";
+import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
 import { useTargets } from "../hooks/useTargets";
 import { useAllowList } from "../hooks/useAllowList";
@@ -226,7 +227,7 @@ function TargetsPanel({ targets, status, error, onCreate, onToggleActive, onDele
                     </button>
                   </td>
                   <td className="py-2.5 pr-3 text-dash-faint whitespace-nowrap text-xs">
-                    {new Date(t.created_at).toLocaleDateString("ko-KR")}
+                    {new Date(t.created_at).toLocaleDateString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
                   </td>
                   <td className="py-2.5">
                     <button
@@ -355,7 +356,7 @@ function AllowListPanel({ entries, status, error, targets, onCreate, onDelete })
                   </td>
                   <td className="py-2.5 pr-3 text-dash-muted text-xs">{e.reason ?? "-"}</td>
                   <td className="py-2.5 pr-3 text-dash-faint whitespace-nowrap text-xs">
-                    {e.expires_at ? new Date(e.expires_at).toLocaleDateString("ko-KR") : "무기한"}
+                    {e.expires_at ? new Date(e.expires_at).toLocaleDateString("ko-KR", { timeZone: DISPLAY_TIMEZONE }) : "무기한"}
                   </td>
                   <td className="py-2.5">
                     <button
@@ -836,6 +837,7 @@ export default function AdminAuditView({
                         day: "numeric",
                         hour: "2-digit",
                         minute: "2-digit",
+                        timeZone: DISPLAY_TIMEZONE,
                       })}
                     </td>
                     {/* user_id는 UUID 그대로 — 백엔드에 유저 목록 조회 API가 아직
