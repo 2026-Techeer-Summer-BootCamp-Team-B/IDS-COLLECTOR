@@ -32,6 +32,8 @@
 - AuditLog API: app/audit_logs_api.py - 관리자 행위 감사 로그 조회
 - Target API: app/targets_api.py - 보호 대상 애플리케이션 등록 CRUD(파이프라인 소비는 아직 없음)
 - Allow-list API: app/allow_list_api.py - 탐지 예외 IP/대역 CRUD, target_id로 스코프 가능
+- User API: app/users_api.py - 관리자 계정 CRUD(users 테이블 - auth.py 로그인이 참조하는
+  그 테이블), 감사 로그의 user_id를 username으로 조인할 수 있게 됨(audit_logs_api.py 참고)
   (파이프라인이 실제로 걸러내는 로직은 아직 없음 - 등록/관리까지만)
 - 인시던트 실시간 팝업(P7-1): 전용 엔드포인트 없음 - 프론트가 GET /incidents?since=
   <마지막_확인_시각>을 3~5초 주기로 폴링해서 새 CRITICAL 인시던트를 감지한다
@@ -70,6 +72,7 @@ from app.pipeline_health_api import router as pipeline_health_router
 from app.scenarios_api import router as scenarios_router
 from app.stats_api import router as stats_router
 from app.targets_api import router as targets_router
+from app.users_api import router as users_router
 
 app = FastAPI(title="IDS Platform API")
 
@@ -95,6 +98,7 @@ app.include_router(audit_logs_router)
 app.include_router(attck_router)
 app.include_router(banned_ips_router)
 app.include_router(targets_router)
+app.include_router(users_router)
 app.include_router(allow_list_router)
 app.include_router(event_stream_router)
 

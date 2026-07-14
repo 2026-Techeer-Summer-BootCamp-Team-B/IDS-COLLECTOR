@@ -111,9 +111,9 @@ def normalize_was(payload: Dict[str, Any], event_id: str, original: str) -> Norm
 def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> NormalizedEvent:
     """WafAlert 한 건을 NormalizedEvent로 변환.
 
-    wire 필드: attack_type / risk_level / matched_rule_id / payload_snippet /
-    target_endpoint / http_method / user_agent / blocked / mode / source_ip
-    (+ target_pod_name / target_namespace).
+    wire 필드: attack_type / risk_level / matched_rule_id / matched_rule_name /
+    payload_snippet / target_endpoint / http_method / user_agent / blocked / mode /
+    source_ip (+ target_pod_name / target_namespace).
     센서 개편으로 필드명이 바뀌면 이 파서와 본 계약 문서를 같이 갱신할 것.
     """
     return NormalizedEvent(
@@ -130,6 +130,7 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "event.severity": get_severity("waf", payload),
             "event.original": original,
             "rule.id": payload.get("matched_rule_id"),
+            "rule.name": payload.get("matched_rule_name"),
             "source.ip": payload.get("source_ip"),
             "http.request.method": payload.get("http_method"),
             "url.path": payload.get("target_endpoint"),

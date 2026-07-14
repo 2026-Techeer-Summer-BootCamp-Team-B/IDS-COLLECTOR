@@ -189,7 +189,6 @@ Target 서버
 | `users` | 관리자 계정 (`admin`/`viewer`) |
 | `targets` | 보호 대상 애플리케이션 |
 | `allow_list` | 예외 IP/대역 (target 스코프 가능) |
-| `detection_rules` | 단일 이벤트 탐지 룰 (시그니처) — 스키마만 준비, 평가 서비스 없음 |
 | `scenario_rules` | 상관분석 시나리오 룰 — correlation-engine의 `app/scenarios/*.yaml`이 sync (YAML이 source of truth) |
 | `incidents` | 상관분석으로 묶인 보안 사고 (`correlation_key_type`/`value`, `severity`, `status`, `mitre_tactics`) |
 | `incident_events` | 인시던트 <-> 이벤트 매핑 (event_id는 OpenSearch/ClickHouse event.id를 문자열로만 참조, 교차 저장소라 FK 불가) |
@@ -351,8 +350,6 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 
 ## 아직 안 된 것 / 스텁인 것
 
-- WAF의 `rule.name`은 아직 `rule.id`(matched_rule_id)와 같은 값 재사용 중 - 센서가
-  별도 규칙 이름 필드를 주면 분리할 것
 - ~~was/waf의 정적 orchestrator 매핑은 하드코딩~~ **(2026-07-14 해결)**: nginx-was-logger
   사이드카가 Downward API(POD_NAME/POD_NAMESPACE)로 자기 pod를 알아내 was 로그와 모든
   응답에 `X-Served-By-Pod`/`X-Served-By-Namespace` 헤더로 실어 보내고, WAF backend는
@@ -367,7 +364,6 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   값이 실려오는지는 실측 확인 필요. `request_time`/`body_bytes_sent`는 확인 결과
   이미 log_format에 있었음(README의 예전 서술이 틀렸었음) - was.request_time/
   http.response.body.bytes는 이미 채워지고 있었을 것
-- `detection_rules`: 테이블만 있고 이걸 평가하는 서비스가 없음 (단일 이벤트 시그니처 탐지)
 - `users`/`targets`/`allow_list`: 테이블만 있고 이걸 다루는 API/화면이 없음
 - 인증(P5-2): Target에서 실제 이관될 역할(RBAC) 모델 미반영
 - AI 트렌드 리포트: Anthropic API 호출 자체가 TODO

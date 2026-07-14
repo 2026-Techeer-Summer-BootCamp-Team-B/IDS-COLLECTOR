@@ -71,7 +71,14 @@ async def _beginning_offsets(topics: List[str]) -> Dict[TopicPartition, int]:
 @router.get("/consumer-lag")
 async def get_consumer_lag() -> List[Dict[str, Any]]:
     """그룹별 (최신 오프셋 - 커밋된 오프셋) 합산 - 값이 클수록 그 컨슈머가 실시간
-    유입 속도를 못 따라가고 있다는 뜻. 그룹 하나가 조회 실패해도 나머지는 반환한다."""
+    유입 속도를 못 따라가고 있다는 뜻. 그룹 하나가 조회 실패해도 나머지는 반환한다.
+
+    [실측 확인, 2026-07-14] 컨슈머 그룹이 막 시작해서 아직 한 번도 커밋한 적이
+    없는 파티션은 committed_offset을 0으로 폴백하면 안 된다 - 그러면 "실제로는
+    막 시작해서 곧 따라잡을 것"인 상태가 "토픽 전체 분량만큼 뒤처졌다"는 가짜
+    lag(예: 재시작 직후 실측 54565)으로 보인다. 이런 파티션은 합산에서 빼고
+    uncommitted_partitions로 별도 표시한다 - 프론트는 이 목록이 비어있지 않으면
+    total_lag 숫자를 그대로 경보에 쓰지 말고 "막 시작함"으로 취급할 것."""
     admin = AIOKafkaAdminClient(bootstrap_servers=settings.kafka_brokers)
     await admin.start()
     results: List[Dict[str, Any]] = []
@@ -83,18 +90,35 @@ async def get_consumer_lag() -> List[Dict[str, Any]]:
 
                 by_topic: Dict[str, int] = {}
                 total_lag = 0
+                uncommitted_partitions: List[str] = []
                 for tp, end_offset in end_offsets.items():
                     offset_meta = committed.get(tp)
-                    committed_offset = offset_meta.offset if offset_meta else 0
-                    lag = max(end_offset - committed_offset, 0)
+                    if offset_meta is None:
+                        uncommitted_partitions.append(f"{tp.topic}-{tp.partition}")
+                        continue
+                    lag = max(end_offset - offset_meta.offset, 0)
                     by_topic[tp.topic] = by_topic.get(tp.topic, 0) + lag
                     total_lag += lag
 
                 results.append(
-                    {"group": group_id, "total_lag": total_lag, "by_topic": by_topic, "error": None}
+                    {
+                        "group": group_id,
+                        "total_lag": total_lag,
+                        "by_topic": by_topic,
+                        "uncommitted_partitions": uncommitted_partitions,
+                        "error": None,
+                    }
                 )
             except Exception as e:
-                results.append({"group": group_id, "total_lag": None, "by_topic": {}, "error": str(e)})
+                results.append(
+                    {
+                        "group": group_id,
+                        "total_lag": None,
+                        "by_topic": {},
+                        "uncommitted_partitions": [],
+                        "error": str(e),
+                    }
+                )
     finally:
         await admin.close()
     return results
