@@ -25,7 +25,8 @@ import { useLogs } from "../hooks/useLogs";
 import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } from "../data/realSeverity";
 import { getModuleMeta } from "../data/moduleMeta";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
-import { RANGE_PRESETS, formatBucketLabel, detectSpike, LIVE_POLL_MS } from "../data/timeSeries";
+import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
+import { usePollInterval } from "../context/PollIntervalContext";
 import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
@@ -39,6 +40,15 @@ import WorldMap from "../components/WorldMap";
 const Globe3D = lazy(() => import("../components/Globe3D"));
 import { useGeoStats } from "../hooks/useGeoStats";
 import { useK8sTargets } from "../hooks/useK8sTargets";
+import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
+import "react-grid-layout/css/styles.css";
+import { useOverviewLayout, DEFAULT_OVERVIEW_LAYOUT } from "../context/OverviewLayoutContext";
+
+// WidthProvider는 컨테이너 폭을 재서 GridLayout에 넘겨주는 HOC — 컴포넌트 함수
+// 안에서 매 렌더마다 호출하면 그때마다 "새 컴포넌트 타입"이 만들어져서 GridLayout이
+// 매번 통째로 언마운트/리마운트된다(드래그 도중 이러면 그 자리에서 끊긴다). 그래서
+// 모듈 스코프에서 딱 한 번만 감싸둔다.
+const ResponsiveGridLayout = WidthProvider(GridLayout);
 
 /**
  * Log Analytics Dashboard — first-pass layout
@@ -199,11 +209,12 @@ export function LogVolumeChart({ rangeKey, module }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
+  const { pollMs } = usePollInterval();
   const { buckets, status, error } = useLogVolume({
     lookbackMs: preset.lookbackMs,
     bucketMs: preset.bucketMs,
     module,
-    pollMs: LIVE_POLL_MS,
+    pollMs,
   });
 
   const data = useMemo(
@@ -293,7 +304,8 @@ export function LogVolumeChart({ rangeKey, module }) {
 export function RealLevelDistributionChart({ hours, module }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const { levels, total, status, error } = useLogLevels({ hours, module, pollMs: LIVE_POLL_MS });
+  const { pollMs } = usePollInterval();
+  const { levels, total, status, error } = useLogLevels({ hours, module, pollMs });
 
   const data = REAL_SEVERITY_LEVELS.map((l, i) => {
     const found = levels.find((x) => x.severity === l.severity);
@@ -612,7 +624,8 @@ function DetectionSourceDonutCompact({ lookbackMs }) {
 function SeverityDonutCompact({ hours }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const { levels, total, status, error } = useLogLevels({ hours, pollMs: LIVE_POLL_MS });
+  const { pollMs } = usePollInterval();
+  const { levels, total, status, error } = useLogLevels({ hours, pollMs });
   const data = useMemo(
     () =>
       REAL_SEVERITY_LEVELS.map((l) => ({
@@ -1010,6 +1023,78 @@ const KPI_MIN_SEVERITY = {
   SOURCES: undefined,
 };
 
+// 사용자 모드(자유 배치) 그리드의 위젯 id -> 드래그 핸들에 보여줄 짧은 제목.
+// DEFAULT_OVERVIEW_LAYOUT(OverviewLayoutContext.jsx)의 각 항목 i와 반드시 짝이
+// 맞아야 한다 - 하나라도 빠지면 그 위젯은 커스텀 모드에서 안 보인다.
+const WIDGET_TITLES = {
+  "kpi-total": "Total Logs",
+  "kpi-errors": "Errors",
+  "kpi-warnings": "Warnings",
+  "kpi-sources": "Active Sources",
+  "log-volume": "Log Volume",
+  "level-distribution": "Log Levels",
+  "donut-source": "탐지 소스별 분포",
+  "donut-severity": "심각도 분포",
+  "donut-k8s-namespace": "K8s 네임스페이스 분포",
+  "latency-stats": "API Latency",
+  "recent-logs": "Recent Logs",
+  "top-sources": "Top Sources",
+  "error-rate": "Error Rate",
+  "geo-summary": "지역별 분포",
+};
+
+// 사용자 모드에서만 위젯을 감싸는 얇은 프레임 - 위쪽 좁은 바가 드래그 핸들
+// (react-grid-layout의 draggableHandle=".widget-drag-handle"과 매칭), 본문은
+// 기존 위젯을 그대로 넣고 넘치면 스크롤. 기본 모드는 이 프레임을 아예 거치지
+// 않으므로(아래 return의 분기 참고) 지금까지의 화면엔 전혀 영향이 없다.
+function WidgetFrame({ title, children }) {
+  return (
+    <div className="h-full flex flex-col bg-dash-surface rounded-2xl overflow-hidden border border-dash-mint/15">
+      <div className="widget-drag-handle cursor-move flex items-center gap-2 px-3 py-1.5 bg-dash-surfaceAlt/70 text-dash-muted text-[10px] uppercase tracking-wide shrink-0 select-none">
+        <span className="opacity-60 tracking-tighter">⠿⠿</span>
+        <span className="truncate">{title}</span>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto p-2">{children}</div>
+    </div>
+  );
+}
+
+// 기본모드 <-> 사용자모드 전환 + (사용자모드일 때만) 레이아웃 초기화 버튼.
+function OverviewModeToggle() {
+  const { mode, setMode, resetLayout } = useOverviewLayout();
+  return (
+    <div className="inline-flex items-center gap-2">
+      <div className="inline-flex items-center gap-1 bg-dash-surface rounded-xl p-1">
+        {[
+          { key: "default", label: "기본 모드" },
+          { key: "custom", label: "사용자 모드" },
+        ].map((m) => (
+          <button
+            key={m.key}
+            onClick={() => setMode(m.key)}
+            className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+              mode === m.key
+                ? "bg-dash-mint/15 text-dash-mint"
+                : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {mode === "custom" && (
+        <button
+          onClick={resetLayout}
+          title="위젯 배치를 기본값으로 되돌립니다"
+          className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
+        >
+          배치 초기화
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function DashboardContent() {
   const [rangeKey, setRangeKey] = useState("24h");
   const [kpiFilter, setKpiFilter] = useState("ALL");
@@ -1020,11 +1105,12 @@ export function DashboardContent() {
   const [searchHits, setSearchHits] = useState(0);
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const hours = preset.lookbackMs / (60 * 60 * 1000);
+  const { pollMs } = usePollInterval();
 
   // GET /stats/kpi — 상단 4개 KPI 카드(Total/Errors/Warnings/Active Sources +
-  // 이전 구간 대비 델타). pollMs로 2초마다 갱신 — 더미 로그 생성기 돌릴 때 화면이
-  // 수동 새로고침 없이 따라 올라가야 한다는 피드백 반영.
-  const { data: kpi, status: kpiStatus } = useKpi({ hours, pollMs: LIVE_POLL_MS });
+  // 이전 구간 대비 델타). pollMs로 갱신(기본 2초, Admin 페이지에서 커스텀 가능) —
+  // 더미 로그 생성기 돌릴 때 화면이 수동 새로고침 없이 따라 올라가야 한다는 피드백 반영.
+  const { data: kpi, status: kpiStatus } = useKpi({ hours, pollMs });
 
   // GET /logs — 아래 차트/테이블에 실제로 흘려보내는 이벤트. kpiFilter에 따라
   // min_severity로 서버에서 미리 좁혀서 요청.
@@ -1032,7 +1118,7 @@ export function DashboardContent() {
     lookbackMs: preset.lookbackMs,
     minSeverity: KPI_MIN_SEVERITY[kpiFilter],
     limit: 300,
-    pollMs: LIVE_POLL_MS,
+    pollMs,
   });
   const displayEvents = useMemo(
     () => (kpiFilter === "WARNING" ? rawLogs.filter((e) => e.severity === REAL_WARNING_SEVERITY) : rawLogs),
@@ -1048,7 +1134,7 @@ export function DashboardContent() {
     lookbackMs: preset.lookbackMs,
     module: "was",
     limit: 300,
-    pollMs: LIVE_POLL_MS,
+    pollMs,
   });
 
   // GET /stats/top-ips — 실제 백엔드 집계. kpiFilter가 SOURCES면 더 많이(limit
@@ -1056,8 +1142,92 @@ export function DashboardContent() {
   const { items: topIps, status: topIpsStatus, error: topIpsError } = useTopIps({
     lookbackMs: preset.lookbackMs,
     limit: kpiFilter === "SOURCES" ? 10 : 5,
-    pollMs: LIVE_POLL_MS,
+    pollMs,
   });
+
+  const { mode, layout, setLayout } = useOverviewLayout();
+
+  // 위젯 콘텐츠를 변수로 먼저 뽑아두고 기본모드/사용자모드 둘 다 같은 변수를
+  // 참조한다 — 데이터 fetch나 props가 두 모드에서 갈라지는 일이 없도록(버그가
+  // 생기면 두 모드 모두에 똑같이 반영되게) 하기 위함.
+  const kpiTotalWidget = (
+    <KpiCard
+      label={`Total Logs (${preset.label})`}
+      value={kpiStatus === "ready" ? kpi.current.total : "-"}
+      delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
+      positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
+      onClick={() => setKpiFilter("ALL")}
+      active={kpiFilter === "ALL"}
+    />
+  );
+  const kpiErrorsWidget = (
+    <KpiCard
+      label="Errors (Major~Critical)"
+      value={kpiStatus === "ready" ? kpi.current.errors : "-"}
+      delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
+      positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
+      onClick={() => setKpiFilter("ERROR")}
+      active={kpiFilter === "ERROR"}
+      accent="critical"
+    />
+  );
+  const kpiWarningsWidget = (
+    <KpiCard
+      label="Warnings (Minor)"
+      value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
+      delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
+      positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
+      onClick={() => setKpiFilter("WARNING")}
+      active={kpiFilter === "WARNING"}
+    />
+  );
+  const kpiSourcesWidget = (
+    <KpiCard
+      label="Active Sources"
+      value={kpiStatus === "ready" ? kpi.current.sources : "-"}
+      delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
+      positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
+      onClick={() => setKpiFilter("SOURCES")}
+      active={kpiFilter === "SOURCES"}
+    />
+  );
+  const logVolumeWidget = <LogVolumeChart rangeKey={rangeKey} />;
+  const levelDistributionWidget = <RealLevelDistributionChart hours={hours} />;
+  const donutSourceWidget = <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />;
+  const donutSeverityWidget = <SeverityDonutCompact hours={hours} />;
+  const donutK8sWidget = <K8sNamespaceDonutCompact />;
+  const latencyWidget = <LatencyStatsPanel events={wasEventsForLatency} />;
+  const recentLogsWidget = (
+    <RecentLogsTable events={displayEvents} filterLevels={REAL_SEVERITY_LEVELS} status={logsStatus} error={logsError} />
+  );
+  const topSourcesWidget = (
+    <TopSources
+      sources={topIps}
+      status={topIpsStatus}
+      error={topIpsError}
+      limit={kpiFilter === "SOURCES" ? 10 : 5}
+      highlighted={kpiFilter === "SOURCES"}
+    />
+  );
+  const errorRateWidget = <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />;
+  const geoWidget = <GeoSummaryCard />;
+
+  const WIDGET_MAP = {
+    "kpi-total": kpiTotalWidget,
+    "kpi-errors": kpiErrorsWidget,
+    "kpi-warnings": kpiWarningsWidget,
+    "kpi-sources": kpiSourcesWidget,
+    "log-volume": logVolumeWidget,
+    "level-distribution": levelDistributionWidget,
+    "donut-source": donutSourceWidget,
+    "donut-severity": donutSeverityWidget,
+    "donut-k8s-namespace": donutK8sWidget,
+    "latency-stats": latencyWidget,
+    "recent-logs": recentLogsWidget,
+    "top-sources": topSourcesWidget,
+    "error-rate": errorRateWidget,
+    "geo-summary": geoWidget,
+  };
 
   return (
     <div className="space-y-6">
@@ -1071,8 +1241,9 @@ export function DashboardContent() {
 
       {/* 예전엔 전체 폭 바였는데, 관리자 페이지 탭 스위처처럼 우측 상단에
           작은 버튼 형태로 - 화면을 덜 차지하면서 상태(펼침/접힘)도 pill
-          active 색으로 바로 구분되게 바꿨다. */}
-      <div className="flex items-center justify-end">
+          active 색으로 바로 구분되게 바꿨다. 사용자 모드 토글도 같은 행에 둔다. */}
+      <div className="flex items-center justify-between gap-3">
+        <OverviewModeToggle />
         <button
           onClick={() => setSearchExpanded((e) => !e)}
           className={`inline-flex items-center gap-2 text-xs font-medium px-3.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
@@ -1087,43 +1258,8 @@ export function DashboardContent() {
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-4">
-        <KpiCard
-          label={`Total Logs (${preset.label})`}
-          value={kpiStatus === "ready" ? kpi.current.total : "-"}
-          delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
-          positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
-          onClick={() => setKpiFilter("ALL")}
-          active={kpiFilter === "ALL"}
-        />
-        <KpiCard
-          label="Errors (Major~Critical)"
-          value={kpiStatus === "ready" ? kpi.current.errors : "-"}
-          delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
-          positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
-          onClick={() => setKpiFilter("ERROR")}
-          active={kpiFilter === "ERROR"}
-          accent="critical"
-        />
-        <KpiCard
-          label="Warnings (Minor)"
-          value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
-          delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
-          positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
-          onClick={() => setKpiFilter("WARNING")}
-          active={kpiFilter === "WARNING"}
-        />
-        <KpiCard
-          label="Active Sources"
-          value={kpiStatus === "ready" ? kpi.current.sources : "-"}
-          delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
-          positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
-          onClick={() => setKpiFilter("SOURCES")}
-          active={kpiFilter === "SOURCES"}
-        />
-      </div>
       {kpiFilter !== "ALL" && (
-        <p className="text-dash-faint text-[11px] -mt-3">
+        <p className="text-dash-faint text-[11px]">
           {{ ERROR: "Errors", WARNING: "Warnings", SOURCES: "Active Sources" }[kpiFilter]} 필터 적용 중 —{" "}
           {kpiFilter === "SOURCES"
             ? "Top Sources 카드가 더 넓게 펼쳐져 있습니다."
@@ -1134,49 +1270,62 @@ export function DashboardContent() {
         </p>
       )}
 
-      <div>
-        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">로그 개요</p>
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="xl:col-span-2">
-            <LogVolumeChart rangeKey={rangeKey} />
+      {mode === "custom" ? (
+        <ResponsiveGridLayout
+          className="layout"
+          layout={layout}
+          onLayoutChange={setLayout}
+          cols={12}
+          rowHeight={20}
+          margin={[16, 16]}
+          draggableHandle=".widget-drag-handle"
+          compactType="vertical"
+        >
+          {DEFAULT_OVERVIEW_LAYOUT.map((item) => (
+            <div key={item.i}>
+              <WidgetFrame title={WIDGET_TITLES[item.i]}>{WIDGET_MAP[item.i]}</WidgetFrame>
+            </div>
+          ))}
+        </ResponsiveGridLayout>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-4">
+            {kpiTotalWidget}
+            {kpiErrorsWidget}
+            {kpiWarningsWidget}
+            {kpiSourcesWidget}
           </div>
-          <RealLevelDistributionChart hours={hours} />
-        </div>
-      </div>
 
-      <div>
-        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">보안 탐지 요약</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />
-          <SeverityDonutCompact hours={hours} />
-          <K8sNamespaceDonutCompact />
-        </div>
-      </div>
+          <div>
+            <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">로그 개요</p>
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2">{logVolumeWidget}</div>
+              {levelDistributionWidget}
+            </div>
+          </div>
 
-      <LatencyStatsPanel events={wasEventsForLatency} />
+          <div>
+            <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">보안 탐지 요약</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {donutSourceWidget}
+              {donutSeverityWidget}
+              {donutK8sWidget}
+            </div>
+          </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2">
-          <RecentLogsTable
-            events={displayEvents}
-            filterLevels={REAL_SEVERITY_LEVELS}
-            status={logsStatus}
-            error={logsError}
-          />
-        </div>
-        <div className="space-y-6">
-          <TopSources
-            sources={topIps}
-            status={topIpsStatus}
-            error={topIpsError}
-            limit={kpiFilter === "SOURCES" ? 10 : 5}
-            highlighted={kpiFilter === "SOURCES"}
-          />
-          <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />
-        </div>
-      </div>
+          {latencyWidget}
 
-      <GeoSummaryCard />
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="xl:col-span-2">{recentLogsWidget}</div>
+            <div className="space-y-6">
+              {topSourcesWidget}
+              {errorRateWidget}
+            </div>
+          </div>
+
+          {geoWidget}
+        </>
+      )}
     </div>
   );
 }

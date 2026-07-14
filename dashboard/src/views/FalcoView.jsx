@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from "react";
-import { RANGE_PRESETS, LIVE_POLL_MS } from "../data/timeSeries";
+import { RANGE_PRESETS } from "../data/timeSeries";
 import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, getRealSeverityMeta } from "../data/realSeverity";
 import { useLogs } from "../hooks/useLogs";
 import { useDetectionSources } from "../hooks/useDetectionSources";
+import { usePollInterval } from "../context/PollIntervalContext";
 import TimeRangePicker from "../components/TimeRangePicker";
 import RankedList from "../components/RankedList";
 import { Card, KpiCard, LogVolumeChart, RealLevelDistributionChart } from "./LogDashboard";
@@ -97,18 +98,19 @@ export default function FalcoView() {
   const [rangeKey, setRangeKey] = useState("24h");
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const hours = preset.lookbackMs / (60 * 60 * 1000);
+  const { pollMs } = usePollInterval();
 
   const { logs, status, error } = useLogs({
     lookbackMs: preset.lookbackMs,
     module: "falco",
     limit: 300,
-    pollMs: LIVE_POLL_MS,
+    pollMs,
   });
 
   // Total 카드는 logs.length(limit=300 캡) 대신 GET /stats의 by_module count(정확한
   // 총량)를 쓴다 — WASView.jsx와 동일한 이유(300건 넘으면 숫자가 그대로 고정되어
   // "연동 안 된 것"처럼 보이는 문제).
-  const { byModule } = useDetectionSources({ lookbackMs: preset.lookbackMs, pollMs: LIVE_POLL_MS });
+  const { byModule } = useDetectionSources({ lookbackMs: preset.lookbackMs, pollMs });
   const totalEvents = byModule.find((m) => m.module === "falco")?.count ?? 0;
 
   const notableCount = useMemo(
