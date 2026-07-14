@@ -56,6 +56,7 @@ services:
       PYTHONUNBUFFERED: "1"
       POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
       REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
     ports:
       - "8400:8400" # 로컬 디버깅 편의용 직결 포트 - 실제 진입 경로는 Traefik(:80/api)
     networks:
