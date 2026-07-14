@@ -57,11 +57,23 @@ async def _dispatch_pending() -> None:
 
 async def poll_loop() -> None:
     while True:
+        # (2026-07-14) interval 조회는 원래 이 try/except 밖에 있었다 - 그러면
+        # _current_interval_seconds()가 던지는 예외(예: poll_intervals 테이블이
+        # 아직 없는 상태 - 013 마이그레이션이 postgres-data 볼륨 재사용으로 인해
+        # 누락된 경우, 실제로 한 번 겪음)가 안 잡히고 poll_loop() 태스크 자체가
+        # 조용히 죽어버린다. 이 태스크가 죽으면 /health가 영구히 503을 내고,
+        # Traefik이 unhealthy 컨테이너를 라우팅에서 제외해버려서 /api/* 전체(로그인
+        # 포함)가 dashboard 정적 서버로 새서 끊긴다 - _dispatch_pending()과 같은
+        # try/except 안으로 옮기고 실패 시 fail-open 기본값(_DEFAULT_INTERVAL_SECONDS)
+        # 으로 다음 주기에 재시도하게 했다. interval 변수를 try 앞에서 기본값으로
+        # 초기화해두는 이유도 동일 - _dispatch_pending()만 실패하고
+        # _current_interval_seconds()는 못 도는 경우에도 sleep에 쓸 값이 있어야 한다.
+        interval = _DEFAULT_INTERVAL_SECONDS
         try:
             await _dispatch_pending()
+            interval = await _current_interval_seconds()
         except asyncio.CancelledError:
             raise
         except Exception as e:
             print(f"[platform-api] 인시던트 알림 폴링 실패, 다음 주기에 재시도: {e}")
-        interval = await _current_interval_seconds()
         await asyncio.sleep(interval)
