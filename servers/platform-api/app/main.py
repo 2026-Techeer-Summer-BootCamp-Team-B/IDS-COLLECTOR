@@ -42,6 +42,13 @@
   (2026-07-13 이전엔 WebSocket(/ws/incidents)으로 push했으나 제거됨 - app/incident_alerts.py
   참고).
 
+기동 순서 경쟁: Postgres/ClickHouse/OpenSearch 연결(각각 app/db.py, app/clickhouse_client.py,
+app/opensearch_client.py)은 이 서비스가 아직 안 떴을 때 기동하면 실패할 수 있어서
+Kafka 컨슈머(normalizer/correlation-engine)와 동일하게 재시도 루프로 감싸져 있다.
+/health는 백그라운드 알림 폴링 태스크(_alert_poll_task)가 죽었으면 503을 반환한다 -
+프로세스는 살아있는데 폴링만 죽어서 Slack/Discord 알림이 조용히 멈추는 걸 감지하기
+위함(servers/docker-compose.yml의 healthcheck가 이 엔드포인트를 주기 폴링).
+
 실행 방법 (컨테이너): servers/docker-compose.yml 포함, 저장소 루트에서 `make up`
 (또는 `docker compose -f servers/docker-compose.yml up -d --build`)으로 기동.
 """
@@ -51,8 +58,9 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app import clickhouse_client, db
+from app import clickhouse_client, db, opensearch_client
 from app.ai_report import generate_trend_report
 from app.alert_configs_api import router as alert_configs_router
 from app.analytics_api import router as analytics_router
@@ -106,6 +114,7 @@ async def on_startup():
     global _alert_poll_task
     await db.start()
     await clickhouse_client.start()
+    await opensearch_client.start()
     _alert_poll_task = asyncio.create_task(incident_alerts_poll_loop())
 
 
@@ -119,8 +128,22 @@ async def on_shutdown():
     await db.stop()
 
 
+def _dead_task_reason() -> Optional[str]:
+    """백그라운드 알림 폴링 태스크(app/incident_alerts.py)가 살아있지 않은 이유(있으면) -
+    /health가 503을 반환할지 판단하는 근거. None이면 정상. (/ws/events 제거 이후
+    platform-api의 유일한 백그라운드 태스크)"""
+    if _alert_poll_task is None:
+        return "alert poll task not started"
+    if _alert_poll_task.done():
+        return "alert poll task exited"
+    return None
+
+
 @app.get("/health")
 def health_check():
+    reason = _dead_task_reason()
+    if reason:
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": reason})
     return {"status": "ok"}
 
 
