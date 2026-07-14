@@ -41,8 +41,9 @@
   (파이프라인이 실제로 걸러내는 로직은 아직 없음 - 등록/관리까지만)
 - 데이터 정책 API: app/data_policy_api.py - 로그 보존/샘플링(/log-policies) + 제외 규칙
   (/exclusion-rules) CRUD. AdminAuditView.jsx의 useLogPolicies/useExclusionRules 훅이 이
-  API를 실제로 호출한다(예전 App.jsx 로컬 mock 대체). 파이프라인이 이 값으로 실제
-  필터링하는 로직은 아직 없음(설정 저장/조회까지만)
+  API를 실제로 호출한다(예전 App.jsx 로컬 mock 대체). 보존기간(hot_days/cold_days/
+  archive_enabled)은 app/log_retention.py가 실제로 집행한다(오래된 attack-logs-* 문서
+  삭제) - 샘플링/제외 규칙은 아직 파이프라인에 반영 안 됨(설정 저장/조회까지만)
 - 인시던트 실시간 팝업(P7-1): 전용 엔드포인트 없음 - 프론트가 GET /incidents?since=
   <마지막_확인_시각>을 3~5초 주기로 폴링해서 새 CRITICAL 인시던트를 감지한다
   (2026-07-13 이전엔 WebSocket(/ws/incidents)으로 push했으나 제거됨 - app/incident_alerts.py
@@ -51,9 +52,10 @@
 기동 순서 경쟁: Postgres/ClickHouse/OpenSearch 연결(각각 app/db.py, app/clickhouse_client.py,
 app/opensearch_client.py)은 이 서비스가 아직 안 떴을 때 기동하면 실패할 수 있어서
 Kafka 컨슈머(normalizer/correlation-engine)와 동일하게 재시도 루프로 감싸져 있다.
-/health는 백그라운드 알림 폴링 태스크(_alert_poll_task)가 죽었으면 503을 반환한다 -
-프로세스는 살아있는데 폴링만 죽어서 Slack/Discord 알림이 조용히 멈추는 걸 감지하기
-위함(servers/docker-compose.yml의 healthcheck가 이 엔드포인트를 주기 폴링).
+/health는 백그라운드 폴링 태스크(_alert_poll_task, _log_retention_task) 중 하나라도
+죽었으면 503을 반환한다 - 프로세스는 살아있는데 폴링만 죽어서 Slack/Discord 알림이나
+보존기간 집행이 조용히 멈추는 걸 감지하기 위함(servers/docker-compose.yml의
+healthcheck가 이 엔드포인트를 주기 폴링).
 
 실행 방법 (컨테이너): servers/docker-compose.yml 포함, 저장소 루트에서 `make up`
 (또는 `docker compose -f servers/docker-compose.yml up -d --build`)으로 기동.
@@ -80,6 +82,7 @@ from app.data_policy_api import router_exclusion_rules, router_log_policies
 from app.events_api import router as events_router
 from app.incident_alerts import poll_loop as incident_alerts_poll_loop
 from app.incidents_api import router as incidents_router
+from app.log_retention import poll_loop as log_retention_poll_loop
 from app.logs_api import router as logs_router
 from app.pipeline_health_api import router as pipeline_health_router
 from app.poll_intervals_api import router as poll_intervals_router
@@ -120,35 +123,42 @@ app.include_router(router_exclusion_rules)
 app.include_router(poll_intervals_router)
 
 _alert_poll_task: Optional[asyncio.Task] = None
+_log_retention_task: Optional[asyncio.Task] = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global _alert_poll_task
+    global _alert_poll_task, _log_retention_task
     await db.start()
     await clickhouse_client.start()
     await opensearch_client.start()
     _alert_poll_task = asyncio.create_task(incident_alerts_poll_loop())
+    _log_retention_task = asyncio.create_task(log_retention_poll_loop())
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    if _alert_poll_task:
-        _alert_poll_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await _alert_poll_task
+    for task in (_alert_poll_task, _log_retention_task):
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
     await clickhouse_client.stop()
     await db.stop()
 
 
 def _dead_task_reason() -> Optional[str]:
-    """백그라운드 알림 폴링 태스크(app/incident_alerts.py)가 살아있지 않은 이유(있으면) -
-    /health가 503을 반환할지 판단하는 근거. None이면 정상. (/ws/events 제거 이후
-    platform-api의 유일한 백그라운드 태스크)"""
+    """백그라운드 폴링 태스크(app/incident_alerts.py, app/log_retention.py)가
+    살아있지 않은 이유(있으면) - /health가 503을 반환할지 판단하는 근거. None이면
+    정상."""
     if _alert_poll_task is None:
         return "alert poll task not started"
     if _alert_poll_task.done():
         return "alert poll task exited"
+    if _log_retention_task is None:
+        return "log retention poll task not started"
+    if _log_retention_task.done():
+        return "log retention poll task exited"
     return None
 
 
