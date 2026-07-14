@@ -10,7 +10,7 @@ export const REAL_SEVERITY_LEVELS = [
   { severity: 4, key: "CRITICAL", label: "Critical", color: "#FF1F6B" },
   { severity: 3, key: "MAJOR", label: "Major", color: "#FF5A1F" },
   { severity: 2, key: "MINOR", label: "Minor", color: "#F5E400" },
-  { severity: 1, key: "INFO", label: "Info", color: "#00FFA6" },
+  { severity: 1, key: "INFO", label: "Info", color: "#22C55E" },
 ];
 
 const BY_SEVERITY = REAL_SEVERITY_LEVELS.reduce((acc, l) => ((acc[l.severity] = l), acc), {});

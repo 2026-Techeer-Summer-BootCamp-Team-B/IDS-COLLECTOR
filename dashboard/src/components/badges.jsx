@@ -20,9 +20,9 @@ export const SEVERITY_META = {
 };
 
 export const SOURCE_META = {
-  WAS: { label: "WAS", color: "#00C2FF" },
+  WAS: { label: "WAS", color: "#1F57FF" },
   Falco: { label: "Falco", color: "#A64DFF" },
-  "K8s Audit": { label: "K8s Audit", color: "#00FFA6" },
+  "K8s Audit": { label: "K8s Audit", color: "#22C55E" },
 };
 
 export function SeverityBadge({ level }) {

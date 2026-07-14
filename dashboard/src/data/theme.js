@@ -7,7 +7,7 @@ export const CHART_COLORS = {
     bg: "#05060B",
     surface: "#0E0F1A",
     surfaceAlt: "#191B2C",
-    mint: "#00FFA6",
+    mint: "#14B8A6",
     pink: "#A64DFF",
     muted: "#8890B5",
     faint: "#5A6288",
@@ -17,13 +17,13 @@ export const CHART_COLORS = {
     medium: "#F5E400",
     low: "#8890B5",
     live: "#39FF6A",
-    was: "#00C2FF",
+    was: "#1F57FF",
   },
   light: {
     bg: "#F4F5FA",
     surface: "#FFFFFF",
     surfaceAlt: "#E6E8F5",
-    mint: "#00875A",
+    mint: "#0F766E",
     pink: "#7A1FD1",
     muted: "#5B6180",
     faint: "#8388A6",
@@ -33,7 +33,7 @@ export const CHART_COLORS = {
     medium: "#F5E400",
     low: "#8890B5",
     live: "#39FF6A",
-    was: "#00C2FF",
+    was: "#1D4ED8",
   },
 };
 
