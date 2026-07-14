@@ -16,7 +16,6 @@ import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "./data/logPolicy";
 
 /**
  * SENTINEL-OPS app shell — left sidebar switches between screens.
@@ -227,64 +226,17 @@ function AppShell() {
   const [active, setActive] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { feed, lastCritical } = useLiveAttackFeed();
-  const { isAdmin } = useAuth();
 
   // Fake response actions live here (not inside IncidentsView) so they
   // survive switching tabs — IncidentsView unmounts when you navigate away,
   // so anything stored only in its local state would reset.
   const [toasts, setToasts] = useState([]);
   const { stats: incidentStats } = useIncidentStats();
-  const [logPolicies, setLogPolicies] = useState(INITIAL_LOG_POLICIES);
-  const [exclusionRules, setExclusionRules] = useState(INITIAL_EXCLUSION_RULES);
 
   function pushToast(message, tone = "success") {
     const toastId = Date.now() + Math.random();
     setToasts((prev) => [...prev, { id: toastId, message, tone }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
-  }
-
-  // logPolicies/exclusionRules(데이터 보존·샘플링·제외 규칙) 토글은 대응하는 백엔드
-  // 엔드포인트가 아예 없어서 아직 로컬 상태만 바꾸는 mock 액션이다 — 여기서 남기는
-  // 건 실제 audit_logs 테이블에는 안 쌓이고 토스트 피드백용으로만 쓰인다. 탐지 룰
-  // on/off는 이제 실제 PATCH /scenarios/{id}/enabled를 쓰므로(AdminAuditView.jsx)
-  // 여기 없다.
-  function logAction({ action }) {
-    pushToast(action, "success");
-  }
-
-  // 쓰기 액션(룰 토글, 정책 변경, 인시던트 처리 등) 진입점마다 이걸 먼저 부른다.
-  // 지금은 로그인 = admin이라 항상 통과하지만(AuthContext.jsx의 isAdmin 주석
-  // 참고), role 필드가 세션 응답에 생기면 그때부터 실제로 걸러지기 시작한다 —
-  // 호출부는 손댈 필요 없음.
-  function requireAdmin() {
-    if (isAdmin) return true;
-    pushToast("이 작업은 관리자 권한이 필요합니다.", "error");
-    return false;
-  }
-
-  function updatePolicy(layer, patch) {
-    if (!requireAdmin()) return;
-    setLogPolicies((prev) => prev.map((p) => (p.layer === layer ? { ...p, ...patch } : p)));
-    logAction({
-      action: `데이터 정책 변경 (${layer}: ${Object.entries(patch)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ")})`,
-      target: layer,
-      ip: "-",
-    });
-  }
-
-  function toggleExclusion(ruleId) {
-    if (!requireAdmin()) return;
-    const rule = exclusionRules.find((r) => r.id === ruleId);
-    if (!rule) return;
-    const nextEnabled = !rule.enabled;
-    setExclusionRules((prev) => prev.map((r) => (r.id === ruleId ? { ...r, enabled: nextEnabled } : r)));
-    logAction({
-      action: `제외 규칙 ${nextEnabled ? "활성화" : "비활성화"} (${rule.id})`,
-      target: rule.pattern,
-      ip: "-",
-    });
   }
 
   return (
@@ -302,15 +254,7 @@ function AppShell() {
           {active === "incidents" && <IncidentsView pushToast={pushToast} />}
           {active === "attack" && <AttackMatrixView />}
           {active === "infra" && <InfrastructureView />}
-          {active === "admin" && (
-            <AdminAuditView
-              logPolicies={logPolicies}
-              onUpdatePolicy={updatePolicy}
-              exclusionRules={exclusionRules}
-              onToggleExclusion={toggleExclusion}
-              pushToast={pushToast}
-            />
-          )}
+          {active === "admin" && <AdminAuditView pushToast={pushToast} />}
           {active === "was" && <WASView />}
           {active === "falco" && <FalcoView />}
           {active === "k8s-audit" && <K8sAuditView />}

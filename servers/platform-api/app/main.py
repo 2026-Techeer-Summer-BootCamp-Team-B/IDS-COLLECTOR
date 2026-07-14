@@ -39,6 +39,10 @@
 - User API: app/users_api.py - 관리자 계정 CRUD(users 테이블 - auth.py 로그인이 참조하는
   그 테이블), 감사 로그의 user_id를 username으로 조인할 수 있게 됨(audit_logs_api.py 참고)
   (파이프라인이 실제로 걸러내는 로직은 아직 없음 - 등록/관리까지만)
+- 데이터 정책 API: app/data_policy_api.py - 로그 보존/샘플링(/log-policies) + 제외 규칙
+  (/exclusion-rules) CRUD. AdminAuditView.jsx의 useLogPolicies/useExclusionRules 훅이 이
+  API를 실제로 호출한다(예전 App.jsx 로컬 mock 대체). 파이프라인이 이 값으로 실제
+  필터링하는 로직은 아직 없음(설정 저장/조회까지만)
 - 인시던트 실시간 팝업(P7-1): 전용 엔드포인트 없음 - 프론트가 GET /incidents?since=
   <마지막_확인_시각>을 3~5초 주기로 폴링해서 새 CRITICAL 인시던트를 감지한다
   (2026-07-13 이전엔 WebSocket(/ws/incidents)으로 push했으나 제거됨 - app/incident_alerts.py
@@ -72,6 +76,7 @@ from app.audit_logs_api import router as audit_logs_router
 from app.auth import router as auth_router
 from app.banned_ips_api import router as banned_ips_router
 from app.config import settings
+from app.data_policy_api import router_exclusion_rules, router_log_policies
 from app.events_api import router as events_router
 from app.incident_alerts import poll_loop as incident_alerts_poll_loop
 from app.incidents_api import router as incidents_router
@@ -109,6 +114,8 @@ app.include_router(targets_router)
 app.include_router(users_router)
 app.include_router(allow_list_router)
 app.include_router(events_router)
+app.include_router(router_log_policies)
+app.include_router(router_exclusion_rules)
 
 _alert_poll_task: Optional[asyncio.Task] = None
 
