@@ -160,11 +160,15 @@ function PipelineHealthPanel() {
   );
 }
 
+// 압도적으로 큰 값 하나(예: 대상 파드 1개가 전체 트래픽을 다 받는 경우) 때문에
+// 나머지 대부분이 "낮음" 티어(ratio ≤ 0.33)로 몰리면서 화면이 온통 mint 색으로
+// 뒤덮이는 문제 — 낮음 티어는 색을 아예 빼고(무채도 회색) "집중된 곳"만 색이
+// 튀도록 바꿨다.
 function intensityColor(count, max, C) {
   const ratio = max ? count / max : 0;
   if (ratio > 0.66) return C.critical;
   if (ratio > 0.33) return C.high;
-  if (ratio > 0) return C.mint;
+  if (ratio > 0) return C.muted;
   return C.surfaceAlt;
 }
 
