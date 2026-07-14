@@ -16,6 +16,8 @@ import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { PollIntervalProvider } from "./context/PollIntervalContext";
+import { OverviewLayoutProvider } from "./context/OverviewLayoutContext";
 
 /**
  * SENTINEL-OPS app shell — left sidebar switches between screens.
@@ -291,7 +293,11 @@ function Gate() {
 export default function App() {
   return (
     <AuthProvider>
-      <Gate />
+      <PollIntervalProvider>
+        <OverviewLayoutProvider>
+          <Gate />
+        </OverviewLayoutProvider>
+      </PollIntervalProvider>
     </AuthProvider>
   );
 }

@@ -37,13 +37,6 @@ class Settings(BaseSettings):
     # Redis가 알아서 지워줘서 별도 만료 처리 로직이 필요 없다.
     session_ttl_seconds: int = 86400
 
-    # 인시던트 알림(Slack/Discord, app/incident_alerts.py) 폴링 주기 - 예전엔 Redis
-    # pub/sub(incidents:events)로 발화 즉시 push했는데, platform-api가 재시작/단절된
-    # 사이에 발화된 인시던트는 pub/sub 특성상 영구 유실됐다(재생 불가). incidents.
-    # notified_at 컬럼 기반 폴링으로 바꿔서 이 유실 문제를 없애는 대신 최대 이 주기만큼
-    # 알림이 지연된다.
-    alert_poll_interval_seconds: int = 5
-
     # 프론트엔드가 별도 레포/팀이라 다른 origin에서 REST를 호출한다 - CORS 허용
     # origin 목록(콤마 구분). "*"면 전체 허용(개발 기본값, 쿠키/인증정보 없는
     # 토큰 방식이라 "*"라도 안전).

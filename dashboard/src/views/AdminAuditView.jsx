@@ -9,6 +9,52 @@ import { useLogPolicies } from "../hooks/useLogPolicies";
 import { useExclusionRules } from "../hooks/useExclusionRules";
 import { useTrendReport } from "../hooks/useTrendReport";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
+import { usePollInterval } from "../context/PollIntervalContext";
+
+// 실시간 패널(Overview/WAS/Falco/K8sAudit + LiveTicker)이 공유하는 갱신 주기를
+// 관리자가 여기서 바꿀 수 있게 한 프리셋 - 너무 짧으면(500ms) 백엔드 집계 쿼리
+// 부담이 커지고, 너무 길면(30초+) "실시간"이라는 느낌이 옅어져서 그 사이 값들로
+// 구성했다. 프리셋 밖의 임의 값은 지금은 지원하지 않음(필요해지면 숫자 입력으로
+// 바꾸면 됨 - Context 쪽 setPollMs는 이미 임의 ms를 받는다).
+const POLL_INTERVAL_PRESETS = [
+  { label: "0.5초", ms: 500 },
+  { label: "1초", ms: 1000 },
+  { label: "2초", ms: 2000 },
+  { label: "5초", ms: 5000 },
+  { label: "10초", ms: 10000 },
+  { label: "30초", ms: 30000 },
+];
+
+function PollIntervalPanel() {
+  const { pollMs, setPollMs, defaultPollMs } = usePollInterval();
+
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">실시간 갱신 주기</h3>
+      <p className="text-dash-muted text-xs mb-3">
+        Overview · WAS · Falco · K8s Audit 상세 화면과 실시간 티커가 서버를 다시 조회하는 간격 —
+        짧을수록 화면이 더 빨리 따라오지만 백엔드 조회 부하도 늘어난다. 브라우저에 저장되며 지금은
+        이 브라우저에만 적용된다.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {POLL_INTERVAL_PRESETS.map((p) => (
+          <button
+            key={p.ms}
+            onClick={() => setPollMs(p.ms)}
+            className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+              pollMs === p.ms
+                ? "bg-dash-mint/15 text-dash-mint border-dash-mint/40"
+                : "bg-dash-bg text-dash-muted border-transparent hover:text-dash-fg hover:bg-dash-surfaceAlt"
+            }`}
+          >
+            {p.label}
+            {p.ms === defaultPollMs ? " (기본)" : ""}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // 스위치형 knob 대신 ON/OFF 텍스트만 있는 단순 버튼 - knob이 튀어보이고
 // 켜짐 색(mint 솔리드)이 너무 밝다는 피드백을 반영해 배경을 반투명 톤으로
@@ -772,6 +818,8 @@ export default function AdminAuditView({ pushToast }) {
 
       {activeTab === "policy" && (
         <div className="space-y-6">
+          <PollIntervalPanel />
+
           <div className="bg-dash-surface rounded-2xl p-5">
             <h3 className="text-dash-fg text-sm font-semibold mb-1">데이터 정책 (보존 · 샘플링 · 제외)</h3>
             <p className="text-dash-muted text-xs mb-3">

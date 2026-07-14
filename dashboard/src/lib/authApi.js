@@ -41,10 +41,10 @@ export class ApiError extends Error {
 // 부족)이면 그대로 던져서 호출한 쪽(주로 admin 전용 쓰기 액션)이 "권한 없음"
 // 토스트를 띄우게 한다.
 //
-// 지금 platform-api(servers/platform-api/app/*.py)는 auth.py 말고는 실제로
-// Authorization을 검사하는 라우트가 아직 없다(README "아직 안 된 것" — RBAC
-// 미반영). 그래도 헤더를 항상 붙여두면 나중에 백엔드가 role 체크를 추가했을 때
-// 프론트를 고칠 필요가 없다.
+// Authorization 검사는 platform-api 앱이 아니라 Traefik의 forwardAuth
+// 미들웨어가 /api/auth/*, /api/health를 뺀 모든 /api/*에서 한다(auth.py의
+// GET /verify, 2026-07-14부터 - README "프론트엔드 연동 API" 절 참고). 여기서
+// 헤더를 항상 붙여주는 건 그 검사를 통과하기 위해서다 - 안 붙이면 401.
 export async function apiFetch(path, { method = "GET", body, headers = {}, skipAuth = false } = {}) {
   const token = getToken();
   const finalHeaders = { ...headers };
@@ -91,14 +91,15 @@ export const apiDelete = (path) => apiFetch(path, { method: "DELETE" });
 
 // ---- /auth/* (servers/platform-api/app/auth.py) ----
 
-// {username, password} -> {token}. 백엔드가 단일 관리자 계정 스텁이라 로그인에
-// 성공하면 곧 그 admin 계정이다.
+// {username, password} -> {token}. 백엔드가 users 테이블(role: admin/viewer)로
+// 여러 계정을 지원한다(users_api.py) - 로그인 성공 = admin이 더 이상 아니다,
+// 실제 role은 fetchSession()의 응답을 봐야 함.
 export function login(username, password) {
   return apiFetch("/auth/login", { method: "POST", body: { username, password }, skipAuth: true });
 }
 
-// -> {valid, username?}. role 필드는 없음(백엔드에 RBAC가 아직 없어서) — 나중에
-// 추가되면 AuthContext.jsx의 isAdmin 계산 한 줄만 바꾸면 된다.
+// -> {valid, username?, role?}. role은 "admin" | "viewer"(2026-07-14부터 포함) -
+// AuthContext.jsx가 이 값으로 isAdmin(role === "admin")을 계산한다.
 export function fetchSession() {
   return apiFetch("/auth/session");
 }

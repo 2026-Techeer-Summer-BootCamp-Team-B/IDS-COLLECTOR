@@ -4,7 +4,6 @@
 // Proves the "우리는 사건을 재구성한다" story: one incident in, one shareable
 // file out.
 
-import { jsPDF } from "jspdf";
 import { DISPLAY_TIMEZONE } from "./timezone";
 
 function csvEscape(value) {
@@ -80,7 +79,13 @@ const PAGE_WIDTH = 210; // A4 portrait, mm
 const PAGE_HEIGHT = 297;
 const CONTENT_WIDTH = PAGE_WIDTH - PAGE_MARGIN * 2;
 
-export function exportIncidentPDF(incident) {
+// jsPDF는 (실제로 안 쓰는데도) fast-png 등 vite.config.js에서 external로 뺀
+// 선택적 의존성을 정적으로 끌고 들어온다 - 앱 메인 번들에 같이 묶이면 그
+// 브라우저가 그 external import를 초기 로딩 시점에 리졸브하려다 실패해서
+// 앱 전체가 하얀/검은 화면으로 죽는다. PDF 내보내기 버튼을 누를 때만 필요한
+// 기능이니 동적 import로 별도 청크로 분리해서, 초기 로딩과 완전히 분리한다.
+export async function exportIncidentPDF(incident) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   let y = PAGE_MARGIN;
 

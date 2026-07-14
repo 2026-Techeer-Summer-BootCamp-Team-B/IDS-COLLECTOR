@@ -138,8 +138,8 @@ Target 서버
 | `GET /banned-ips` | 활성 차단 IP 목록(`unbanned_at IS NULL`) - 감사 트레일용, 실제 트래픽은 막지 않음 |
 | `POST /banned-ips` | `{ip_or_cidr, reason?}` 차단 기록 (admin 전용, `IP_BANNED` 감사 로그) |
 | `DELETE /banned-ips/{id}` | 차단 해제 (admin 전용, `IP_UNBANNED` 감사 로그) |
-| `POST /auth/login` | `{username, password}` -> `{token}`. 스펙 미설계 스텁, 단일 관리자 계정 |
-| `GET /auth/session` | `Authorization: Bearer <token>` 검증 -> `{valid, username?}`. **role 필드 없음** (RBAC 미반영) |
+| `POST /auth/login` | `{username, password}` -> `{token}`. `users` 테이블(role: `admin`/`viewer`) 조회, pgcrypto `crypt()` 검증 - 더 이상 단일 하드코딩 계정 아님(`users_api.py`로 계정 CRUD) |
+| `GET /auth/session` | `Authorization: Bearer <token>` 검증 -> `{valid, username?, role?}` (`admin`\|`viewer`, 2026-07-14부터 포함) |
 | `POST /auth/logout` | `Authorization: Bearer <token>` 필요. 토큰 폐기 -> `{status:"ok"}` |
 | `GET /stats?start=&end=` | ISO8601 구간 module(4계층: was/waf/falco/k8s_audit)/severity별 집계 -> `{total, by_module:[{module,count}], by_severity:[{severity,count}]}` |
 | `GET /stats/top-ips?start=&end=&limit=` | 공격 발원지 IP Top-N (ClickHouse `security_events_analytics` 집계, 2026-07-14부터 - 이전엔 OpenSearch terms agg였는데 같은 경로로 중복 정의돼 있던 걸 정리) -> `{items:[{source_ip,count}]}` |
@@ -158,11 +158,12 @@ Target 서버
 | `GET /events/recent?since=&limit=` | 개별 이벤트 실시간 티커(LiveTicker/CriticalAlertPopup)용. `since`(ISO8601)를 주면 그 시각 이후 이벤트만 오래된순, 안 주면 최신순 상위 `limit`건(기본 50, 최대 200) - 프론트가 2초 주기 폴링(구 `/ws/events`, 2026-07-14 계약 v1.1 §7에 따라 제거) |
 | `GET /reports/trend?days=7` | AI 트렌드 리포트 (Gemini API). `GEMINI_API_KEY` 미설정이면 `configured:false`+원본 통계만 반환 |
 
-인증/통계 엔드포인트는 현재 어느 것도 서버 쪽에서 Authorization을 강제하지 않는다
-(auth.py의 login/session/logout만 예외 — 토큰 발급/검증 자체가 목적이라 당연히
-검사함). 프론트는 로그인 후 모든 REST 호출에 `Authorization: Bearer <token>`을
-항상 붙이도록 만들어뒀지만(dashboard/src/lib/authApi.js), 백엔드가 그걸 실제로
-검사해서 401/403을 돌려주기 시작하는 건 role(RBAC) 모델이 들어온 다음 얘기.
+~~인증/통계 엔드포인트는 현재 어느 것도 서버 쪽에서 Authorization을 강제하지
+않는다~~ **(2026-07-14 해결)**: 위 "인증 강제는 platform-api 앱이 아니라 Traefik이
+한다" 문단 그대로 — `/api/auth/*`, `/api/health`를 제외한 모든 `/api/*`가 Traefik
+forwardAuth(`auth.py`의 `GET /verify`)를 거친다. 읽기는 로그인만 되어 있으면
+(`admin`/`viewer` 둘 다) 통과, 쓰기(POST/PATCH/DELETE)는 `role=admin`만 통과 —
+이 문단은 그 기능이 들어오기 전에 쓰여서 실제 상태와 어긋나 있었다.
 
 인시던트 JSON 형태(GET /incidents, GET /incidents/{id} 공통):
 ```json
@@ -407,7 +408,11 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   `TARGET_NAME`/`TARGET_SERVICE_URL`만 바꾸면 된다(Traefik이 라우팅 담당,
   하나의 프로세스가 여러 업스트림을 다루는 방식은 아님) - 실제로 두 번째 target을
   띄워보는 것 자체는 이 세션 환경 밖의 일이라 코드/설정만 준비해뒀다.
-- 인증(P5-2): Target에서 실제 이관될 역할(RBAC) 모델 미반영
+- ~~인증(P5-2): Target에서 실제 이관될 역할(RBAC) 모델 미반영~~ **(2026-07-14 해결)**:
+  `users` 테이블에 `role`(`admin`/`viewer`) 컬럼, `users_api.py`(CRUD, 마지막 admin
+  강등 방지) + `auth.py`(`SessionResponse.role`, Traefik forwardAuth가 쓰기 요청에
+  `role=admin` 강제)까지 구현 완료 — 위 "프론트엔드 연동 API" 절 참고. 아직 없는 건
+  외부 IdP(SSO/LDAP) 연동이나 admin/viewer보다 세분화된 팀·타깃 단위 권한 정도.
 - 집계 API 갭 (2026-07-14 재확인 - 이 문단이 오래돼서 실제 상태와 어긋나 있었음):
   컨슈머 lag/DLQ 깊이/클록 차(`GET /stats/consumer-lag`, `/stats/dlq-depth`,
   `/stats/clock-skew` - `pipeline_health_api.py`),

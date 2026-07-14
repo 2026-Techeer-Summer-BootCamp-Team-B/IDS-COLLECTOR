@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { fetchEventsSince } from "../lib/authApi";
 import { mapLogDoc } from "../lib/normalizedEvent";
 import { getRealSeverityMeta } from "../data/realSeverity";
-import { LIVE_POLL_MS } from "../data/timeSeries";
 import { usePoll } from "./usePoll";
+import { usePollInterval } from "../context/PollIntervalContext";
 
 // GET /events/recent (servers/platform-api/app/events_api.py) 폴링 — events.normalized를
 // 직접 tail하던 WS(/ws/events, 구 servers/platform-api/app/event_stream.py)를 대체한다
 // (계약 v1.1 §7, 2026-07-14 팀 합의로 WS/pub-sub 경로 완전 제거). 다른 실데이터 패널과
-// 같은 LIVE_POLL_MS(2초) 간격으로 폴링하되, since(마지막으로 받은 이벤트의 @timestamp)를
-// 넘겨서 같은 이벤트를 중복 수신하지 않는다.
+// 같은 간격(usePollInterval, Admin 페이지에서 커스텀 가능 - 기본 2초)으로 폴링하되,
+// since(마지막으로 받은 이벤트의 @timestamp)를 넘겨서 같은 이벤트를 중복 수신하지 않는다.
 //
 // since 유무에 따라 응답 정렬이 다르다(app/events_api.py 참고): since 없는 최초 호출은
 // 최신순(desc), since를 준 이후 호출은 그 시각 이후 이벤트를 오래된순(asc)으로 준다 -
@@ -18,7 +18,8 @@ export function useLiveAttackFeed({ feedLimit = 40 } = {}) {
   const [feed, setFeed] = useState([]);
   const [lastCritical, setLastCritical] = useState(null);
   const sinceRef = useRef(null);
-  const pollTick = usePoll(LIVE_POLL_MS);
+  const { pollMs } = usePollInterval();
+  const pollTick = usePoll(pollMs);
 
   useEffect(() => {
     let cancelled = false;

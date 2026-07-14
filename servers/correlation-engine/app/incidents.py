@@ -100,6 +100,18 @@ async def fetch_active_allow_list() -> List[Dict[str, Optional[str]]]:
     return [{"ip_or_cidr": row["ip_or_cidr"], "target_name": row["target_name"]} for row in rows]
 
 
+async def fetch_poll_interval_seconds(key: str, default: int) -> int:
+    """poll_intervals 테이블(datastore/postgres/init/013-poll-intervals.sql,
+    platform-api의 GET/PATCH /poll-intervals API로 admin이 조절)에서 폴링 주기를
+    읽는다. app/main.py의 _allow_list_refresh_loop가 매 반복마다 다시 불러서
+    재시작 없이 바로 반영한다(2026-07-15). 행이 없으면(마이그레이션 누락 등)
+    default로 fail-open."""
+    assert _pool is not None, "incidents.start()를 먼저 호출해야 함"
+    async with _pool.acquire() as conn:
+        value = await conn.fetchval("SELECT seconds FROM poll_intervals WHERE key = $1", key)
+    return value if value is not None else default
+
+
 async def upsert_incident(
     scenario_db_id: str,
     scenario_name: str,

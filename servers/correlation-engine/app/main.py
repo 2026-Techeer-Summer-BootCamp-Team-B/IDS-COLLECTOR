@@ -47,7 +47,7 @@ _consumer_task: Optional[asyncio.Task] = None
 _engine: Optional[ScenarioEngine] = None
 _redis: Optional["redis.Redis"] = None
 _allow_list_task: Optional[asyncio.Task] = None
-_ALLOW_LIST_REFRESH_SECONDS = 30
+_ALLOW_LIST_REFRESH_SECONDS = 30  # poll_intervals 테이블에 행이 없을 때의 fail-open 기본값
 
 
 def _load_scenarios() -> list:
@@ -85,7 +85,11 @@ async def _allow_list_refresh_loop():
     캐시에 반영한다 - 매 이벤트마다 DB를 치면 상관분석 hot path에 지연이 그대로
     더해지니 폴링+캐시로 뺐다(incidents.fetch_active_allow_list() 참고).
     관리자가 allow_list에 새 항목을 추가/삭제해도 최대 이 주기만큼만 지나면
-    반영된다 - 즉시 반영이 필요해지면 나중에 Redis pub/sub 등으로 바꿀 것."""
+    반영된다 - 즉시 반영이 필요해지면 나중에 Redis pub/sub 등으로 바꿀 것.
+
+    주기 자체도 poll_intervals 테이블(platform-api GET/PATCH /poll-intervals)에서
+    매 반복마다 다시 읽는다(2026-07-15, 이전엔 코드에 아예 하드코딩돼 있어서 env var로도
+    못 바꿨음) - admin이 API로 바꾸면 재시작 없이 다음 반복부터 반영된다."""
     global _engine
     while True:
         try:
@@ -93,8 +97,11 @@ async def _allow_list_refresh_loop():
             if _engine is not None:
                 _engine.set_allow_list(entries)
         except Exception as e:
-            print(f"[correlation] allow_list 갱신 실패, {_ALLOW_LIST_REFRESH_SECONDS}초 후 재시도: {e}")
-        await asyncio.sleep(_ALLOW_LIST_REFRESH_SECONDS)
+            print(f"[correlation] allow_list 갱신 실패: {e}")
+        interval = await incidents.fetch_poll_interval_seconds(
+            "allow_list_refresh_seconds", _ALLOW_LIST_REFRESH_SECONDS
+        )
+        await asyncio.sleep(interval)
 
 
 async def _consume_loop():

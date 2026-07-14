@@ -12,7 +12,6 @@ engine이 target_id를 targets.name으로 JOIN해서 event.target_name과 비교
 (같은 IP라도 등록된 target과 다른 target 소속 이벤트면 억제 안 됨, 실측 확인됨).
 falco/k8s_audit 이벤트는 앱 단위가 아니라 클러스터 단위라 target_name이 항상
 없으므로 target_id로 스코프된 항목은 이런 이벤트엔 적용되지 않는다(전역 항목만 적용)."""
-from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,18 +20,13 @@ from pydantic import BaseModel
 from app.audit import record_action
 from app.auth import current_user_id
 from app.db import pool
+from app.timeparse import parse_iso8601_optional
 
 router = APIRouter(prefix="/allow-list", tags=["allow-list"])
 
 
 def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
-
-
-def _parse_iso(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 class AllowListIn(BaseModel):
@@ -102,7 +96,7 @@ async def create_allow_list_entry(body: AllowListIn, request: Request):
             body.ip_or_cidr,
             body.target_id,
             body.reason,
-            _parse_iso(body.expires_at),
+            parse_iso8601_optional(body.expires_at),
         )
     await record_action(
         "ALLOW_LIST_CREATED",
