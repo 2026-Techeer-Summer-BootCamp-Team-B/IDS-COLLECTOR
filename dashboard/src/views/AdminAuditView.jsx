@@ -9,6 +9,7 @@ import { useLogPolicies } from "../hooks/useLogPolicies";
 import { useExclusionRules } from "../hooks/useExclusionRules";
 import { useTrendReport } from "../hooks/useTrendReport";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
+import { renderMarkdownLite } from "../lib/markdownLite";
 import { usePollInterval } from "../context/PollIntervalContext";
 
 // 실시간 패널(Overview/WAS/Falco/K8sAudit + LiveTicker)이 공유하는 갱신 주기를
@@ -601,13 +602,18 @@ function TrendReportPanel({ scenarios }) {
       {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
       {status === "ready" && report && (
         <>
-          <p
+          <div
             className={`text-xs rounded-lg px-3 py-2 mb-3 ${
               report.configured ? "bg-dash-mint/10 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"
             }`}
           >
-            {report.message}
-          </p>
+            {report.configured ? renderMarkdownLite(report.message) : report.message}
+            {report.cached && (
+              <p className="text-dash-muted mt-2">
+                (탐지 결과에 변화가 없어 이전 요약을 그대로 표시 중)
+              </p>
+            )}
+          </div>
           {report.stats.length === 0 ? (
             <p className="text-dash-muted text-xs py-3">최근 7일간 인시던트가 없습니다.</p>
           ) : (
