@@ -1038,7 +1038,18 @@ export function DashboardContent() {
     () => (kpiFilter === "WARNING" ? rawLogs.filter((e) => e.severity === REAL_WARNING_SEVERITY) : rawLogs),
     [rawLogs, kpiFilter]
   );
-  const wasEventsForLatency = useMemo(() => displayEvents.filter((e) => e.module === "was"), [displayEvents]);
+
+  // API Latency 패널 전용 - 위 rawLogs(전체 모듈 뒤섞인 최근 300건)에서
+  // module==="was"만 골라내는 방식은 k8s_audit이 볼륨을 압도하는 클러스터에서는
+  // 300건 안에 WAS 이벤트가 하나도 안 걸려 패널이 "데이터 없음"으로 보이는
+  // 문제가 있었다(2026-07-14, 실측 확인 - WASView.jsx는 처음부터 module: "was"로
+  // 서버에 직접 필터링해서 이 문제가 없었음). 여기도 같은 패턴으로 맞춘다.
+  const { logs: wasEventsForLatency } = useLogs({
+    lookbackMs: preset.lookbackMs,
+    module: "was",
+    limit: 300,
+    pollMs: LIVE_POLL_MS,
+  });
 
   // GET /stats/top-ips — 실제 백엔드 집계. kpiFilter가 SOURCES면 더 많이(limit
   // 10) 보여주므로 그만큼 넉넉히 요청.
