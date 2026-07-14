@@ -9,8 +9,10 @@
 // local `npm run dev` (separate Vite port, no Traefik in front of it), set
 // VITE_API_BASE_URL to either `http://localhost/api` (through Traefik) or
 // `http://localhost:8400` (straight to platform-api, per README's port
-// table — "직결, 디버깅용"). CORS is already wide open on the backend
-// (CORS_ALLOWED_ORIGINS=*) so a cross-origin absolute URL works fine.
+// table — "직결, 디버깅용". Bound to the docker host's 127.0.0.1 only —
+// SSH tunnel it (ssh -L 8400:localhost:8400 <host>) if the compose stack
+// runs on a remote host like the GCP VM). CORS is already wide open on the
+// backend (CORS_ALLOWED_ORIGINS=*) so a cross-origin absolute URL works fine.
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 const TOKEN_KEY = "sentinel_ops_token";
@@ -120,23 +122,16 @@ export function fetchIncidentsSince(since) {
   return apiGet(`/incidents${qs}`);
 }
 
-// ---- /ws/events (servers/platform-api/app/event_stream.py) ----
+// ---- /events/recent (servers/platform-api/app/events_api.py) ----
 
-// 개별 정규화 이벤트 실시간 스트림(LiveTicker/CriticalAlertPopup용) — 인시던트
-// 폴링(fetchIncidentsSince)과 달리 이건 진짜 WebSocket이다. Traefik이 /api/*
-// 앞단에서 forwardAuth를 거는데, 브라우저 WebSocket API는 커스텀 헤더(Authorization)를
-// 못 실어 보내므로 auth.py의 verify()가 대신 X-Forwarded-Uri의 쿼리스트링에서
-// `?token=`을 읽도록 되어 있다 — 그래서 여기서 토큰을 쿼리스트링으로 붙인다.
-//
-// API_BASE가 상대경로("/api", Traefik 경유)든 절대 URL(http://host:8400, 직결)이든
-// 둘 다 처리: new URL(base, location.origin)으로 절대화한 뒤 http(s)->ws(s)만
-// 바꾸고 path는 그대로 이어붙인다 - Traefik 경유면 PathPrefix(`/api`)가 스트립하는
-// prefix가 그대로 남아 있어야 라우팅되고, 직결이면 애초에 prefix가 없다.
-export function wsUrl(path) {
-  const base = new URL(API_BASE, window.location.origin);
-  const protocol = base.protocol === "https:" ? "wss:" : "ws:";
-  const basePath = base.pathname.endsWith("/") ? base.pathname.slice(0, -1) : base.pathname;
-  const token = getToken();
-  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${protocol}//${base.host}${basePath}${path}${qs}`;
+// 개별 정규화 이벤트 실시간 티커(LiveTicker/CriticalAlertPopup용) — 인시던트
+// 폴링(fetchIncidentsSince)과 같은 since 패턴의 REST 폴링이다(2026-07-14, WS
+// /ws/events(구 app/event_stream.py) 제거 후 대체 — 계약 v1.1 §7. 일반
+// Authorization 헤더를 그대로 쓰므로 WS 전용 쿼리스트링 토큰 처리(옛 wsUrl)가
+// 더 이상 필요 없다). since를 안 주면 최신순 상위 limit건, since(ISO8601)를
+// 주면 그 시각 이후 이벤트만 오래된순으로 온다.
+export function fetchEventsSince(since, limit = 50) {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (since) qs.set("since", since);
+  return apiGet(`/events/recent?${qs.toString()}`);
 }

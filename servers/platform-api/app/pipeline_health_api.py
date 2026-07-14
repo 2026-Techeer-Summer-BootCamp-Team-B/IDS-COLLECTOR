@@ -23,10 +23,12 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 # group_id -> 그 그룹이 구독하는 토픽. servers/docker-compose.yml의 각 서비스
 # KAFKA_CONSUMER_GROUP/KAFKA_SOURCE_TOPICS/KAFKA_NORMALIZED_TOPIC 환경변수를 그대로
 # 옮겨 적은 것 - 저쪽이 바뀌면 여기도 같이 바꿔야 한다(자동 동기화 아님).
+# "platform-api-event-stream" 그룹(구 app/event_stream.py의 /ws/events 직접 tail
+# 컨슈머)은 2026-07-14 계약 v1.1 §7에 따라 제거됨 - 더 이상 존재하지 않는 컨슈머
+# 그룹의 lag을 모니터링하면 커밋이 영원히 안 되는 허수 lag만 나오므로 목록에서 뺐다.
 _MONITORED_GROUPS: Dict[str, List[str]] = {
     "normalizer-workers": ["events.was", "events.waf", "events.falco", "events.audit"],
     "correlation-engine": ["events.normalized"],
-    "platform-api-event-stream": ["events.normalized"],
 }
 
 # normalizer가 파싱/정규화 실패 시 버리는 대신 보내는 토픽(KAFKA_DLQ_TOPIC) - 이걸

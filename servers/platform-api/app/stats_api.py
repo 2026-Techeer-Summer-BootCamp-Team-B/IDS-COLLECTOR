@@ -125,9 +125,12 @@ def _pct_delta(current: int, previous: int) -> Optional[float]:
 
 
 @router.get("/kpi")
-async def get_kpi(hours: int = 24) -> Dict[str, Any]:
+async def get_kpi(hours: float = 24) -> Dict[str, Any]:
     """Overview 상단 KPI 카드 4개(Total/Errors/Warnings/Active Sources) - 현재
-    구간과 바로 직전 동일 길이 구간을 함께 계산해서 델타(%)도 같이 내려준다."""
+    구간과 바로 직전 동일 길이 구간을 함께 계산해서 델타(%)도 같이 내려준다.
+
+    hours가 int면 1시간 미만 RANGE_PRESETS(1분/5분/15분/30분)에서 422가 난다 -
+    /stats/volume과 동일한 이유로 float (2026-07-14)."""
     now = datetime.now(timezone.utc)
     current_start = now - timedelta(hours=hours)
     previous_start = current_start - timedelta(hours=hours)
@@ -148,12 +151,17 @@ async def get_kpi(hours: int = 24) -> Dict[str, Any]:
 
 
 @router.get("/volume")
-async def get_volume(hours: int = 24, buckets: int = 25, module: Optional[str] = None) -> Dict[str, Any]:
+async def get_volume(hours: float = 24, buckets: int = 25, module: Optional[str] = None) -> Dict[str, Any]:
     """Log Volume 차트 - date_histogram으로 시간대별 total/errors(severity>=3)
     카운트. 프론트가 timeSeries.js의 formatBucketLabel로 라벨을 입힌다(버킷 폭
     계산은 여기서, 라벨 포맷은 프론트에서 - RANGE_PRESETS와 동일한 표기 유지).
     module이 주어지면 WAS/Falco/K8s Audit 상세 뷰가 event.module로 필터링해서
-    같은 차트를 재사용한다."""
+    같은 차트를 재사용한다.
+
+    hours는 int가 아니라 float이어야 한다 - 프론트 RANGE_PRESETS의 1분/5분/15분/30분
+    같은 1시간 미만 구간은 lookbackMs/3600000이 정수가 아니라서(예: 1분=0.0167)
+    int로 받으면 422(Input should be a valid integer)로 거부당한다(2026-07-14,
+    "Last 1 minute" 선택 시 Log Volume이 안 뜨던 원인 - 실측 확인)."""
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
     interval_seconds = max(int(hours * 3600 / max(buckets, 1)), 60)
@@ -191,10 +199,12 @@ async def get_volume(hours: int = 24, buckets: int = 25, module: Optional[str] =
 
 
 @router.get("/levels")
-async def get_levels(hours: int = 24, module: Optional[str] = None) -> Dict[str, Any]:
+async def get_levels(hours: float = 24, module: Optional[str] = None) -> Dict[str, Any]:
     """Log Levels 차트 - event.severity(1~4) 분포. WAF가 비활성화된 뒤로는
     1~4 정수 스케일이 전부라, 예전 9단계 mock과 달리 그대로 4개 막대로 나간다.
-    module이 주어지면 해당 event.module로만 필터링한다."""
+    module이 주어지면 해당 event.module로만 필터링한다.
+
+    hours는 float (2026-07-14, /stats/kpi·/stats/volume과 동일 이유)."""
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
 

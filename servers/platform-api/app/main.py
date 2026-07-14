@@ -1,8 +1,9 @@
 """
 플랫폼 API 서비스 (P5).
 
-프론트엔드는 별도 팀/레포에서 만든다 - 이 서비스가 REST(+WebSocket) API로 유일한
-연동 지점이다. 명세는 저장소 루트 README.md의 "프론트엔드 연동 API" 절 참고.
+프론트엔드는 별도 팀/레포에서 만든다 - 이 서비스가 REST API로 유일한 연동 지점이다
+(계약 v1.1 §7 확정: 대시보드는 주기 폴링 단일 모델, WebSocket/Redis pub/sub 경로는
+없음). 명세는 저장소 루트 README.md의 "프론트엔드 연동 API" 절 참고.
 
 - 인시던트 API (P5-1): app/incidents_api.py - 목록/상세/상태 변경(open→investigating→closed) +
   timeline(incident_events를 OpenSearch와 조인한 스토리라인)
@@ -11,16 +12,19 @@
 - 인증 (P5-2): app/auth.py - login/logout/session, users 테이블(pgcrypto 해시) 실사용자 검증.
   인증 강제는 앱(Depends)이 아니라 Traefik forwardAuth가 담당(servers/docker-compose.yml의
   platform-api-auth 미들웨어 -> app/auth.py의 GET /auth/verify 호출, 200이면 X-Auth-User-Id/
-  X-Auth-Username/X-Auth-Role 헤더를 실어 원 요청을 통과시킴) - 읽기(GET, WS 핸드셰이크
-  포함)는 로그인만, 쓰기(POST/PATCH/DELETE)는 role=admin만 통과. WebSocket(/ws/events)은
-  브라우저가 커스텀 헤더를 못 보내서 `?token=` 쿼리스트링으로 토큰을 받아 /verify가
-  X-Forwarded-Uri에서 파싱한다. 세션은 Redis에 저장(session:{token}, TTL=
+  X-Auth-Username/X-Auth-Role 헤더를 실어 원 요청을 통과시킴) - 읽기(GET)는 로그인만,
+  쓰기(POST/PATCH/DELETE)는 role=admin만 통과. 세션은 Redis에 저장(session:{token}, TTL=
   settings.session_ttl_seconds)돼 재시작에도 살아남는다. 주의: platform-api:8400
-  직결 포트(로컬 디버깅용)는 Traefik을 안 거치므로 이 인증이 전혀 적용되지 않는다
+  직결 포트(로컬 디버깅용, servers/docker-compose.yml에서 호스트 127.0.0.1에만
+  바인딩됨)는 Traefik을 안 거치므로 이 인증이 전혀 적용되지 않는다 - GCP VM 등
+  원격 호스트에서 이 포트로 붙으려면 SSH 터널이 필요하다(예: ssh -L 8400:localhost:8400 <host>)
 - 알림 채널 (P5-3): app/notifications.py - app/incident_alerts.py가 notified_at IS NULL인
   인시던트를 폴링해서 발송(트리거)
 - AI 트렌드 리포트 (P5-4): app/ai_report.py - Gemini API 미설정이면 통계만 반환
 - Logs API: app/logs_api.py - attack-logs-* OpenSearch 인덱스 조회
+- Events API(개별 이벤트 티커): app/events_api.py - GET /events/recent?since=&limit=,
+  attack-logs-* OpenSearch 인덱스를 since 폴링(대시보드 하단 티커/CRITICAL 팝업이 소비 -
+  2026-07-14부로 WebSocket(/ws/events, app/event_stream.py) 직접 tail 방식을 대체)
 - Stats API: app/stats_api.py(OpenSearch module/severity terms agg) +
   app/analytics_api.py(ClickHouse 시계열/GeoIP/K8s타겟/Top IP 집계) +
   app/pipeline_health_api.py(컨슈머 lag/DLQ 깊이/클록 차이 - 자체 파이프라인 헬스,
@@ -38,10 +42,14 @@
 - 인시던트 실시간 팝업(P7-1): 전용 엔드포인트 없음 - 프론트가 GET /incidents?since=
   <마지막_확인_시각>을 3~5초 주기로 폴링해서 새 CRITICAL 인시던트를 감지한다
   (2026-07-13 이전엔 WebSocket(/ws/incidents)으로 push했으나 제거됨 - app/incident_alerts.py
-  참고). 일반 Authorization 헤더로 인증되므로 WS `?token=` 우회가 필요 없다.
-- WebSocket 릴레이(개별 이벤트): app/event_stream.py - events.normalized를 직접
-  tail해서 개별 정규화 이벤트를 /ws/events로 릴레이(하단 티커용 "개별 탐지" 단위
-  스트림 - 인시던트 단위 팝업은 위처럼 GET /incidents?since= 폴링으로 따로 처리)
+  참고).
+
+기동 순서 경쟁: Postgres/ClickHouse/OpenSearch 연결(각각 app/db.py, app/clickhouse_client.py,
+app/opensearch_client.py)은 이 서비스가 아직 안 떴을 때 기동하면 실패할 수 있어서
+Kafka 컨슈머(normalizer/correlation-engine)와 동일하게 재시도 루프로 감싸져 있다.
+/health는 백그라운드 알림 폴링 태스크(_alert_poll_task)가 죽었으면 503을 반환한다 -
+프로세스는 살아있는데 폴링만 죽어서 Slack/Discord 알림이 조용히 멈추는 걸 감지하기
+위함(servers/docker-compose.yml의 healthcheck가 이 엔드포인트를 주기 폴링).
 
 실행 방법 (컨테이너): servers/docker-compose.yml 포함, 저장소 루트에서 `make up`
 (또는 `docker compose -f servers/docker-compose.yml up -d --build`)으로 기동.
@@ -52,8 +60,9 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app import clickhouse_client, db
+from app import clickhouse_client, db, opensearch_client
 from app.ai_report import generate_trend_report
 from app.alert_configs_api import router as alert_configs_router
 from app.analytics_api import router as analytics_router
@@ -63,8 +72,7 @@ from app.audit_logs_api import router as audit_logs_router
 from app.auth import router as auth_router
 from app.banned_ips_api import router as banned_ips_router
 from app.config import settings
-from app.event_stream import relay_loop as events_relay_loop
-from app.event_stream import router as event_stream_router
+from app.events_api import router as events_router
 from app.incident_alerts import poll_loop as incident_alerts_poll_loop
 from app.incidents_api import router as incidents_router
 from app.logs_api import router as logs_router
@@ -100,34 +108,46 @@ app.include_router(banned_ips_router)
 app.include_router(targets_router)
 app.include_router(users_router)
 app.include_router(allow_list_router)
-app.include_router(event_stream_router)
+app.include_router(events_router)
 
 _alert_poll_task: Optional[asyncio.Task] = None
-_event_relay_task: Optional[asyncio.Task] = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global _alert_poll_task, _event_relay_task
+    global _alert_poll_task
     await db.start()
     await clickhouse_client.start()
+    await opensearch_client.start()
     _alert_poll_task = asyncio.create_task(incident_alerts_poll_loop())
-    _event_relay_task = asyncio.create_task(events_relay_loop())
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    for task in (_alert_poll_task, _event_relay_task):
-        if task:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+    if _alert_poll_task:
+        _alert_poll_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _alert_poll_task
     await clickhouse_client.stop()
     await db.stop()
 
 
+def _dead_task_reason() -> Optional[str]:
+    """백그라운드 알림 폴링 태스크(app/incident_alerts.py)가 살아있지 않은 이유(있으면) -
+    /health가 503을 반환할지 판단하는 근거. None이면 정상. (/ws/events 제거 이후
+    platform-api의 유일한 백그라운드 태스크)"""
+    if _alert_poll_task is None:
+        return "alert poll task not started"
+    if _alert_poll_task.done():
+        return "alert poll task exited"
+    return None
+
+
 @app.get("/health")
 def health_check():
+    reason = _dead_task_reason()
+    if reason:
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": reason})
     return {"status": "ok"}
 
 

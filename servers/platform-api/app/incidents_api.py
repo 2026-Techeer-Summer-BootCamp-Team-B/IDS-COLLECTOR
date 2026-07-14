@@ -2,6 +2,7 @@
 incident_events 서브 리소스 + timeline(스토리라인) 서브 리소스.
 datastore/postgres/init/001-schema.sql의 incidents/incident_events/scenario_rules
 참고."""
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -88,7 +89,11 @@ async def list_incidents(status: Optional[str] = None, since: Optional[str] = No
         params.append(status)
         clauses.append(f"status = ${len(params)}")
     if since:
-        params.append(since)
+        # asyncpg는 문자열을 timestamptz 파라미터로 암묵 변환하지 않는다(psycopg2와
+        # 달리 "expected a datetime.date or datetime.datetime instance, got 'str'"로
+        # 거부) - ISO8601을 datetime으로 직접 변환해서 바인딩해야 한다(2026-07-14,
+        # since 폴링이 항상 500이던 원인 - 실측 확인).
+        params.append(datetime.fromisoformat(since.replace("Z", "+00:00")))
         clauses.append(f"created_at > ${len(params)}")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     order = "created_at ASC" if since else "updated_at DESC"
