@@ -53,25 +53,27 @@ export const DEFAULT_CHART_TYPES = {
 
 export const DEFAULT_OVERVIEW_LAYOUT = [
   // Row 1 - KPI 카드 4개 (기본모드의 flex-wrap 행과 동일한 순서)
-  { i: "kpi-total", x: 0, y: 0, w: 3, h: 3 },
-  { i: "kpi-errors", x: 3, y: 0, w: 3, h: 3 },
-  { i: "kpi-warnings", x: 6, y: 0, w: 3, h: 3 },
-  { i: "kpi-sources", x: 9, y: 0, w: 3, h: 3 },
+  // h=3(92px)이었을 때 KpiCard 실제 콘텐츠(라벨+큰 숫자+delta, p-5 패딩)가
+  // 안 들어가서 내부 스크롤이 생기던 버그 수정 - h=6(200px)로 확보.
+  { i: "kpi-total", x: 0, y: 0, w: 3, h: 6 },
+  { i: "kpi-errors", x: 3, y: 0, w: 3, h: 6 },
+  { i: "kpi-warnings", x: 6, y: 0, w: 3, h: 6 },
+  { i: "kpi-sources", x: 9, y: 0, w: 3, h: 6 },
   // Row 2 - 로그 개요 (막대 8 : 4)
-  { i: "log-volume", x: 0, y: 3, w: 8, h: 9 },
-  { i: "level-distribution", x: 8, y: 3, w: 4, h: 9 },
+  { i: "log-volume", x: 0, y: 6, w: 8, h: 9 },
+  { i: "level-distribution", x: 8, y: 6, w: 4, h: 9 },
   // Row 3 - 보안 탐지 요약 도넛 3개
-  { i: "donut-source", x: 0, y: 12, w: 4, h: 9 },
-  { i: "donut-severity", x: 4, y: 12, w: 4, h: 9 },
-  { i: "donut-k8s-namespace", x: 8, y: 12, w: 4, h: 9 },
+  { i: "donut-source", x: 0, y: 15, w: 4, h: 9 },
+  { i: "donut-severity", x: 4, y: 15, w: 4, h: 9 },
+  { i: "donut-k8s-namespace", x: 8, y: 15, w: 4, h: 9 },
   // Row 4 - API Latency
-  { i: "latency-stats", x: 0, y: 21, w: 12, h: 5 },
+  { i: "latency-stats", x: 0, y: 24, w: 12, h: 5 },
   // Row 5 - Recent Logs(8) + Top Sources/Error Rate(4)
-  { i: "recent-logs", x: 0, y: 26, w: 8, h: 14 },
-  { i: "top-sources", x: 8, y: 26, w: 4, h: 7 },
-  { i: "error-rate", x: 8, y: 33, w: 4, h: 7 },
+  { i: "recent-logs", x: 0, y: 29, w: 8, h: 14 },
+  { i: "top-sources", x: 8, y: 29, w: 4, h: 7 },
+  { i: "error-rate", x: 8, y: 36, w: 4, h: 7 },
   // Row 6 - Geo 지도
-  { i: "geo-summary", x: 0, y: 40, w: 12, h: 11 },
+  { i: "geo-summary", x: 0, y: 43, w: 12, h: 11 },
 ];
 
 function loadMode() {
