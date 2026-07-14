@@ -113,3 +113,26 @@ services:
       - "traefik.http.middlewares.platform-api-stripprefix.stripprefix.prefixes=/api"
       - "traefik.http.middlewares.platform-api-auth.forwardauth.address=http://platform-api:8400/auth/verify"
       - "traefik.http.middlewares.platform-api-auth.forwardauth.authResponseHeaders=X-Auth-User-Id,X-Auth-Username,X-Auth-Role"
+
+  dashboard:
+    # 빌드 컨텍스트가 다른 서비스들과 다르게 dashboard/ 자신이다 - Node 빌드에
+    # servers/의 공유 스키마가 전혀 필요 없기 때문(dashboard/Dockerfile 참고).
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    container_name: dashboard
+    restart: unless-stopped
+    networks:
+      - siem-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=siem-net"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=80"
+
+      # "/" 캐치올 - platform-api 라우터들(priority 10/20)보다 낮은 우선순위를 줘서
+      # /api/*는 항상 platform-api가 먼저 채간다. 나머지 전부(정적 파일 + SPA 새로고침
+      # 진입 경로)는 dashboard의 nginx가 처리(dashboard/nginx.conf의 index.html fallback).
+      - "traefik.http.routers.dashboard.entrypoints=web"
+      - "traefik.http.routers.dashboard.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.dashboard.priority=1"
+      - "traefik.http.routers.dashboard.service=dashboard"
