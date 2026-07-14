@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useCallback, useState } from "react";
 
-// Overview 페이지 "사용자 모드"(위젯 드래그 이동 + 마우스 리사이즈) 상태.
-// v1 범위: 배치/크기 커스텀만 - 위젯이 보여주는 차트 종류(선/막대/도넛) 변경은
-// 여기 포함하지 않는다(다음 버전에서 위젯별 "표시 방식" 필드를 추가할 계획).
+// Overview 페이지 "사용자 모드"(위젯 드래그 이동 + 마우스 리사이즈 + 위젯별
+// 차트 타입 전환) 상태.
 //
 // mode: "default"(기존 고정 레이아웃, 지금까지의 Overview 그대로) | "custom"(자유
 // 배치 그리드). 기본모드는 지금 JSX를 한 글자도 안 바꾸고 그대로 두므로 이 기능이
@@ -10,9 +9,47 @@ import React, { createContext, useContext, useCallback, useState } from "react";
 // 격리하는 게 이 토글 구조의 핵심 목적.
 //
 // layout: react-grid-layout이 쓰는 {i, x, y, w, h}[] 배열. 위젯 id(i)별 그리드
-// 좌표/크기 - WIDGET_IDS(LogDashboard.jsx)와 반드시 짝이 맞아야 한다.
+// 좌표/크기 - DEFAULT_OVERVIEW_LAYOUT과 반드시 짝이 맞아야 한다.
+//
+// chartTypes: 위젯 id -> 차트 타입("area"/"bar"/"donut") 맵. 데이터 모양이
+// 안 맞는 위젯(KPI 카드, 테이블, 지도 등)은 아예 이 맵에 없고, CHART_TYPE_OPTIONS에
+// 등록된 위젯만 WidgetFrame에 타입 전환 버튼이 뜬다(LogDashboard.jsx 참고).
 const STORAGE_MODE_KEY = "sentinelops_overview_mode";
 const STORAGE_LAYOUT_KEY = "sentinelops_overview_layout_v1";
+const STORAGE_CHART_TYPES_KEY = "sentinelops_overview_chart_types_v1";
+
+// 위젯별로 허용되는 차트 타입들 - 데이터가 시계열(구간별 건수)이면 area/bar,
+// 카테고리 집계(항목별 건수)면 donut/bar만 의미가 있어서 위젯마다 다르게 정의.
+export const CHART_TYPE_OPTIONS = {
+  "log-volume": [
+    { value: "area", label: "영역" },
+    { value: "bar", label: "막대" },
+  ],
+  "level-distribution": [
+    { value: "bar", label: "막대" },
+    { value: "donut", label: "도넛" },
+  ],
+  "donut-source": [
+    { value: "donut", label: "도넛" },
+    { value: "bar", label: "막대" },
+  ],
+  "donut-severity": [
+    { value: "donut", label: "도넛" },
+    { value: "bar", label: "막대" },
+  ],
+  "donut-k8s-namespace": [
+    { value: "donut", label: "도넛" },
+    { value: "bar", label: "막대" },
+  ],
+};
+
+export const DEFAULT_CHART_TYPES = {
+  "log-volume": "area",
+  "level-distribution": "bar",
+  "donut-source": "donut",
+  "donut-severity": "donut",
+  "donut-k8s-namespace": "donut",
+};
 
 export const DEFAULT_OVERVIEW_LAYOUT = [
   // Row 1 - KPI 카드 4개 (기본모드의 flex-wrap 행과 동일한 순서)
@@ -58,11 +95,31 @@ function loadLayout() {
   }
 }
 
+function loadChartTypes() {
+  if (typeof window === "undefined") return DEFAULT_CHART_TYPES;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_CHART_TYPES_KEY);
+    if (!raw) return DEFAULT_CHART_TYPES;
+    const parsed = JSON.parse(raw);
+    // 저장된 값 중 지금도 유효한 옵션인 것만 반영하고, 나머지(새로 추가된
+    // 위젯 등)는 기본값으로 채운다 - loadLayout()의 폴백과 같은 이유.
+    const merged = { ...DEFAULT_CHART_TYPES };
+    for (const [widgetId, type] of Object.entries(parsed)) {
+      const validTypes = (CHART_TYPE_OPTIONS[widgetId] || []).map((o) => o.value);
+      if (validTypes.includes(type)) merged[widgetId] = type;
+    }
+    return merged;
+  } catch {
+    return DEFAULT_CHART_TYPES;
+  }
+}
+
 const OverviewLayoutContext = createContext(null);
 
 export function OverviewLayoutProvider({ children }) {
   const [mode, setModeState] = useState(loadMode);
   const [layout, setLayoutState] = useState(loadLayout);
+  const [chartTypes, setChartTypesState] = useState(loadChartTypes);
 
   const setMode = useCallback((next) => {
     setModeState(next);
@@ -86,8 +143,24 @@ export function OverviewLayoutProvider({ children }) {
     setLayout(DEFAULT_OVERVIEW_LAYOUT);
   }, [setLayout]);
 
+  const setChartType = useCallback((widgetId, type) => {
+    const validTypes = (CHART_TYPE_OPTIONS[widgetId] || []).map((o) => o.value);
+    if (!validTypes.includes(type)) return;
+    setChartTypesState((prev) => {
+      const next = { ...prev, [widgetId]: type };
+      try {
+        window.localStorage.setItem(STORAGE_CHART_TYPES_KEY, JSON.stringify(next));
+      } catch {
+        // 무시
+      }
+      return next;
+    });
+  }, []);
+
   return (
-    <OverviewLayoutContext.Provider value={{ mode, setMode, layout, setLayout, resetLayout }}>
+    <OverviewLayoutContext.Provider
+      value={{ mode, setMode, layout, setLayout, resetLayout, chartTypes, setChartType }}
+    >
       {children}
     </OverviewLayoutContext.Provider>
   );
@@ -102,6 +175,8 @@ export function useOverviewLayout() {
       layout: DEFAULT_OVERVIEW_LAYOUT,
       setLayout: () => {},
       resetLayout: () => {},
+      chartTypes: DEFAULT_CHART_TYPES,
+      setChartType: () => {},
     };
   }
   return ctx;
