@@ -92,6 +92,13 @@ def normalize_was(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "http.response.status_code": status,
             "http.response.body.bytes": payload.get("body_bytes_sent"),
             "user_agent.original": payload.get("user_agent"),
+            # nginx-was-logger가 Downward API(POD_NAME/POD_NAMESPACE)로 자기 자신의
+            # 실제 pod를 log_format에 실어 보낸 값(juice-shop-nginx-configmap.yaml
+            # 참고) - 정적 하드코딩이 아니라 이 로그를 실제로 남긴 pod를 항상 정확히
+            # 가리킨다. enrichment.py는 이 값이 비어 있을 때만 폴백으로 채운다.
+            "orchestrator.namespace": payload.get("orchestrator_namespace") or None,
+            "orchestrator.resource.type": "pod" if payload.get("orchestrator_pod") else None,
+            "orchestrator.resource.name": payload.get("orchestrator_pod") or None,
         }
     )
 
@@ -105,7 +112,8 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
     """WafAlert 한 건을 NormalizedEvent로 변환.
 
     wire 필드: attack_type / risk_level / matched_rule_id / payload_snippet /
-    target_endpoint / http_method / user_agent / blocked / mode (+ client_ip).
+    target_endpoint / http_method / user_agent / blocked / mode / source_ip
+    (+ target_pod_name / target_namespace).
     센서 개편으로 필드명이 바뀌면 이 파서와 본 계약 문서를 같이 갱신할 것.
     """
     return NormalizedEvent(
@@ -122,7 +130,7 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "event.severity": get_severity("waf", payload),
             "event.original": original,
             "rule.id": payload.get("matched_rule_id"),
-            "source.ip": payload.get("client_ip"),
+            "source.ip": payload.get("source_ip"),
             "http.request.method": payload.get("http_method"),
             "url.path": payload.get("target_endpoint"),
             "user_agent.original": payload.get("user_agent"),
@@ -130,6 +138,13 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "waf.payload_snippet": payload.get("payload_snippet"),
             "waf.blocked": payload.get("blocked"),
             "waf.mode": payload.get("mode"),
+            # WAF backend가 Juice Shop의 응답 헤더(X-Served-By-Pod/Namespace)를 그대로
+            # 옮겨 담은 값(app/proxy/proxy.py 참고) - prevention 모드로 차단된 요청은
+            # Juice Shop까지 안 가서 둘 다 None. enrichment.py는 이 값이 비어 있을
+            # 때만(예: 차단된 요청) 폴백으로 채운다.
+            "orchestrator.namespace": payload.get("target_namespace") or None,
+            "orchestrator.resource.type": "pod" if payload.get("target_pod_name") else None,
+            "orchestrator.resource.name": payload.get("target_pod_name") or None,
         }
     )
 

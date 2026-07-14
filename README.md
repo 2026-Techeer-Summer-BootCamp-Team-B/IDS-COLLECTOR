@@ -353,8 +353,15 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 
 - WAF의 `rule.name`은 아직 `rule.id`(matched_rule_id)와 같은 값 재사용 중 - 센서가
   별도 규칙 이름 필드를 주면 분리할 것
-- was/waf의 정적 orchestrator 매핑(`juice-shop-68ccbc74b4-xh7r8` 등)은 하드코딩 -
-  실제 배포 pod 이름이 바뀌면 `app/enrichment.py`만 교체 (나중엔 K8s API 조회로 대체 가능)
+- ~~was/waf의 정적 orchestrator 매핑은 하드코딩~~ **(2026-07-14 해결)**: nginx-was-logger
+  사이드카가 Downward API(POD_NAME/POD_NAMESPACE)로 자기 pod를 알아내 was 로그와 모든
+  응답에 `X-Served-By-Pod`/`X-Served-By-Namespace` 헤더로 실어 보내고, WAF backend는
+  Juice Shop을 프록시할 때 그 헤더를 그대로 옮겨 담아 WafAlert에 실음(Target 저장소
+  `juice-shop-nginx-configmap.yaml`/`app/proxy/proxy.py` 참고) - `normalize_was`/
+  `normalize_waf`가 이 값을 `orchestrator.*`로 파싱하므로 재배포로 pod 해시가 바뀌거나
+  레플리카가 여러 개여도 항상 실제로 그 이벤트를 만든 pod를 정확히 가리킨다.
+  `enrichment.py`의 정적 값은 이제 이 값이 비어 있는 경우(WAF prevention 모드로 차단돼
+  Juice Shop 응답 자체가 없었던 요청)에만 쓰이는 최후 폴백으로 격하됨.
 - was의 XFF(`http_x_forwarded_for`): Target(Techeer-12th-b)의
   `juice-shop-nginx-configmap.yaml` log_format에 필드를 추가함(2026-07-12) - 이제
   값이 실려오는지는 실측 확인 필요. `request_time`/`body_bytes_sent`는 확인 결과
@@ -372,6 +379,29 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   technique_id는 아직 일부(T1609/T1552/T1190/T1136/T1098/T1485/T1133/T1613/T1685/
   T1610/T1611)뿐 (시크릿 enumeration은 검토 결과 falcosecurity/plugins의 실제
   룰에도 "get 성공/실패"뿐 - 별도 정교화 근거 없어서 현행 S2 유지)
+- **프로덕션 크로스-서버 OTLP 인그레스 보안(TODO, 미착수)**: 지금 `CENTRAL_SIEM_OTLP_ENDPOINT=traefik:4317`
+  (Techeer-12th-b/otel-collector-deployment.yaml)과 `otlp: tls: insecure: true`
+  (servers/otel/config/otel-config.yaml)는 전부 "k3d와 docker-compose가 같은
+  Docker Desktop 호스트 위에 있다"는 로컬 개발 전제로 짜여 있다 - `host.docker.internal`/
+  `host.k3d.internal` 둘 다 같은 vpnkit NAT 홉을 타서 h2c preface 핸드셰이크가
+  깨지는 문제가 있어(otel-collector-deployment.yaml 주석 참고) `docker network
+  connect siem-net k3d-...`로 같은 브리지에 직접 붙이는 방식을 씀.
+  프로덕션에서는 수집 대상(k3d) 서버와 Central SIEM(docker-compose, Traefik) 서버가
+  완전히 분리된 네트워크라 위 방식 자체가 적용 불가 - 공인 인터넷/도메인을 거쳐야 함.
+  이 경우 필요한 것:
+  - **mTLS**: `proxy/traefik/traefik.yml`의 `otlp-grpc` 엔트리포인트에 서버 인증서 +
+    클라이언트 인증서 요구(`tls.options`의 clientAuth) 추가. 지금은 PathPrefix(`/`)만
+    매치하고 인증이 전혀 없어서 4317이 열리는 순간 누구나 가짜 OTLP 로그를 찔러넣어
+    SIEM을 오염시킬 수 있음. k3d 쪽 otel-collector exporter도 `insecure: true`를
+    걷어내고 발급받은 클라이언트 인증서로 붙게 변경.
+  - **소스 IP 방화벽 제한**: mTLS와 별개로 클라우드 보안그룹/방화벽에서 4317을
+    k3d 서버의 고정 아웃바운드 IP로만 허용(defense-in-depth).
+  - **대시보드·디버그 포트 비공개**: `proxy/docker-compose.yml`의 Traefik 대시보드(8080,
+    인증 없음 - 코드 주석에도 "local dev only"로 명시됨)와 `servers/docker-compose.yml`의
+    platform-api 직결 포트(8400)는 공인 서버에 그대로 열면 안 됨 - 프로덕션 compose
+    오버라이드에서 포트 노출 제거하거나 별도 인증 필요.
+  - 인증서는 아직 미발급 - 도메인/배포 서버 확정되면 자체 CA(openssl)로 서버·클라이언트
+    인증서 양쪽 발급 예정.
 - request body 파싱(2026-07-12): S12/S13(RBAC 룰/바인딩) → S16(pod 보안 컨텍스트)
   → S17/S18(NodePort Service/ConfigMap 자격증명)까지 확장 완료. `k3d-audit-policy.yaml`이
   roles/clusterroles/rolebindings/clusterrolebindings(RequestResponse) +
