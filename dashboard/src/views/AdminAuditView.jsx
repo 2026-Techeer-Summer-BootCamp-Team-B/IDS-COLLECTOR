@@ -376,6 +376,35 @@ function AllowListPanel({ entries, status, error, targets, onCreate, onDelete })
   );
 }
 
+// 페이지가 너무 길어져서(정책/룰/타깃/알림/리포트/감사로그 7개 패널) 성격이
+// 비슷한 것끼리 3개 탭으로 나눴다 - 스크롤을 줄이는 목적이라 데이터/훅은
+// 그대로 한 번에 다 불러오고(탭 전환해도 재요청 없음), 화면에 뭘 그릴지만 나눈다.
+const ADMIN_TABS = [
+  { key: "policy", label: "탐지 · 정책" },
+  { key: "targets", label: "대상 · 알림" },
+  { key: "audit", label: "감사 로그" },
+];
+
+function AdminTabSwitcher({ active, onChange }) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-dash-surface rounded-xl p-1">
+      {ADMIN_TABS.map((tab) => (
+        <button
+          key={tab.key}
+          onClick={() => onChange(tab.key)}
+          className={`text-xs font-medium px-3.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+            active === tab.key
+              ? "bg-dash-mint/15 text-dash-mint"
+              : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const CHANNEL_LABEL = { slack: "Slack", discord: "Discord" };
 
 // Slack/Discord 알림 채널 설정. targets/allow-list와 달리 "장부용"이 아니라
@@ -569,6 +598,7 @@ export default function AdminAuditView({
   const { scenarios, status: scenariosStatus, error: scenariosError, reload: reloadScenarios } = useScenarios();
   const { configs: alertConfigs, status: alertConfigsStatus, error: alertConfigsError, reload: reloadAlertConfigs } =
     useAlertConfigs();
+  const [activeTab, setActiveTab] = useState("policy");
 
   function toast(message, tone) {
     pushToast?.(message, tone);
@@ -697,122 +727,137 @@ export default function AdminAuditView({
 
   return (
     <div className="space-y-6">
-      <div className="bg-dash-surface rounded-2xl p-5">
-        <h3 className="text-dash-fg text-sm font-semibold mb-1">데이터 정책 (보존 · 샘플링 · 제외)</h3>
-        <p className="text-dash-muted text-xs mb-3">
-          계층별 hot/cold tier 보존 기간과 저장 전 샘플링 비율 · 파이프라인 단계에서 걸러낼 저가치 노이즈 규칙
-        </p>
-        <div className="mb-4">
-          {logPolicies.map((p) => (
-            <PolicyRow key={p.layer} policy={p} onUpdate={onUpdatePolicy} />
-          ))}
-        </div>
-        <div className="pt-3 border-t border-dash-surfaceAlt">
-          <p className="text-dash-faint text-[11px] mb-2">
-            제외 규칙 {activeExclusions.length}/{exclusionRules.length}개 활성 · 계층별 예상 로그량 감소:{" "}
-            {Object.entries(totalReductionByLayer)
-              .map(([layer, pct]) => `${layer} -${pct}%`)
-              .join(" · ") || "없음"}
-          </p>
-          {exclusionRules.map((r) => (
-            <ExclusionRuleRow key={r.id} rule={r} onToggle={onToggleExclusion} />
-          ))}
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-dash-fg text-base font-semibold">Admin / Audit</h2>
+        <AdminTabSwitcher active={activeTab} onChange={setActiveTab} />
       </div>
 
-      <div className="bg-dash-surface rounded-2xl p-5">
-        <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹</h3>
-        <p className="text-dash-muted text-xs mb-1">
-          GET /scenarios · 실제 인시던트 적중 건수 기준 · 총 {scenarios.length}개 룰 · 스위치로 켜고 끌 수 있음
-        </p>
-        {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
-        {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
-        {scenariosStatus === "ready" && (
-          <div>
-            {rankedScenarios.map((r, i) => (
-              <RuleRow key={r.id} rule={r} rank={i + 1} onToggle={() => handleToggleScenario(r._raw)} />
-            ))}
-            {rankedScenarios.length === 0 && <p className="text-dash-muted text-xs py-3">등록된 탐지 룰이 없습니다.</p>}
-          </div>
-        )}
-      </div>
-
-      <TargetsPanel
-        targets={targets}
-        status={targetsStatus}
-        error={targetsError}
-        onCreate={handleCreateTarget}
-        onToggleActive={handleToggleTargetActive}
-        onDelete={handleDeleteTarget}
-      />
-
-      <AllowListPanel
-        entries={allowList}
-        status={allowListStatus}
-        error={allowListError}
-        targets={targets}
-        onCreate={handleCreateAllowListEntry}
-        onDelete={handleDeleteAllowListEntry}
-      />
-
-      <AlertConfigsPanel
-        configs={alertConfigs}
-        status={alertConfigsStatus}
-        error={alertConfigsError}
-        onCreate={handleCreateAlertConfig}
-        onToggleActive={handleToggleAlertConfigActive}
-        onDelete={handleDeleteAlertConfig}
-      />
-
-      <TrendReportPanel scenarios={scenarios} />
-
-      <div className="bg-dash-surface rounded-2xl p-5">
-        <h3 className="text-dash-fg text-sm font-semibold mb-1">Audit Log</h3>
-        <p className="text-dash-muted text-xs mb-3">누가 · 언제 · 어떤 조치를 했는지 (최근 50건)</p>
-        {auditStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
-        {auditStatus === "error" && <p className="text-dash-critical text-xs py-3">{auditError}</p>}
-        {auditStatus === "ready" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-dash-muted text-xs uppercase tracking-wide">
-                <th className="text-left font-medium pb-2">시각</th>
-                <th className="text-left font-medium pb-2">사용자</th>
-                <th className="text-left font-medium pb-2">액션</th>
-                <th className="text-left font-medium pb-2">대상</th>
-                <th className="text-left font-medium pb-2">IP</th>
-              </tr>
-            </thead>
-            <tbody>
-              {auditLog.map((log) => (
-                <tr key={log.id} className="border-t border-dash-surfaceAlt">
-                  <td className="py-2.5 text-dash-faint whitespace-nowrap pr-4 text-xs">
-                    {new Date(log.created_at).toLocaleString("ko-KR", {
-                      month: "numeric",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </td>
-                  {/* user_id는 UUID 그대로 — 백엔드에 유저 목록 조회 API가 아직
-                      없어서 이름으로 못 바꾼다(useAuditLogs.js 주석 참고). 앞 8자리만
-                      잘라서 그나마 스캔하기 쉽게 표시. */}
-                  <td className="py-2.5 text-dash-fg whitespace-nowrap pr-4 text-xs font-mono">
-                    {log.user_id ? log.user_id.slice(0, 8) : "system"}
-                  </td>
-                  <td className="py-2.5 text-dash-fg pr-4 text-xs">{log.action}</td>
-                  <td className="py-2.5 text-dash-muted whitespace-nowrap pr-4 text-xs">
-                    {log.target_table ?? "-"}
-                  </td>
-                  <td className="py-2.5 text-dash-faint whitespace-nowrap text-xs">{log.ip_address ?? "-"}</td>
-                </tr>
+      {activeTab === "policy" && (
+        <div className="space-y-6">
+          <div className="bg-dash-surface rounded-2xl p-5">
+            <h3 className="text-dash-fg text-sm font-semibold mb-1">데이터 정책 (보존 · 샘플링 · 제외)</h3>
+            <p className="text-dash-muted text-xs mb-3">
+              계층별 hot/cold tier 보존 기간과 저장 전 샘플링 비율 · 파이프라인 단계에서 걸러낼 저가치 노이즈 규칙
+            </p>
+            <div className="mb-4">
+              {logPolicies.map((p) => (
+                <PolicyRow key={p.layer} policy={p} onUpdate={onUpdatePolicy} />
               ))}
-            </tbody>
-          </table>
-          {auditLog.length === 0 && <p className="text-dash-muted text-xs py-3">기록된 감사 로그가 없습니다.</p>}
+            </div>
+            <div className="pt-3 border-t border-dash-surfaceAlt">
+              <p className="text-dash-faint text-[11px] mb-2">
+                제외 규칙 {activeExclusions.length}/{exclusionRules.length}개 활성 · 계층별 예상 로그량 감소:{" "}
+                {Object.entries(totalReductionByLayer)
+                  .map(([layer, pct]) => `${layer} -${pct}%`)
+                  .join(" · ") || "없음"}
+              </p>
+              {exclusionRules.map((r) => (
+                <ExclusionRuleRow key={r.id} rule={r} onToggle={onToggleExclusion} />
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-dash-surface rounded-2xl p-5">
+            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹</h3>
+            <p className="text-dash-muted text-xs mb-1">
+              GET /scenarios · 실제 인시던트 적중 건수 기준 · 총 {scenarios.length}개 룰 · 스위치로 켜고 끌 수 있음
+            </p>
+            {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+            {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
+            {scenariosStatus === "ready" && (
+              <div>
+                {rankedScenarios.map((r, i) => (
+                  <RuleRow key={r.id} rule={r} rank={i + 1} onToggle={() => handleToggleScenario(r._raw)} />
+                ))}
+                {rankedScenarios.length === 0 && <p className="text-dash-muted text-xs py-3">등록된 탐지 룰이 없습니다.</p>}
+              </div>
+            )}
+          </div>
+
+          <AllowListPanel
+            entries={allowList}
+            status={allowListStatus}
+            error={allowListError}
+            targets={targets}
+            onCreate={handleCreateAllowListEntry}
+            onDelete={handleDeleteAllowListEntry}
+          />
         </div>
-        )}
-      </div>
+      )}
+
+      {activeTab === "targets" && (
+        <div className="space-y-6">
+          <TargetsPanel
+            targets={targets}
+            status={targetsStatus}
+            error={targetsError}
+            onCreate={handleCreateTarget}
+            onToggleActive={handleToggleTargetActive}
+            onDelete={handleDeleteTarget}
+          />
+
+          <AlertConfigsPanel
+            configs={alertConfigs}
+            status={alertConfigsStatus}
+            error={alertConfigsError}
+            onCreate={handleCreateAlertConfig}
+            onToggleActive={handleToggleAlertConfigActive}
+            onDelete={handleDeleteAlertConfig}
+          />
+
+          <TrendReportPanel scenarios={scenarios} />
+        </div>
+      )}
+
+      {activeTab === "audit" && (
+        <div className="bg-dash-surface rounded-2xl p-5">
+          <h3 className="text-dash-fg text-sm font-semibold mb-1">Audit Log</h3>
+          <p className="text-dash-muted text-xs mb-3">누가 · 언제 · 어떤 조치를 했는지 (최근 50건)</p>
+          {auditStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+          {auditStatus === "error" && <p className="text-dash-critical text-xs py-3">{auditError}</p>}
+          {auditStatus === "ready" && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-dash-muted text-xs uppercase tracking-wide">
+                  <th className="text-left font-medium pb-2">시각</th>
+                  <th className="text-left font-medium pb-2">사용자</th>
+                  <th className="text-left font-medium pb-2">액션</th>
+                  <th className="text-left font-medium pb-2">대상</th>
+                  <th className="text-left font-medium pb-2">IP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLog.map((log) => (
+                  <tr key={log.id} className="border-t border-dash-surfaceAlt">
+                    <td className="py-2.5 text-dash-faint whitespace-nowrap pr-4 text-xs">
+                      {new Date(log.created_at).toLocaleString("ko-KR", {
+                        month: "numeric",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    {/* user_id는 UUID 그대로 — 백엔드에 유저 목록 조회 API가 아직
+                        없어서 이름으로 못 바꾼다(useAuditLogs.js 주석 참고). 앞 8자리만
+                        잘라서 그나마 스캔하기 쉽게 표시. */}
+                    <td className="py-2.5 text-dash-fg whitespace-nowrap pr-4 text-xs font-mono">
+                      {log.user_id ? log.user_id.slice(0, 8) : "system"}
+                    </td>
+                    <td className="py-2.5 text-dash-fg pr-4 text-xs">{log.action}</td>
+                    <td className="py-2.5 text-dash-muted whitespace-nowrap pr-4 text-xs">
+                      {log.target_table ?? "-"}
+                    </td>
+                    <td className="py-2.5 text-dash-faint whitespace-nowrap text-xs">{log.ip_address ?? "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {auditLog.length === 0 && <p className="text-dash-muted text-xs py-3">기록된 감사 로그가 없습니다.</p>}
+          </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

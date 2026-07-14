@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
 
 // GET /audit-logs (servers/platform-api/app/audit_logs_api.py) — Admin/Audit
-// 탭의 "Audit Log" 테이블 실데이터 소스. App.jsx의 mock SEED_AUDIT_LOG(+ logAction
-// 으로 쌓던 로컬 전용 로그)를 대체한다.
+// 탭의 "Audit Log" 테이블 실데이터 소스. 
+// App.jsx의 mock SEED_AUDIT_LOG(+ logAction으로 쌓던 로컬 전용 로그)를 대체한다.
 //
 // 주의: 백엔드엔 아직 "유저 목록" 조회 API가 없어서(users 테이블 CRUD 라우터 없음)
 // 이 훅은 user_id를 UUID 그대로 돌려준다 — 화면에서 사람이 읽을 이름으로 바꾸려면
