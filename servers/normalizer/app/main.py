@@ -28,7 +28,9 @@ FastAPI는 /health 체크 용도로만 쓰고, 진짜 작업은 백그라운드 
 로컬에서 uvicorn 직접 실행 시:
     uvicorn app.main:app --host 0.0.0.0 --port 8200
     .env에서 kafka_brokers를 EXTERNAL 리스너(localhost:9094)로, redis_url을
-    redis://localhost:6379/0으로 바꿀 것 (kafka/docker-compose.yml 리스너 매핑 주석 참고).
+    redis://:<servers/datastore/redis/.env의 REDIS_PASSWORD>@localhost:6379/0으로
+    바꿀 것 (kafka/docker-compose.yml 리스너 매핑 주석 참고. Redis는 requirepass가
+    걸려 있어 비밀번호 없이는 연결이 거부된다).
 """
 import asyncio
 import contextlib

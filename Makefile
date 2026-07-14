@@ -5,6 +5,7 @@ network:
 
 up: network
 	test -f servers/datastore/postgres/.env || cp servers/datastore/postgres/.env.example servers/datastore/postgres/.env
+	test -f servers/datastore/redis/.env || cp servers/datastore/redis/.env.example servers/datastore/redis/.env
 	docker compose -f servers/kafka/docker-compose.yml up -d
 	docker compose -f servers/datastore/postgres/docker-compose.yml up -d
 	docker compose -f servers/datastore/redis/docker-compose.yml up -d

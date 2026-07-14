@@ -3,7 +3,10 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
-    redis_url: str = "redis://redis:6379/0"
+    # 세션(app/auth.py) + 시나리오 enabled 플래그(app/scenarios_api.py) 저장소. 비밀번호는
+    # servers/datastore/redis/.env의 REDIS_PASSWORD와 일치해야 함(servers/docker-compose.yml
+    # 상단 주석 참고).
+    redis_url: str = "redis://:CHANGE_ME_dev@redis:6379/0"
     opensearch_url: str = "http://opensearch:9200"
     attack_log_index_pattern: str = "attack-logs-*"
 

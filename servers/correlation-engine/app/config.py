@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     kafka_consumer_group: str = "correlation-engine"
 
     # normalizer의 dedupe와 같은 Redis 인스턴스를 다른 키 네임스페이스(corr:*)로 공유한다.
-    redis_url: str = "redis://redis:6379/0"
+    # 비밀번호는 servers/datastore/redis/.env의 REDIS_PASSWORD와 일치해야 함(servers/
+    # docker-compose.yml 상단 주석 참고).
+    redis_url: str = "redis://:CHANGE_ME_dev@redis:6379/0"
 
     postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
 
