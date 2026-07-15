@@ -45,6 +45,12 @@ class ScenarioOut(BaseModel):
     hit_count: int
     created_at: str
     updated_at: str
+    true_positive_count: int
+    false_positive_count: int
+    # analyst가 아직 이 시나리오의 인시던트를 하나도 verdict 처리 안 했으면(둘 다 0)
+    # precision을 낼 근거 자체가 없다 - 0.0으로 내리면 "정밀도가 0"과 구분이 안 되므로
+    # None(=아직 평가 불가)으로 명확히 구분한다.
+    precision: float | None
 
 
 class EnabledUpdate(BaseModel):
@@ -53,6 +59,11 @@ class EnabledUpdate(BaseModel):
 
 def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+
+
+def _precision(true_positive: int, false_positive: int) -> Optional[float]:
+    judged = true_positive + false_positive
+    return round(true_positive / judged, 3) if judged else None
 
 
 def _row_to_out(row) -> ScenarioOut:
@@ -68,23 +79,37 @@ def _row_to_out(row) -> ScenarioOut:
         hit_count=row["hit_count"],
         created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
+        true_positive_count=row["true_positive_count"],
+        false_positive_count=row["false_positive_count"],
+        precision=_precision(row["true_positive_count"], row["false_positive_count"]),
     )
 
 
 @router.get("", response_model=List[ScenarioOut])
 async def list_scenarios():
     """룰별 적중 랭킹(Admin/Audit 탭)용으로 incidents를 매칭된 scenario별로 집계한
-    hit_count를 같이 내려준다 - 발화된 적 없는 시나리오는 0으로 나온다."""
+    hit_count를 같이 내려준다 - 발화된 적 없는 시나리오는 0으로 나온다.
+
+    true_positive_count/false_positive_count(-> precision)는 분석가가 PATCH
+    /incidents/{id}/verdict로 남긴 정답 라벨 집계(datastore/postgres/init/
+    015-incident-verdict.sql) - 아직 하나도 verdict 처리 안 된 인시던트뿐인
+    시나리오는 둘 다 0으로 나오고 precision은 None(계산 불가)이 된다."""
     async with pool().acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT sr.id, sr.name, sr.required_modules, sr.correlation_key_type,
                    sr.time_window_seconds, sr.min_severity, sr.enabled, sr.mitre_technique_id,
                    sr.created_at, sr.updated_at,
-                   COALESCE(ic.hit_count, 0) AS hit_count
+                   COALESCE(ic.hit_count, 0) AS hit_count,
+                   COALESCE(ic.true_positive_count, 0) AS true_positive_count,
+                   COALESCE(ic.false_positive_count, 0) AS false_positive_count
             FROM scenario_rules sr
             LEFT JOIN (
-                SELECT matched_scenario_rule_id, count(*) AS hit_count
+                SELECT
+                    matched_scenario_rule_id,
+                    count(*) AS hit_count,
+                    count(*) FILTER (WHERE verdict = 'true_positive') AS true_positive_count,
+                    count(*) FILTER (WHERE verdict = 'false_positive') AS false_positive_count
                 FROM incidents
                 GROUP BY matched_scenario_rule_id
             ) ic ON ic.matched_scenario_rule_id = sr.id
@@ -102,7 +127,11 @@ async def set_enabled(scenario_id: str, body: EnabledUpdate, request: Request):
             UPDATE scenario_rules SET enabled = $2, updated_at = now() WHERE id = $1
             RETURNING id, name, required_modules, correlation_key_type, time_window_seconds,
                       min_severity, enabled, mitre_technique_id, created_at, updated_at,
-                      (SELECT count(*) FROM incidents WHERE matched_scenario_rule_id = $1) AS hit_count
+                      (SELECT count(*) FROM incidents WHERE matched_scenario_rule_id = $1) AS hit_count,
+                      (SELECT count(*) FROM incidents
+                       WHERE matched_scenario_rule_id = $1 AND verdict = 'true_positive') AS true_positive_count,
+                      (SELECT count(*) FROM incidents
+                       WHERE matched_scenario_rule_id = $1 AND verdict = 'false_positive') AS false_positive_count
             """,
             scenario_id,
             body.enabled,

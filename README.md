@@ -133,7 +133,8 @@ Target 서버
 | `GET /incidents/{id}/events` | 인시던트에 묶인 이벤트 목록 (`event_id`, `event_module`, `added_at`) |
 | `GET /incidents/{id}/timeline` | 스토리라인(시간순) - `incident_events` + OpenSearch 원문을 합쳐 `{event_id, event_module, added_at, title, detail, mitre_technique_id}` 배열로 반환 |
 | `PATCH /incidents/{id}/status` | 상태 변경. `open`→`investigating`→`closed` 선형 전이만 허용 (역행/건너뛰기는 400) |
-| `GET /scenarios` | 상관 시나리오 룰 + 적중 랭킹(`hit_count`, 매칭된 인시던트 수) |
+| `PATCH /incidents/{id}/verdict` | 정답 라벨(`{verdict: "true_positive"\|"false_positive", note?}`) 기록 - `status`(처리 단계)와 별개 축이라 어느 status에서든 설정/재설정 가능. `GET /scenarios`의 `precision` 집계 재료 (2026-07-15) |
+| `GET /scenarios` | 상관 시나리오 룰 + 적중 랭킹(`hit_count`, 매칭된 인시던트 수) + 탐지 품질(`true_positive_count`/`false_positive_count`/`precision`, verdict 미기록 시나리오는 `precision: null`) |
 | `PATCH /scenarios/{id}/enabled` | 시나리오 룰 on/off (Postgres + Redis `scenario:enabled:{id}` 동시 반영, admin 전용) |
 | `GET /banned-ips` | 활성 차단 IP 목록(`unbanned_at IS NULL`) - 감사 트레일용, 실제 트래픽은 막지 않음 |
 | `POST /banned-ips` | `{ip_or_cidr, reason?}` 차단 기록 (admin 전용, `IP_BANNED` 감사 로그) |
@@ -177,7 +178,10 @@ forwardAuth(`auth.py`의 `GET /verify`)를 거친다. 읽기는 로그인만 되
   "matched_scenario_rule_id": "uuid | null",
   "mitre_tactics": ["string"],
   "created_at": "ISO8601",
-  "updated_at": "ISO8601"
+  "updated_at": "ISO8601",
+  "verdict": "true_positive | false_positive | null",
+  "verdict_note": "string | null",
+  "verdict_at": "ISO8601 | null"
 }
 ```
 
@@ -207,6 +211,9 @@ forwardAuth(`auth.py`의 `GET /verify`)를 거친다. 읽기는 로그인만 되
 `incidents.status`는 `open` → `investigating` → `closed` 선형 전이만 허용
 (`idx_incidents_active_dedup` unique index로 발화 멱등성 보장 - `open`/`investigating`
 둘 다 병합 대상이고, `closed`로 넘어간 뒤 같은 공격이 재발하면 새 인시던트가 생긴다).
+`incidents.verdict`(`true_positive`/`false_positive`, null 허용)는 이 상태 전이와
+완전히 별개 축이다 - "지금 처리가 어느 단계인지"가 아니라 "이 탐지가 실제로 맞았는지"
+정답 라벨이라 `status`가 무엇이든 언제든 설정/재설정할 수 있다.
 
 ### OpenSearch (`servers/datastore/opensearch/config/data-prepper/attack-logs-template.json`)
 
@@ -356,20 +363,46 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   로 끝 - platform-api로의 push는 없음(2026-07-13 이전엔 Redis pub/sub(`incidents:events`)
   발행도 했으나 제거됨, 아래 platform-api 절 참고). MITRE 전술은 `mitre_mapping.py`
   (MITRE 공식 Containers 매트릭스 대조 완료)로 technique_id -> tactics 변환해서 저장
-- 23개 시나리오(S1~S23) - S10/S19/S20/S21/S22/S23을 제외한 나머지는 falcosecurity/
-  plugins의 실제 K8s audit 룰에 근거한 설계, 엔진 검증용 예시가 아님
-  (`app/scenarios/README.md` 참고). 나머지 6개는 falcosecurity/plugins(k8s_audit
-  전용 저장소)에 대응 룰이 없어 다른 근거로 이 프로젝트가 설계함 - S19(로그인
-  브루트포스, T1110, WAS 원본 access log 기반), S20/S21(DaemonSet/CronJob 생성,
-  T1543/T1053, MITRE 공식 기법 설명 직접 근거), S22(컨테이너 내 크립토마이닝,
-  T1496, falcosecurity/**rules**(plugins가 아님) 저장소의 falco-sandbox_rules.yaml
-  룰 3개를 Target 저장소 `backend/falco-values.yaml`의 customRules로 이식),
-  S23(시스템 로그 삭제 시도, T1070, falcosecurity/rules **코어** falco_rules.yaml에
-  이미 기본 활성화돼 있던 "Clear Log Activities" 룰을 그대로 사용 - 별도 이식
-  불필요, 전부 2026-07-14). 같은 조사에서 T1036/T1550/T1499/T1498은 코어/sandbox
-  룰셋 어디에도 대응 룰이 없음을 확인(WebFetch로 원본 재확인) - 이 4개는 여전히
-  falcosecurity 근거가 없어 미구현. Notion "상관분석 시나리오" 페이지의 TODO
-  갭 분석에서 나온 항목
+- ~~23개 시나리오(S1~S23)~~ **(2026-07-15, S26~S30 추가로 30개)** - S10/S19/S20/S21/
+  S22/S23을 제외한 나머지는 falcosecurity/plugins의 실제 K8s audit 룰에 근거한
+  설계, 엔진 검증용 예시가 아님(`app/scenarios/README.md` 참고). 그 6개는
+  falcosecurity/plugins(k8s_audit 전용 저장소)에 대응 룰이 없어 다른 근거로 이
+  프로젝트가 설계함 - S19(로그인 브루트포스, T1110, WAS 원본 access log 기반),
+  S20/S21(DaemonSet/CronJob 생성, T1543/T1053, MITRE 공식 기법 설명 직접 근거),
+  S22(컨테이너 내 크립토마이닝, T1496, falcosecurity/**rules**(plugins가 아님)
+  저장소의 falco-sandbox_rules.yaml 룰 3개를 Target 저장소
+  `backend/falco-values.yaml`의 customRules로 이식), S23(시스템 로그 삭제 시도,
+  T1070, falcosecurity/rules **코어** falco_rules.yaml에 이미 기본 활성화돼 있던
+  "Clear Log Activities" 룰을 그대로 사용 - 별도 이식 불필요, 전부 2026-07-14).
+  같은 조사에서 T1036은 코어/sandbox 룰셋 어디에도 대응 룰이 없음을 확인(WebFetch로
+  원본 재확인) - falcosecurity 근거가 없어 여전히 미구현.
+- **S26~S30(2026-07-15 신규, 전부 `network.yaml`)**: 20/25개가 k8s_audit 위주였던
+  불균형을 메우려고 WAF/WAS 신호만으로 발화하는 시나리오 5개를 추가 - 전부
+  threshold=1(또는 S30만 threshold=10)로 Target 저장소(Techeer-12th-b)의 WAF
+  backend가 **이미 자체 판정을 끝내고 emit하는** 이벤트를 그대로 받는 방식이라
+  correlation-engine의 매처(`rules.py::_MATCHERS`) 확장 없이 기존 `event_action`/
+  `http_response_status_code` 매처만으로 구현됨: S26(WAF 로그인 브루트포스,
+  `attack_type=brute_force` - IP/계정/시스템전체 3종 통합, T1110, S19와 상호보완
+  - S19는 WAF 미경유 직결 트래픽만 보고 IP당 단순 카운팅만 하지만 이건 WAF 경유
+  트래픽 + 계정 기준(IP 로테이션 대응) + 시스템 전체 스파이크까지 잡음),
+  S27(WAF Rate Limit 남용, `attack_type=rate_limit_abuse`, T1499 - 위 문단의
+  "T1499/T1498은 falcosecurity 근거가 없어 미구현"은 **Falco 기반 접근 얘기고
+  이건 완전히 다른 경로**라 그 블로커와 무관하게 바로 구현 가능했음), S28(알려진
+  스캐너 툴 User-Agent, `attack_type=bad_bot`, T1046 - 카탈로그에 있었지만 그동안
+  어떤 시나리오도 안 쓰던 기법의 첫 사용), S29(JWT 위조 시도 `alg:none`,
+  `attack_type=jwt_forgery`, T1550 - S25와 기법 공유하지만 계층이 다른 별개
+  사건), S30(동일 IP WAS 404 다발/엔드포인트·리소스ID 무차별 탐색,
+  `http_response_status_code=404`, T1046 - WAF 시그니처가 절대 못 잡는 "페이로드
+  없는 정상적인 척하는 요청" 사각지대. 실측 확인: 이 프로젝트 Juice Shop 배포는
+  `/rest/*`·`/api/*` 밑의 미등록 경로를 진짜 404가 아니라 500(Express catch-all
+  버그, 기존에 S4/S5 payload 테스트 중에도 발견된 것과 동일 증상)으로 응답하고
+  SPA 폴백 경로는 200을 내려서, 진짜 404는 `/api/Products/{id}` 같은 존재하는
+  라우트에 없는 ID를 넣을 때만 남 - 순수 미등록 경로 브루트포스로는 이 시나리오가
+  안 걸리니 테스트/튜닝 시 주의). threshold=10은 실측 기준선이 없는 초기
+  추정치라 `PATCH /incidents/{id}/verdict`로 라벨을 쌓아 `GET /scenarios`의
+  `precision`을 보고 나중에 조정할 것(015 피드백 루프 용도). 5개 전부 실제 k3d
+  클러스터(WAF backend + Juice Shop 대상 curl 트래픽) 대상으로 발화까지 실측
+  확인 완료. Notion "상관분석 시나리오" 페이지의 TODO 갭 분석에서 나온 항목
 
 ### `servers/platform-api`
 - 프론트엔드(별도 팀/레포)의 유일한 연동 지점 - 위 "프론트엔드 연동 API" 참고, CORS 허용
@@ -419,13 +452,16 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   `/stats/clock-skew` - `pipeline_health_api.py`),
   4소스 계층별 통계(`GET /stats`, `stats_api.py`), ATT&CK 커버리지(`GET /attck/coverage`,
   `attck_api.py`) 셋 다 이미 구현돼 있다 - `GET /reports/trend`만 있다는 서술은 이
-  셋이 만들어지기 전에 쓰인 채 갱신이 안 된 것. **아직 없는 건 ground-truth 라벨
-  매칭(precision/recall) 하나뿐**이고, 이건 빠뜨린 게 아니라 "정답이 뭔가"부터
-  막혀서 보류된 것 - `incidents.status`는 open/investigating/closed뿐이라
-  true/false positive를 표시할 필드 자체가 스키마에 없다(분석가 판정 라벨을 새로
-  추가할지, dummy_generator.py가 스스로 낸 공격만 검증하는 파이프라인 테스트용
-  ground truth로 할지 결정이 필요 - 논의 후 착수 예정, 스키마 변경 없이 지레짐작으로
-  만들지 않기로 함). 별개로 `GET /stats/top-ips`가 한때 `stats_api.py`(OpenSearch)와
+  셋이 만들어지기 전에 쓰인 채 갱신이 안 된 것. ~~아직 없는 건 ground-truth 라벨
+  매칭(precision/recall) 하나뿐~~ **(2026-07-15 해결)**: `incidents.status`(처리
+  단계)와 별개 축으로 `incidents.verdict`(`true_positive`/`false_positive`,
+  `datastore/postgres/init/015-incident-verdict.sql`)를 추가하고
+  `PATCH /incidents/{id}/verdict`로 분석가가 판정을 남기게 했다 - status의 선형
+  전이와 달리 언제든 재설정 가능. `GET /scenarios`가 이 라벨을 시나리오별로 집계해서
+  `true_positive_count`/`false_positive_count`/`precision`을 같이 내려주므로,
+  이제 어떤 시나리오의 threshold/window/cooldown이 오탐이 잦은지 데이터로 판단할
+  근거가 생겼다(verdict가 하나도 안 쌓인 시나리오는 `precision: null`로 구분).
+  별개로 `GET /stats/top-ips`가 한때 `stats_api.py`(OpenSearch)와
   `analytics_api.py`(ClickHouse) 양쪽에 같은 경로로 중복 정의돼 있어서 후자가
   `main.py`의 include_router 순서 때문에 영원히 안 잡히는 죽은 코드였던 것도
   같이 발견/수정함 - IP 집계는 ClickHouse 쪽을 정본으로 남겼다(응답 계약은 불변).
