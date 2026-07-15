@@ -31,6 +31,7 @@ import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
+import TimeRangePicker from "../components/TimeRangePicker";
 import WorldMap from "../components/WorldMap";
 // three.js는 이 카드에서만 쓰이는데도 LogDashboard.jsx가 Card/KpiCard 등 공용
 // 프리미티브를 export하다보니 다른 뷰(WAS/Falco/K8sAudit/Incidents)들이 전부 이
@@ -309,6 +310,120 @@ export function LogVolumeChart({ rangeKey, module, chartType = "area" }) {
                 <span className="w-2 h-2 rounded-full bg-dash-pink inline-block" /> 급증 구간 (기준선 {spike.baseline}건)
               </span>
             )}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// 모듈별(WAS/Falco/K8s Audit) 로그량 추이 적층 그래프 - Log Volume 차트는 셋을
+// 합산한 총량만 보여줘서 "지금 어느 소스가 볼륨을 주도하는지"가 안 보이던 문제.
+// /stats/volume을 module별로 3번(같은 hours/buckets로) 호출하면 서버가 같은
+// date_histogram 경계를 쓰므로 버킷 인덱스가 그대로 정렬돼 안전하게 합칠 수 있다.
+export function ModuleVolumeStackedChart() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const [rangeKey, setRangeKey] = useState("24h");
+  const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
+  const { pollMs } = usePollInterval();
+
+  const was = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "was", pollMs });
+  const falco = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "falco", pollMs });
+  const k8s = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "k8s_audit", pollMs });
+
+  const status = [was.status, falco.status, k8s.status].includes("error")
+    ? "error"
+    : [was.status, falco.status, k8s.status].every((s) => s === "ready")
+      ? "ready"
+      : "loading";
+
+  const data = useMemo(() => {
+    const len = Math.max(was.buckets.length, falco.buckets.length, k8s.buckets.length);
+    const rows = [];
+    for (let i = 0; i < len; i++) {
+      const ts = was.buckets[i]?.ts ?? falco.buckets[i]?.ts ?? k8s.buckets[i]?.ts;
+      if (ts == null) continue;
+      rows.push({
+        label: formatBucketLabel(new Date(ts), preset.bucketMs),
+        was: was.buckets[i]?.total ?? 0,
+        falco: falco.buckets[i]?.total ?? 0,
+        k8s_audit: k8s.buckets[i]?.total ?? 0,
+      });
+    }
+    return rows;
+  }, [was.buckets, falco.buckets, k8s.buckets, preset.bucketMs]);
+
+  const metaWas = getModuleMeta("was");
+  const metaFalco = getModuleMeta("falco");
+  const metaK8s = getModuleMeta("k8s_audit");
+
+  return (
+    <Card
+      title="모듈별 로그량 추이"
+      subtitle={`Last ${preset.label} · WAS / Falco / K8s Audit 적층`}
+      action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
+      className="h-80"
+    >
+      {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs">모듈별 로그량을 불러오지 못했습니다.</p>}
+      {status === "ready" && (
+        <>
+          <ResponsiveContainer width="100%" height="82%">
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id="moduleWasFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={metaWas.color} stopOpacity={0.55} />
+                  <stop offset="100%" stopColor={metaWas.color} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="moduleFalcoFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={metaFalco.color} stopOpacity={0.55} />
+                  <stop offset="100%" stopColor={metaFalco.color} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="moduleK8sFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={metaK8s.color} stopOpacity={0.55} />
+                  <stop offset="100%" stopColor={metaK8s.color} stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+              <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
+              <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Area
+                type="monotone"
+                dataKey="was"
+                name={metaWas.label}
+                stackId="module"
+                stroke={metaWas.color}
+                fill="url(#moduleWasFill)"
+                strokeWidth={1.5}
+              />
+              <Area
+                type="monotone"
+                dataKey="falco"
+                name={metaFalco.label}
+                stackId="module"
+                stroke={metaFalco.color}
+                fill="url(#moduleFalcoFill)"
+                strokeWidth={1.5}
+              />
+              <Area
+                type="monotone"
+                dataKey="k8s_audit"
+                name={metaK8s.label}
+                stackId="module"
+                stroke={metaK8s.color}
+                fill="url(#moduleK8sFill)"
+                strokeWidth={1.5}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+          <div className="flex gap-4 text-xs text-dash-muted mt-2">
+            {[metaWas, metaFalco, metaK8s].map((m) => (
+              <span key={m.label} className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: m.color }} /> {m.label}
+              </span>
+            ))}
           </div>
         </>
       )}
@@ -1585,6 +1700,8 @@ export function DashboardContent() {
         return <K8sNamespaceDonutCompact chartType={chartType || "donut"} />;
       case "latency-stats":
         return <LatencyStatsPanel events={wasEventsForLatency} />;
+      case "module-volume":
+        return <ModuleVolumeStackedChart />;
       case "recent-logs":
         return (
           <RecentLogsTable events={displayEvents} filterLevels={REAL_SEVERITY_LEVELS} status={logsStatus} error={logsError} />

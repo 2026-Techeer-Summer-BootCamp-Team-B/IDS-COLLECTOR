@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { SeverityBadge, SourceBadge, StatusDot } from "../components/badges";
-import { CHART_COLORS, forTheme } from "../data/theme";
+import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
 import { useIncidents } from "../hooks/useIncidents";
@@ -109,11 +109,13 @@ function SeverityDonut({ incidents }) {
     incidents.forEach((i) => {
       counts[i.severity] = (counts[i.severity] || 0) + 1;
     });
-    return REAL_SEVERITY_LEVELS.filter((l) => counts[l.severity]).map((l) => ({
+    return REAL_SEVERITY_LEVELS.filter((l) => counts[l.severity]).map((l, i) => ({
       key: l.key,
       label: l.label,
       count: counts[l.severity],
-      color: forTheme(l.color, theme),
+      // Overview의 도넛들(SeverityDonutCompact 등)과 같은 톤 다운 순환 팔레트로
+      // 통일 - severity 배지 등 다른 곳의 의미색(빨강=critical 등)과는 별개.
+      color: DONUT_PALETTE[i % DONUT_PALETTE.length],
     }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
@@ -163,7 +165,12 @@ function StatusDonut({ incidents }) {
     });
     return Object.entries(STATUS_META)
       .filter(([key]) => counts[key])
-      .map(([key, meta]) => ({ key, label: meta.label, count: counts[key], color: forTheme(meta.color, theme) }));
+      .map(([key, meta], i) => ({
+        key,
+        label: meta.label,
+        count: counts[key],
+        color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+      }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
 

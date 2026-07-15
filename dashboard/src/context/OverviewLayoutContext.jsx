@@ -73,6 +73,7 @@ export const WIDGET_CATALOG = [
     ],
   },
   { type: "latency-stats", label: "API Latency", w: 12, h: 5 },
+  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 9 },
   { type: "recent-logs", label: "Recent Logs", w: 8, h: 14 },
   { type: "top-sources", label: "Top Sources", w: 4, h: 7 },
   { type: "error-rate", label: "Error Rate", w: 4, h: 7 },

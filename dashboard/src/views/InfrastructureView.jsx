@@ -8,6 +8,7 @@ import { useTheme } from "../hooks/useTheme";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
 import { useK8sTargets } from "../hooks/useK8sTargets";
 import { useGeoStats } from "../hooks/useGeoStats";
+import { ModuleVolumeStackedChart } from "./LogDashboard";
 
 const STATUS_META = {
   healthy: { label: "정상 수신중" },
@@ -172,10 +173,14 @@ function PipelineHealthPanel() {
 // 나머지 대부분이 "낮음" 티어(ratio ≤ 0.33)로 몰리면서 화면이 온통 mint 색으로
 // 뒤덮이는 문제 — 낮음 티어는 색을 아예 빼고(무채도 회색) "집중된 곳"만 색이
 // 튀도록 바꿨다.
+//
+// 2026-07-15: 중간 티어에 orange(C.high)를 쓰니 앱 전체의 민트/핑크 네온
+// 톤과 안 어울리고 뜬금없이 튄다는 피드백 — pink로 바꿔서 무채색(회색) →
+// 네온 핑크 → critical 빨강 순으로, 브랜드 액센트 색 계열 안에서만 진행되게.
 function intensityColor(count, max, C) {
   const ratio = max ? count / max : 0;
   if (ratio > 0.66) return C.critical;
-  if (ratio > 0.33) return C.high;
+  if (ratio > 0.33) return C.pink;
   if (ratio > 0) return C.muted;
   return C.surfaceAlt;
 }
@@ -185,6 +190,43 @@ function intensityColor(count, max, C) {
 // (which stay dark/saturated in both themes) get white text.
 function intensityTextColor(count, max, C) {
   return max && count > 0 ? "#FFFFFF" : C.fg;
+}
+
+// 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
+// 건수 비교는 어려워서(원 크기만으로는) 순위형 막대 목록을 옆에 같이 둔다.
+// "Top 공격 대상" 패널과 같은 손그림 막대 스타일 + intensityColor로 톤을 맞춤.
+function CountryAttackBarChart({ countries, status, error, C }) {
+  const max = countries[0]?.count || 1;
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">국가별 공격 순위</h3>
+      <p className="text-dash-muted text-xs mb-4">전체 기간 · 탐지 건수 기준</p>
+      {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs py-2">{error}</p>}
+      {status === "ready" && countries.length === 0 && (
+        <p className="text-dash-muted text-xs py-2">GeoIP 데이터가 아직 없습니다.</p>
+      )}
+      <div className="space-y-2.5">
+        {countries.slice(0, 8).map((c, i) => (
+          <div key={c.countryCode} className="flex items-center gap-3">
+            <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
+            <div className="flex-1">
+              <div className="flex justify-between text-xs mb-1">
+                <span className="text-dash-fg">{c.country}</span>
+                <span className="text-dash-muted">{c.count}건</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{ width: `${(c.count / max) * 100}%`, backgroundColor: intensityColor(c.count, max, C) }}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function InfrastructureView() {
@@ -274,23 +316,22 @@ export default function InfrastructureView() {
         </div>
       </div>
 
-      <div className="bg-dash-surface rounded-2xl p-5">
-        <div className="mb-4">
-          <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
-          <p className="text-dash-muted text-xs mt-0.5">전체 기간 · 국가별 탐지 건수 (원 크기 = 건수)</p>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-dash-surface rounded-2xl p-5">
+          <div className="mb-4">
+            <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
+            <p className="text-dash-muted text-xs mt-0.5">전체 기간 · 국가별 탐지 건수 (원 크기 = 건수)</p>
+          </div>
+          {geoStatus === "error" && <p className="text-dash-critical text-xs mb-2">{geoError}</p>}
+          <div className="h-80">
+            <WorldMap points={countries} />
+          </div>
         </div>
-        {geoStatus === "error" && <p className="text-dash-critical text-xs mb-2">{geoError}</p>}
-        <div className="h-80">
-          <WorldMap points={countries} />
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-dash-muted">
-          {countries.slice(0, 6).map((c) => (
-            <span key={c.country}>
-              {c.country} <span className="text-dash-fg">{c.count}</span>
-            </span>
-          ))}
-        </div>
+
+        <CountryAttackBarChart countries={countries} status={geoStatus} error={geoError} C={C} />
       </div>
+
+      <ModuleVolumeStackedChart />
     </div>
   );
 }
