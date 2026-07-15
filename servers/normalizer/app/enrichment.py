@@ -17,8 +17,15 @@ from app.geoip import lookup as geoip_lookup
 from ids_shared.schemas import NormalizedEvent
 
 # 차단(prevention)돼서 Juice Shop 응답 헤더가 아예 없었던 요청에만 쓰이는 최후 폴백.
+# 예전엔 특정 시점에 관측된 pod 이름을 그대로 박아뒀다("juice-shop-68ccbc74b4-958dh")
+# - ReplicaSet/pod 해시 접미사는 재배포·레플리카 증설마다 바뀌므로, 시간이 지나면
+# 존재한 적도 없는 pod를 가리키는 값이 된다(2026-07-15, 지속 배포 환경에서 포렌식
+# 조회 시 오해를 유발). 재배포에도 안정적인 event.target_name(WAS/WAF 센서의
+# TARGET_NAME env var)을 대신 쓰고, 그마저 없으면 실재하지 않는 pod 이름을 지어내는
+# 대신 "unknown"으로 명시한다. resource_type도 "pod"라고 단정하지 않는다 - 이 값은
+# 실제 pod에서 온 게 아니라 폴백이라는 사실 자체를 나타낸다.
 _FALLBACK_NAMESPACE = "default"
-_FALLBACK_POD_NAME = "juice-shop-68ccbc74b4-958dh"
+_FALLBACK_RESOURCE_NAME = "unknown"
 
 
 def enrich(source: str, payload: Dict[str, Any], event: NormalizedEvent) -> None:
@@ -29,5 +36,5 @@ def enrich(source: str, payload: Dict[str, Any], event: NormalizedEvent) -> None
 
     if source in ("was", "waf") and not event.orchestrator_resource_name:
         event.orchestrator_namespace = _FALLBACK_NAMESPACE
-        event.orchestrator_resource_type = "pod"
-        event.orchestrator_resource_name = _FALLBACK_POD_NAME
+        event.orchestrator_resource_type = "unknown"
+        event.orchestrator_resource_name = event.target_name or _FALLBACK_RESOURCE_NAME

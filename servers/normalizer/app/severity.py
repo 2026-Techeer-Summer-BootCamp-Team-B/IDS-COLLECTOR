@@ -7,16 +7,43 @@ import yaml
 from app.config import settings
 
 _RULES: Dict[str, Any] = {}
+_config_path: Optional[Path] = None
+_last_mtime: Optional[float] = None
+
+
+def _resolve_path() -> Path:
+    global _config_path
+    if _config_path is None:
+        path = Path(settings.severity_config_path)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parent / path
+        _config_path = path
+    return _config_path
 
 
 def _load() -> Dict[str, Any]:
-    global _RULES
-    path = Path(settings.severity_config_path)
-    if not path.is_absolute():
-        path = Path(__file__).resolve().parent / path
+    global _RULES, _last_mtime
+    path = _resolve_path()
     with open(path, "r", encoding="utf-8") as f:
         _RULES = yaml.safe_load(f) or {}
+    _last_mtime = path.stat().st_mtime
     return _RULES
+
+
+def _reload_if_changed() -> None:
+    """severity.yaml이 마지막 로드 이후 바뀌었으면 다시 읽는다 - 예전엔 모듈
+    임포트 시점에 딱 한 번만 읽어서 룰을 바꾸려면 normalizer를 재배포해야 했다
+    (2026-07-15). get_severity() 호출마다 stat() 하나만 더 하는 정도라(파일을
+    매번 다시 파싱하는 게 아니라 바뀌었을 때만) 이벤트 처리 hot path 부담이
+    거의 없다. stat 자체가 실패하면(파일이 일시적으로 없어짐 등) 기존 _RULES를
+    그대로 유지한다."""
+    path = _resolve_path()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return
+    if mtime != _last_mtime:
+        _load()
 
 
 _load()
@@ -51,6 +78,7 @@ def _match_prefix(actual: Optional[str], prefix: str) -> bool:
 def get_severity(
     source: str, payload: Dict[str, Any], audit_flags: Optional[Dict[str, Any]] = None
 ) -> int:
+    _reload_if_changed()
     rules = _RULES.get(source, {})
 
     if source == "was":

@@ -33,3 +33,14 @@ async def is_duplicate(dedupe_key: str) -> bool:
         f"dedupe:{dedupe_key}", "1", nx=True, ex=settings.dedupe_ttl_seconds
     )
     return acquired is None
+
+
+async def release(dedupe_key: str) -> None:
+    """is_duplicate()의 SETNX 클레임을 되돌린다. dedupe는 emit 전에 먼저 키를
+    선점하므로(동시성 있는 진짜 중복 redelivery를 원자적으로 막기 위함), enrich/
+    exclusion/emit 중 하나가 실패하면 "선점만 되고 실제로는 emit 안 된" 상태가
+    남는다 - main.py가 offset 커밋 없이 재시도하게 해도, 재시도 때 is_duplicate()가
+    "이미 처리함"으로 오판해서 그 이벤트가 TTL(1h) 동안 영구히 스킵된다(실측 확인,
+    2026-07-15). main.py의 _process_body가 클레임 이후 실패 시 이 함수로 클레임을
+    풀어서 재시도가 실제로 재시도되게 한다."""
+    await _redis.delete(f"dedupe:{dedupe_key}")

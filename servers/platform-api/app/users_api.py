@@ -19,9 +19,22 @@ from app.db import pool
 
 router = APIRouter(prefix="/users", tags=["users"])
 
+_MIN_PASSWORD_LENGTH = 8
+
 
 def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+
+
+def _validate_password(password: str) -> None:
+    """pgcrypto crypt()는 빈 문자열도 그냥 해시해버려서, 이 검사가 없으면 빈
+    비밀번호(또는 몇 글자짜리)로 계정을 만들거나 바꿀 수 있었다 - 저장/로그인
+    둘 다 아무 에러 없이 성공한다."""
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"password must be at least {_MIN_PASSWORD_LENGTH} characters",
+        )
 
 
 class UserIn(BaseModel):
@@ -66,6 +79,7 @@ async def list_users():
 
 @router.post("", response_model=UserOut)
 async def create_user(body: UserIn, request: Request):
+    _validate_password(body.password)
     async with pool().acquire() as conn:
         exists = await conn.fetchval("SELECT 1 FROM users WHERE username = $1", body.username)
         if exists:
@@ -100,6 +114,7 @@ async def update_user(user_id: str, body: UserUpdate, request: Request):
                 raise HTTPException(status_code=409, detail="마지막 admin 계정은 강등할 수 없습니다")
 
         if body.password:
+            _validate_password(body.password)
             row = await conn.fetchrow(
                 """
                 UPDATE users SET role = COALESCE($2, role), password_hash = crypt($3, gen_salt('bf'))

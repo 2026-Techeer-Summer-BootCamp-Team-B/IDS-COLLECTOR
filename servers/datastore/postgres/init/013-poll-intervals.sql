@@ -40,20 +40,23 @@ INSERT INTO poll_intervals (key, seconds, description, min_seconds, max_seconds)
         5, 600
     ),
     (
-        -- 2026-07-15 추가: 대시보드 쪽 폴링도 이 테이블로 옮김(이전엔
-        -- dashboard/src/data/timeSeries.js의 LIVE_POLL_MS=2000 하드코딩 상수 하나를
-        -- KPI 카드/Log Volume·Levels 차트/Recent Logs 테이블/라이브 티커/Top IPs/
-        -- Detection Sources가 전부 같이 썼다). dashboard/src/context/
-        -- PollIntervalsContext.jsx가 로그인 이후 이 값을 불러와 위 위젯들에 공급.
+        -- 2026-07-15 추가: 대시보드 쪽 폴링 주기를 admin이 재배포 없이 조절할 수
+        -- 있게 하려고 행을 미리 만들어뒀다 - 지금은 이 값을 실제로 읽어가는
+        -- 프론트 코드가 아직 없다(dashboard/src/data/timeSeries.js의
+        -- LIVE_POLL_MS=2000, dashboard/src/context/PollIntervalContext.jsx가
+        -- 여전히 그 상수를 기본값으로 쓰고 브라우저 localStorage에만 저장 -
+        -- GET /poll-intervals 호출 자체가 없음, 2026-07-15 확인). 대시보드가 이
+        -- 값을 실제로 불러오게 하는 작업은 별도 범위(다른 팀 작업 중).
         'dashboard_live_poll_seconds', 2,
-        '대시보드 실시간 위젯(KPI/차트/Recent Logs/라이브 티커 등) 폴링 주기',
+        '대시보드 실시간 위젯(KPI/차트/Recent Logs/라이브 티커 등) 폴링 주기 - 프론트 미연동',
         1, 60
     ),
     (
-        -- 2026-07-15 추가: dashboard/src/hooks/useIncidentsSocket.js의
-        -- POLL_INTERVAL_MS=5000 하드코딩 상수를 대체(인시던트 목록 재조회 주기).
+        -- 2026-07-15 추가: 마찬가지로 아직 프론트 미연동 - dashboard/src/hooks/
+        -- useIncidentsSocket.js가 POLL_INTERVAL_MS=5000 하드코딩 상수를 그대로
+        -- setInterval에 쓰고, 이 테이블 값은 안 읽는다.
         'dashboard_incidents_poll_seconds', 5,
-        '대시보드 인시던트 목록 재조회 주기',
+        '대시보드 인시던트 목록 재조회 주기 - 프론트 미연동',
         1, 60
     )
 ON CONFLICT (key) DO NOTHING;

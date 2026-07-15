@@ -46,13 +46,21 @@ async def _dispatch_pending() -> None:
         if not rows:
             return
 
+        # notified_at은 각 행을 보내자마자 그 자리에서 찍는다 - 예전엔 배치 전체를
+        # 다 보낸 뒤 한 번에 UPDATE ... = ANY(...)로 묶어서 찍었는데, notify_incident()
+        # 내부의 _matching_alert_configs()(Postgres 조회)가 배치 중간 행에서 예외를
+        # 던지면(일시적 DB 커넥션 장애 등 - _post_webhook 자체는 재시도 후 항상
+        # 정상 반환하므로 여기서만 터질 수 있음) 그 배치 전체의 UPDATE가 안 돌아서,
+        # 이미 Slack/Discord로 성공적으로 보낸 앞쪽 행들까지 notified_at이 NULL로
+        # 남아 다음 폴링에서 중복 발송됐다(2026-07-15 실측 확인 후 수정). 행 단위로
+        # 찍으면 실패 시점 이전 행은 중복 발송되지 않고, 이후 행만 자연스럽게
+        # notified_at IS NULL로 남아 다음 폴링에서 정상 재시도된다.
         for row in rows:
             await notify_incident(dict(row))
-
-        await conn.execute(
-            "UPDATE incidents SET notified_at = now() WHERE id = ANY($1::uuid[])",
-            [row["id"] for row in rows],
-        )
+            await conn.execute(
+                "UPDATE incidents SET notified_at = now() WHERE id = $1",
+                row["id"],
+            )
 
 
 async def poll_loop() -> None:

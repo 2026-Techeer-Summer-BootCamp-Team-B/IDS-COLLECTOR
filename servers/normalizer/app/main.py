@@ -12,10 +12,15 @@
       6) emit (events.normalized 재적재)
 
 실패 처리 (P3-7):
-  - parse 실패 -> events.dlq로 보내고 offset 커밋 (그 메시지는 버림, 재시도 안 함)
-  - emit(정규화 재적재) 실패 -> offset을 커밋하지 않고 그대로 두어 다음 poll에서
-    같은 원본 메시지를 재처리한다. 재처리 시 이미 처리된 레코드는 dedupe에서
-    걸러지므로 중복 emit 걱정은 안 해도 된다.
+  - parse 실패 -> events.dlq로 보내고 offset 커밋 (그 메시지는 버림, 재시도 안 함).
+    dedupe 클레임은 유지 - 재시도할 게 아니라서 그대로 둬도 안전하다.
+  - enrich/exclusion/emit 실패 -> offset을 커밋하지 않고 그대로 두어 다음 poll에서
+    같은 원본 메시지를 재처리한다. dedupe 클레임(is_duplicate())은 emit보다 먼저
+    선점되므로 실패 시 함께 release()로 풀어준다 - 안 풀면 재처리 시도 자체가
+    "이미 처리됨"으로 오판돼 스킵되고, 실제로는 emit된 적 없는 이벤트가 TTL(1h)
+    동안 영구 유실된다(2026-07-15 실측 확인 후 수정 - 예전엔 이 release가 없어서
+    "재처리 시 dedupe가 중복 emit을 막아준다"는 이 문단 자체가 틀린 가정이었다:
+    dedupe가 막은 게 아니라 애초에 재처리 자체가 안 됐던 것).
 
 이 워커는 더 이상 OpenSearch에 직접 쓰지 않는다 - 색인은 Data Prepper가
 events.normalized를 구독해서 담당한다 (P6-4, 자체 색인 코드 대체).
@@ -48,7 +53,7 @@ from fastapi.responses import JSONResponse
 
 from app import db, exclusion, producer
 from app.config import settings
-from app.dedupe import compute_dedupe_key, is_duplicate
+from app.dedupe import compute_dedupe_key, is_duplicate, release as release_dedupe
 from app.enrichment import enrich
 from app.normalizer import normalize
 
@@ -173,29 +178,38 @@ async def _process_body(source: str, observed_time_unix_nano: str, body: Any) ->
         await producer.send_dlq(source, original.encode("utf-8"), str(e))
         return
 
-    enrich(source, payload, event)
+    # dedupe 클레임(is_duplicate())은 이미 선점된 상태 - 아래에서 하나라도 실패하면
+    # 그 클레임을 풀어야 한다. 안 풀면 예외가 위(_consume_loop)로 전파돼 offset
+    # 커밋 없이 재시도하더라도, 재시도 시점의 is_duplicate()가 "이미 처리됨"으로
+    # 오판해서 실제로는 emit된 적 없는 이벤트가 TTL(1h) 동안 영구 유실된다(dedupe.py
+    # 의 release() 참고, 실측 확인 2026-07-15).
+    try:
+        enrich(source, payload, event)
 
-    matched_rule_id = exclusion.matched_rule_id(event)
-    if matched_rule_id is not None:
-        # exclusion_rules에 매칭 - 저가치 노이즈로 판단된 이벤트라 events.normalized로
-        # 내보내지 않는다(색인/상관분석 둘 다 안 봄). otel-logs-raw-*(포렌식 원본
-        # 사본)는 이 워커보다 앞단(Data Prepper가 Kafka에서 직접 읽음)이라 영향
-        # 없음 - 원본은 항상 100% 남는다는 계약 유지.
+        matched_rule_id = exclusion.matched_rule_id(event)
+        if matched_rule_id is not None:
+            # exclusion_rules에 매칭 - 저가치 노이즈로 판단된 이벤트라 events.normalized로
+            # 내보내지 않는다(색인/상관분석 둘 다 안 봄). otel-logs-raw-*(포렌식 원본
+            # 사본)는 이 워커보다 앞단(Data Prepper가 Kafka에서 직접 읽음)이라 영향
+            # 없음 - 원본은 항상 100% 남는다는 계약 유지. 클레임은 유지 - 이건
+            # 실패가 아니라 의도적으로 완결된 처리라 재시도할 필요가 없다.
+            print(
+                f"[normalizer] exclusion_rules 매칭, 드롭 - source={source} "
+                f"rule={matched_rule_id} module={event.event_module}"
+            )
+            return
+
+        # exclude_none=True: 해당 없는 필드는 null로 채우지 않고 아예 생략한다.
+        doc = event.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8")
+        await producer.send_normalized(event.event_id, doc)
+
         print(
-            f"[normalizer] exclusion_rules 매칭, 드롭 - source={source} "
-            f"rule={matched_rule_id} module={event.event_module}"
+            f"[normalizer] emit 완료 - {event.event_module} {event.event_action} "
+            f"(severity={event.event_severity})"
         )
-        return
-
-    # exclude_none=True: 해당 없는 필드는 null로 채우지 않고 아예 생략한다.
-    doc = event.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8")
-    # 실패하면 예외가 위(_consume_loop)로 전파되어 offset을 커밋하지 않는다.
-    await producer.send_normalized(event.event_id, doc)
-
-    print(
-        f"[normalizer] emit 완료 - {event.event_module} {event.event_action} "
-        f"(severity={event.event_severity})"
-    )
+    except Exception:
+        await release_dedupe(dedupe_key)
+        raise
 
 
 async def _consume_loop():

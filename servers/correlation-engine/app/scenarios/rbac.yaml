@@ -1,12 +1,13 @@
 # RBAC 변경/권한 상승/백도어 계정 시나리오. 엔진 동작(sequence/threshold,
 # join_on/correlation_key_type)과 설계 근거 출처는 ../README.md 참고.
 #
-# 이 파일 안에서 반복되는 roles/clusterroles/rolebindings/clusterrolebindings 조합과
-# kube-system/kube-public 네임스페이스 목록은 ids_shared.k8s_constants(normalizer가
-# 코드에서 참조하는 canonical 목록)와 같은 뜻이다. 같은 목록이 normalizer/app/
-# severity.yaml, workload.yaml(S15, 네임스페이스만), Techeer-12th-b/
-# k3d-audit-policy.yaml(kube-apiserver가 직접 읽어서 Python으로 공유 불가)에도 있으니
-# 바뀌면 전부 같이 고칠 것.
+# 이 파일 안에서 반복되는 roles/clusterroles/rolebindings/clusterrolebindings 조합은
+# ids_shared.k8s_constants(normalizer가 코드에서 참조하는 canonical 목록)와 같은
+# 뜻이다. kube-system/kube-public 네임스페이스 목록은 공유 상수가 아니라 이 파일과
+# workload.yaml(S15)에 각각 하드코딩돼 있다(2026-07-15 - 미사용 공유 상수였던
+# SYSTEM_NAMESPACES 제거, k8s_constants.py docstring 참고). 같은 목록이 normalizer/app/
+# severity.yaml, Techeer-12th-b/k3d-audit-policy.yaml(kube-apiserver가 직접 읽어서
+# Python으로 공유 불가)에도 있으니 바뀌면 전부 같이 고칠 것.
 
 scenarios:
   # S3 (sequence, join_on=user_or_sa): RBAC 상승 이후 같은 신원이 실제로 pod에
