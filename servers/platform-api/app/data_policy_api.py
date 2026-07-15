@@ -1,8 +1,20 @@
-"""데이터 정책 API (/log-policies) - 로그 보존/샘플링.
+"""데이터 정책 API (/log-policies) - 로그 보존 기간.
 
 dashboard/src/data/logPolicy.js의 INITIAL_LOG_POLICIES가 지금까지 프론트 로컬 mock
 state로만 존재했던 걸 실제 테이블(datastore/postgres/init/013-data-policy.sql)로
-옮긴 것. 아직 프론트(App.jsx)는 이 API를 안 쓰고 mock 그대로다 - 연동은 별도 작업.
+옮긴 것. 레이어 구분과 필드는 2026-07-16에 3등급 보존 체계로 재정의됐다
+(datastore/postgres/init/023-log-policies-retention-tiers.sql, docs/reports/
+retention-patch-20260716.md) - layer는 이제 소스별(WAS/Falco/K8s Audit)이 아니라
+기록/원본/파생 3개 고정값이고, hot_days/cold_days/sampling_rate는 단일
+retention_days로 통합됐다(sampling_rate는 저장만 되고 어디서도 집행 안 하던 죽은
+컨트롤이라 걷어냄 - docs/reports/repo-audit-20260715.md §3.1). 보존기간은
+app/log_retention.py가 실제로 집행한다(오래된 attack-logs-*/otel-logs-raw-* 인덱스
+통삭제 + audit_logs/incidents 정리).
+
+⚠️ 이 스키마 변경으로 GET/PATCH /log-policies 응답 필드가 바뀌었다 - 대시보드
+AdminAuditView.jsx의 PolicyRow(hot_days/cold_days/sampling_rate 렌더링)는 아직
+새 스키마에 안 맞다(프론트 수정은 이번 작업 범위 밖 - docs/reports/
+retention-patch-20260716.md에 전달 사항 기록).
 
 record_action(record_id=...)는 여기서 안 쓴다 - log_policies의 PK가 UUID가 아니라
 사람이 읽는 문자열(layer 이름)이라 audit_logs.record_id 컬럼(UUID) 타입에 안 맞는다.
@@ -28,32 +40,26 @@ def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
-# --- 로그 보존/샘플링 정책 (계층 3개 고정 - 생성/삭제 없이 PATCH로 값만 바꿈) ---
+# --- 로그 보존 정책 (계층 3개 고정: 기록/원본/파생 - 생성/삭제 없이 PATCH로 값만 바꿈) ---
 
 router_log_policies = APIRouter(prefix="/log-policies", tags=["data-policy"])
 
 
 class LogPolicyOut(BaseModel):
     layer: str
-    hot_days: int
-    cold_days: int
-    sampling_rate: int
+    retention_days: int
     archive_enabled: bool
 
 
 class LogPolicyPatch(BaseModel):
-    hot_days: Optional[int] = None
-    cold_days: Optional[int] = None
-    sampling_rate: Optional[int] = None
+    retention_days: Optional[int] = None
     archive_enabled: Optional[bool] = None
 
 
 def _row_to_log_policy(row) -> LogPolicyOut:
     return LogPolicyOut(
         layer=row["layer"],
-        hot_days=row["hot_days"],
-        cold_days=row["cold_days"],
-        sampling_rate=row["sampling_rate"],
+        retention_days=row["retention_days"],
         archive_enabled=row["archive_enabled"],
     )
 
@@ -62,8 +68,7 @@ def _row_to_log_policy(row) -> LogPolicyOut:
 async def list_log_policies():
     async with pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT layer, hot_days, cold_days, sampling_rate, archive_enabled "
-            "FROM log_policies ORDER BY layer"
+            "SELECT layer, retention_days, archive_enabled FROM log_policies ORDER BY layer"
         )
     return [_row_to_log_policy(r) for r in rows]
 
@@ -80,7 +85,7 @@ async def update_log_policy(layer: str, body: LogPolicyPatch, request: Request):
             f"""
             UPDATE log_policies SET {set_clauses}, updated_at = now()
             WHERE layer = $1
-            RETURNING layer, hot_days, cold_days, sampling_rate, archive_enabled
+            RETURNING layer, retention_days, archive_enabled
             """,
             layer,
             *fields.values(),

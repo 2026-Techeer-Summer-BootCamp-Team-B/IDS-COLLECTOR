@@ -39,11 +39,14 @@
 - User API: app/users_api.py - 관리자 계정 CRUD(users 테이블 - auth.py 로그인이 참조하는
   그 테이블), 감사 로그의 user_id를 username으로 조인할 수 있게 됨(audit_logs_api.py 참고)
   (파이프라인이 실제로 걸러내는 로직은 아직 없음 - 등록/관리까지만)
-- 데이터 정책 API: app/data_policy_api.py - 로그 보존/샘플링(/log-policies) CRUD.
-  AdminAuditView.jsx의 useLogPolicies 훅이 이 API를 실제로 호출한다(예전 App.jsx
-  로컬 mock 대체). 보존기간(hot_days/cold_days/archive_enabled)은 app/log_retention.py가
-  실제로 집행한다(오래된 attack-logs-* 문서 삭제) - 샘플링(sampling_rate)은 아직
-  파이프라인에 반영 안 됨(설정 저장/조회까지만). 제외 규칙(/exclusion-rules,
+- 데이터 정책 API: app/data_policy_api.py - 로그 보존(/log-policies) CRUD, 3등급
+  체계(기록/원본/파생, 2026-07-16)로 재정의됨(datastore/postgres/init/
+  023-log-policies-retention-tiers.sql). AdminAuditView.jsx의 useLogPolicies 훅이
+  이 API를 호출하나 새 응답 스키마(retention_days 단일 필드)에는 아직 안 맞음
+  (docs/reports/retention-patch-20260716.md 참고 - 프론트 반영은 별도 작업).
+  보존기간(retention_days/archive_enabled)은 app/log_retention.py가 실제로
+  집행한다(오래된 attack-logs-*/otel-logs-raw-* 인덱스 통삭제 + audit_logs/
+  incidents 정리). 제외 규칙(/exclusion-rules,
   exclusion_rules 기반 저가치 노이즈 자동 드롭) 기능은 2026-07-15 제거됨 - 룰 이름/
   신원 패턴만으로 너무 거칠게 매칭해서 correlation-engine의 실제 탐지 시나리오(S1/S5/
   S10)가 봐야 할 이벤트까지 같이 드롭하는 게 확인돼, 로그 volume 절감보다 탐지
