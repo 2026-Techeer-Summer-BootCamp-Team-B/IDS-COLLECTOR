@@ -205,7 +205,8 @@ forwardAuth(`auth.py`의 `GET /verify`)를 거친다. 읽기는 로그인만 되
 | `audit_logs` | 관리자 행위 감사 로그 |
 
 `incidents.status`는 `open` → `investigating` → `closed` 선형 전이만 허용
-(`idx_incidents_open_dedup` unique index로 발화 멱등성 보장).
+(`idx_incidents_active_dedup` unique index로 발화 멱등성 보장 - `open`/`investigating`
+둘 다 병합 대상이고, `closed`로 넘어간 뒤 같은 공격이 재발하면 새 인시던트가 생긴다).
 
 ### OpenSearch (`servers/datastore/opensearch/config/data-prepper/attack-logs-template.json`)
 

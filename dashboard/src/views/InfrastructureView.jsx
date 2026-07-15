@@ -1,11 +1,9 @@
 import React, { useMemo } from "react";
-// sourceHealth는 대응하는 백엔드 엔드포인트가 아직 없어(consumer-lag/dlq-depth와는
-// 다른 "모듈별 last-seen" 개념) 계속 mock — 팀원과 논의 후 붙일 예정.
-import { ATTACK_EVENTS, sourceHealth } from "../data/attackEvents";
 import WorldMap from "../components/WorldMap";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
+import { useSourceHealth } from "../hooks/useSourceHealth";
 import { useK8sTargets } from "../hooks/useK8sTargets";
 import { useGeoStats } from "../hooks/useGeoStats";
 import { ModuleVolumeStackedChart } from "./LogDashboard";
@@ -31,7 +29,7 @@ function formatSilence(ms) {
 function SourceHealthPanel() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const health = useMemo(() => sourceHealth(), []);
+  const { health, status, error } = useSourceHealth();
   const statusColor = { healthy: C.mint, warning: C.high, critical: C.critical };
 
   return (
@@ -40,8 +38,10 @@ function SourceHealthPanel() {
       <p className="text-dash-muted text-xs mb-4">
         3계층(WAS / Falco / K8s Audit) 중 하나가 조용해지면 파이프라인 장애 신호로 간주
       </p>
+      {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs py-2">{error}</p>}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {health.map((h) => {
+        {status !== "loading" && health.map((h) => {
           const color = statusColor[h.status];
           return (
             <div key={h.source} className="bg-dash-bg rounded-xl p-4">
