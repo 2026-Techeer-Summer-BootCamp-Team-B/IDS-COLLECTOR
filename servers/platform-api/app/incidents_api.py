@@ -23,6 +23,12 @@ _VALID_TRANSITIONS = {
     "closed": set(),
 }
 
+# status(처리 단계)와 별개 축 - "이 탐지가 실제로 맞았는가" 정답 라벨. status처럼
+# 선형 전이가 아니라 analyst가 판단을 바꾸면 언제든 덮어쓸 수 있다(예: false_positive로
+# 잘못 표시했다가 true_positive로 정정) - datastore/postgres/init/015-incident-verdict.sql
+# 참고.
+_VALID_VERDICTS = {"true_positive", "false_positive"}
+
 
 class IncidentOut(BaseModel):
     id: str
@@ -35,6 +41,9 @@ class IncidentOut(BaseModel):
     mitre_tactics: List[str]
     created_at: str
     updated_at: str
+    verdict: Optional[str]
+    verdict_note: Optional[str]
+    verdict_at: Optional[str]
 
 
 class IncidentEventOut(BaseModel):
@@ -45,6 +54,11 @@ class IncidentEventOut(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+class VerdictUpdate(BaseModel):
+    verdict: str
+    note: Optional[str] = None
 
 
 class TimelineEntryOut(BaseModel):
@@ -74,6 +88,9 @@ def _row_to_incident(row) -> IncidentOut:
         mitre_tactics=row["mitre_tactics"],
         created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
+        verdict=row["verdict"],
+        verdict_note=row["verdict_note"],
+        verdict_at=row["verdict_at"].isoformat() if row["verdict_at"] else None,
     )
 
 
@@ -129,7 +146,8 @@ async def list_incidents(
         rows = await conn.fetch(
             f"""
             SELECT id, title, correlation_key_type, correlation_key_value, severity,
-                   status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at
+                   status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,
+                   verdict, verdict_note, verdict_at
             FROM incidents {where}
             ORDER BY {order} LIMIT ${len(params)}
             """,
@@ -149,7 +167,8 @@ async def get_incident(incident_id: str):
         row = await conn.fetchrow(
             """
             SELECT id, title, correlation_key_type, correlation_key_value, severity,
-                   status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at
+                   status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,
+                   verdict, verdict_note, verdict_at
             FROM incidents WHERE id = $1
             """,
             incident_id,
@@ -291,13 +310,56 @@ async def update_status(incident_id: str, body: StatusUpdate, request: Request):
             """
             UPDATE incidents SET status = $2, updated_at = now() WHERE id = $1
             RETURNING id, title, correlation_key_type, correlation_key_value, severity,
-                      status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at
+                      status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,
+                      verdict, verdict_note, verdict_at
             """,
             incident_id,
             body.status,
         )
     await record_action(
         "INCIDENT_STATUS_CHANGED",
+        "incidents",
+        _client_ip(request),
+        user_id=current_user_id(request),
+        record_id=incident_id,
+    )
+    return _row_to_incident(row)
+
+
+@router.patch("/{incident_id}/verdict", response_model=IncidentOut)
+async def update_verdict(incident_id: str, body: VerdictUpdate, request: Request):
+    """정답 라벨(true_positive/false_positive) 기록 - status의 open->investigating->
+    closed 선형 전이와 달리 언제든(어느 status에서든) 설정/재설정할 수 있다. 이 값이
+    쌓여야 GET /scenarios가 scenario별 precision(true_positive/(true_positive+
+    false_positive))을 계산해서 내려줄 수 있고, 그래야 어떤 시나리오의 threshold/
+    window/cooldown을 데이터 기반으로 튜닝할지 판단할 근거가 생긴다."""
+    if body.verdict not in _VALID_VERDICTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid verdict {body.verdict!r} (허용: {sorted(_VALID_VERDICTS)})",
+        )
+
+    async with pool().acquire() as conn:
+        current = await conn.fetchrow("SELECT id FROM incidents WHERE id = $1", incident_id)
+        if not current:
+            raise HTTPException(status_code=404, detail="incident not found")
+
+        row = await conn.fetchrow(
+            """
+            UPDATE incidents
+            SET verdict = $2, verdict_note = $3, verdict_by = $4, verdict_at = now()
+            WHERE id = $1
+            RETURNING id, title, correlation_key_type, correlation_key_value, severity,
+                      status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,
+                      verdict, verdict_note, verdict_at
+            """,
+            incident_id,
+            body.verdict,
+            body.note,
+            current_user_id(request),
+        )
+    await record_action(
+        "INCIDENT_VERDICT_SET",
         "incidents",
         _client_ip(request),
         user_id=current_user_id(request),
