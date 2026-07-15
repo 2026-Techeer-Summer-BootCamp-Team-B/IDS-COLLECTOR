@@ -367,7 +367,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
 // 합산한 총량만 보여줘서 "지금 어느 소스가 볼륨을 주도하는지"가 안 보이던 문제.
 // /stats/volume을 module별로 3번(같은 hours/buckets로) 호출하면 서버가 같은
 // date_histogram 경계를 쓰므로 버킷 인덱스가 그대로 정렬돼 안전하게 합칠 수 있다.
-export function ModuleVolumeStackedChart() {
+export function ModuleVolumeStackedChart({ fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const [rangeKey, setRangeKey] = useState("24h");
@@ -409,7 +409,7 @@ export function ModuleVolumeStackedChart() {
       title="모듈별 로그량 추이"
       subtitle={`Last ${preset.label} · WAS / Falco / K8s Audit 적층`}
       action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
-      className="min-h-80 h-full"
+      className={fillHeight ? "min-h-80 h-full" : "h-80"}
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">모듈별 로그량을 불러오지 못했습니다.</p>}
@@ -609,7 +609,7 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
       subtitle={highlighted ? `전체 ${sources.length}개 IP` : "선택 구간 기준"}
       className={highlighted ? "glow-box-mint" : ""}
     >
-      <div className="space-y-3">
+      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
         {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
         {status === "error" && (
           <p className="text-dash-critical text-xs">{error || "데이터를 불러오지 못했습니다."}</p>
@@ -1801,7 +1801,7 @@ export function DashboardContent() {
       case "latency-stats":
         return <LatencyStatsPanel events={wasEventsForLatency} />;
       case "module-volume":
-        return <ModuleVolumeStackedChart />;
+        return <ModuleVolumeStackedChart fillHeight />;
       case "recent-logs":
         return (
           <RecentLogsTable events={displayEvents} filterLevels={REAL_SEVERITY_LEVELS} status={logsStatus} error={logsError} />

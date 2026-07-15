@@ -142,9 +142,11 @@ function Sidebar({ active, onSelect, open, incidentBadge, lastCritical, onInvest
               <span>{item.label}</span>
             </button>
           ))}
-        </nav>
 
-        <SidebarCriticalAlert event={lastCritical} onInvestigate={onInvestigateCritical} />
+          {/* K8s API(LAYER_NAV_ITEMS 마지막 항목) 바로 아래 - 맨 아래 여백에
+              두면 스크롤을 안 내리는 이상 놓치기 쉽다는 피드백으로 여기로 이동. */}
+          <SidebarCriticalAlert event={lastCritical} onInvestigate={onInvestigateCritical} />
+        </nav>
       </div>
     </aside>
   );
