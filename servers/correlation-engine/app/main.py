@@ -91,16 +91,23 @@ async def _allow_list_refresh_loop():
     매 반복마다 다시 읽는다(2026-07-15, 이전엔 코드에 아예 하드코딩돼 있어서 env var로도
     못 바꿨음) - admin이 API로 바꾸면 재시작 없이 다음 반복부터 반영된다."""
     global _engine
+    # 2026-07-15 버그 수정: fetch_poll_interval_seconds() 호출이 try/except 밖에
+    # 있어서 poll_intervals 테이블이 없는 배포 직후 같은 상황에서 예외가 나면
+    # 잡히지 않고 이 while 루프 전체(태스크)가 죽었다 - platform-api의 같은
+    # 패턴 버그(app/incident_alerts.py)가 /health 영구 503 -> Traefik이 API
+    # 라우팅을 통째로 내려버리는 장애로 이어진 걸 실측 확인해서, 여기도 같이
+    # try/except 안으로 옮겨 방어.
     while True:
+        interval = _ALLOW_LIST_REFRESH_SECONDS
         try:
             entries = await incidents.fetch_active_allow_list()
             if _engine is not None:
                 _engine.set_allow_list(entries)
+            interval = await incidents.fetch_poll_interval_seconds(
+                "allow_list_refresh_seconds", _ALLOW_LIST_REFRESH_SECONDS
+            )
         except Exception as e:
             print(f"[correlation] allow_list 갱신 실패: {e}")
-        interval = await incidents.fetch_poll_interval_seconds(
-            "allow_list_refresh_seconds", _ALLOW_LIST_REFRESH_SECONDS
-        )
         await asyncio.sleep(interval)
 
 

@@ -56,12 +56,21 @@ async def _dispatch_pending() -> None:
 
 
 async def poll_loop() -> None:
+    # 2026-07-15 버그 수정: _current_interval_seconds() 호출이 try/except 밖에
+    # 있어서 (예: poll_intervals 테이블이 아직 없는 배포 직후처럼) 여기서 예외가
+    # 나면 잡히지 않고 while 루프 전체가 죽었다 - 그러면 이 태스크가
+    # done()이 되고, /health가 영구 503을 반환하고, Traefik이 platform-api
+    # 라우팅 자체를 내려버려서 로그인을 포함한 모든 /api/*가 대시보드 정적
+    # 서버로 새서 405가 나는 사고로 이어졌다(실측 확인, 2026-07-15). 폴링 주기
+    # 조회도 같은 try/except 안으로 넣어서, 실패해도 기본 간격으로 다음
+    # 주기에 재시도하도록 고쳤다.
     while True:
+        interval = _DEFAULT_INTERVAL_SECONDS
         try:
             await _dispatch_pending()
+            interval = await _current_interval_seconds()
         except asyncio.CancelledError:
             raise
         except Exception as e:
             print(f"[platform-api] 인시던트 알림 폴링 실패, 다음 주기에 재시도: {e}")
-        interval = await _current_interval_seconds()
         await asyncio.sleep(interval)
