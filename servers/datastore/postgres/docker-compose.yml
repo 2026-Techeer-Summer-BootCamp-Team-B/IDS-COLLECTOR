@@ -18,6 +18,13 @@ services:
       - ./init:/docker-entrypoint-initdb.d:ro
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       # -d 없이 -U만 주면 pg_isready가 대상 데이터베이스명을 유저명(ids_admin)으로
       # 기본 가정하는데, 실제 DB명은 POSTGRES_DB(ids_platform)라 매번

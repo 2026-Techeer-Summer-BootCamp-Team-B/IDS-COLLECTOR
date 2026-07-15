@@ -37,6 +37,14 @@ services:
       - "127.0.0.1:8200:8200" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - json-file 기본 드라이버는 회전이
+    # 없어 무기한 누적된다. Kafka 컨슈머라 이벤트당 로그가 나는 다변 서비스라 50m×3.
+    # 컨테이너 재생성(docker compose up -d --force-recreate) 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     # curl/wget이 python:3.11-slim 기본 이미지에 없어서 표준 라이브러리(urllib)로 대신한다.
     # urlopen은 HTTP 응답이 4xx/5xx면 예외를 던지므로 /health가 503을 반환하면(컨슈머
     # 태스크 죽음) 이 커맨드도 실패해서 그대로 unhealthy로 잡힌다.
@@ -64,6 +72,13 @@ services:
       - "127.0.0.1:8300:8300" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 다변 서비스라 50m×3. 컨테이너
+    # 재생성(--force-recreate) 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8300/health', timeout=3)"]
       interval: 10s
@@ -90,6 +105,13 @@ services:
       - "127.0.0.1:8400:8400" # 로컬 디버깅 편의용 직결 포트(호스트 루프백에만 바인딩, forwardAuth 미적용) - 실제 진입 경로는 Traefik(:80/api). 원격 호스트에서 직결하려면 SSH 터널 필요(예: ssh -L 8400:localhost:8400 <host>)
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8400/health', timeout=3)"]
       interval: 10s
@@ -133,6 +155,13 @@ services:
     restart: unless-stopped
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=siem-net"

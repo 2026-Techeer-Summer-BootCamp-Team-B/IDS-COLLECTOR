@@ -19,3 +19,11 @@ services:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - accessLog가 요청마다 남지만 다른
+    # 서비스 대비로는 상대적으로 가벼워 10m×3. 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

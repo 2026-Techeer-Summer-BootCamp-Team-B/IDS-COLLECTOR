@@ -19,6 +19,13 @@ services:
       - opensearch-data:/usr/share/opensearch/data
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health"]
       interval: 10s
@@ -43,6 +50,13 @@ services:
         condition: service_healthy
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # 선택 사항: 색인된 문서(otel-logs-raw-*, attack-logs-*)를 눈으로 확인하고 싶을 때만
   # 붙이는 브라우저 UI. 우리 자체 SENTINEL-OPS 대시보드(dashboard/)와는 별개이고,
@@ -61,6 +75,13 @@ services:
         condition: service_healthy
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   opensearch-data:
