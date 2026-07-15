@@ -14,13 +14,23 @@
 실패 처리 (P3-7):
   - parse 실패 -> events.dlq로 보내고 offset 커밋 (그 메시지는 버림, 재시도 안 함).
     dedupe 클레임은 유지 - 재시도할 게 아니라서 그대로 둬도 안전하다.
-  - enrich/exclusion/emit 실패 -> offset을 커밋하지 않고 그대로 두어 다음 poll에서
-    같은 원본 메시지를 재처리한다. dedupe 클레임(is_duplicate())은 emit보다 먼저
-    선점되므로 실패 시 함께 release()로 풀어준다 - 안 풀면 재처리 시도 자체가
-    "이미 처리됨"으로 오판돼 스킵되고, 실제로는 emit된 적 없는 이벤트가 TTL(1h)
-    동안 영구 유실된다(2026-07-15 실측 확인 후 수정 - 예전엔 이 release가 없어서
-    "재처리 시 dedupe가 중복 emit을 막아준다"는 이 문단 자체가 틀린 가정이었다:
-    dedupe가 막은 게 아니라 애초에 재처리 자체가 안 됐던 것).
+  - enrich/exclusion/emit 실패 -> 같은 메시지를 최대 _MAX_PROCESS_ATTEMPTS번 그 자리에서
+    즉시 재시도한다(correlation-engine/app/main.py의 재시도 패턴과 동일, 2026-07-15
+    수정). 예전엔 "offset을 커밋하지 않고 다음 poll에서 같은 메시지를 재처리한다"고
+    문서화돼 있었지만 사실이 아니었다 - aiokafka는 `async for msg in _consumer`가
+    메시지를 yield하는 시점에 내부 fetch position을 이미 전진시키므로(commit()과
+    무관), 실패한 메시지를 커밋 없이 건너뛰고 다음 메시지로 넘어가면(continue) 그
+    다음 메시지가 성공해서 commit()이 호출되는 순간 실패한 메시지의 offset까지
+    통째로 확정돼버려 재시도 기회 자체가 없었다(실측 확인 - 프로세스가 커밋 전에
+    죽지 않는 한 영구 유실). 지금은 같은 메시지 안의 로그 레코드들을 처음부터 다시
+    순회하는 방식으로 재시도한다 - 이미 emit에 성공한 레코드는 dedupe 클레임이
+    풀리지 않은 상태라 재시도 중 is_duplicate()가 막아줘서 중복 emit 걱정 없이
+    안전하게 재시도할 수 있다. 재시도를 모두 소진하면(일시적 장애가 아니라 결정적
+    실패라는 뜻) 조용히 버리지 않고 parse 실패와 동일하게 DLQ로 보낸다 - 포이즌
+    필이 파티션 전체를 영원히 막는 것도 막고, 유실 없이 항상 흔적을 남긴다.
+    dedupe 클레임(is_duplicate())은 emit보다 먼저 선점되므로 실패 시 함께
+    release()로 풀어준다 - 안 풀면 재시도 시도 자체가 "이미 처리됨"으로 오판돼
+    스킵되고, 실제로는 emit된 적 없는 이벤트가 TTL(1h) 동안 영구 유실된다.
 
 이 워커는 더 이상 OpenSearch에 직접 쓰지 않는다 - 색인은 Data Prepper가
 events.normalized를 구독해서 담당한다 (P6-4, 자체 색인 코드 대체).
@@ -72,6 +82,8 @@ _consumer: Optional[AIOKafkaConsumer] = None
 _consumer_task: Optional[asyncio.Task] = None
 _exclusion_refresh_task: Optional[asyncio.Task] = None
 _EXCLUSION_REFRESH_SECONDS = 30  # poll_intervals 테이블에 행이 없을 때의 fail-open 기본값
+_MAX_PROCESS_ATTEMPTS = 3  # enrich/exclusion/emit 실패 시 같은 메시지 재시도 상한 (아래 _consume_loop 참고)
+_PROCESS_RETRY_BACKOFF_SECONDS = 1.0
 
 
 def _any_value_to_python(value: Optional[Dict[str, Any]]) -> Any:
@@ -248,14 +260,30 @@ async def _consume_loop():
                 await _consumer.commit()
                 continue
 
-            try:
-                for observed_time_unix_nano, body in _iter_log_records(message):
-                    await _process_body(source, observed_time_unix_nano, body)
-            except Exception as e:
-                # emit 실패 등 - offset 커밋 안 하고 다음 poll에서 같은 메시지 재처리.
-                print(f"[normalizer] 이벤트 처리 실패, 커밋 보류: {e}")
-                await asyncio.sleep(1)
-                continue
+            last_error: Optional[Exception] = None
+            for attempt in range(1, _MAX_PROCESS_ATTEMPTS + 1):
+                try:
+                    for observed_time_unix_nano, body in _iter_log_records(message):
+                        await _process_body(source, observed_time_unix_nano, body)
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+                    if attempt < _MAX_PROCESS_ATTEMPTS:
+                        print(
+                            f"[normalizer] 이벤트 처리 실패 ({attempt}/{_MAX_PROCESS_ATTEMPTS}회), "
+                            f"{_PROCESS_RETRY_BACKOFF_SECONDS}초 후 재시도: {e}"
+                        )
+                        await asyncio.sleep(_PROCESS_RETRY_BACKOFF_SECONDS)
+
+            if last_error is not None:
+                # 일시적 장애가 아니라 결정적 실패라는 뜻 - 조용히 버리면 이벤트가
+                # 흔적도 없이 영구 유실되므로 parse 실패와 동일하게 DLQ로 보낸다.
+                print(
+                    f"[normalizer] 이벤트 처리 실패, {_MAX_PROCESS_ATTEMPTS}회 재시도 소진 - "
+                    f"DLQ로 전송: {last_error}"
+                )
+                await producer.send_dlq(source, msg.value, f"process_error: {last_error}")
 
             await _consumer.commit()
     except asyncio.CancelledError:
