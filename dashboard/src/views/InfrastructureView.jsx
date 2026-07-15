@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import WorldMap from "../components/WorldMap";
-import { CHART_COLORS } from "../data/theme";
+import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
 import { useSourceHealth } from "../hooks/useSourceHealth";
@@ -174,20 +174,20 @@ function PipelineHealthPanel() {
 // 뒤덮이는 문제 — 낮음 티어는 색을 아예 빼고(무채도 회색) "집중된 곳"만 색이
 // 튀도록 바꿨다.
 //
-// 2026-07-15: 중간 티어에 orange(C.high)를 쓰니 앱 전체의 민트/핑크 네온
-// 톤과 안 어울리고 뜬금없이 튄다는 피드백 — pink로 바꿔서 무채색(회색) →
-// 네온 핑크 → critical 빨강 순으로, 브랜드 액센트 색 계열 안에서만 진행되게.
+// 2026-07-15: orange -> pink -> cyan/초록까지 세 번 바꿔봤는데도 계속
+// "이상하다"는 피드백 - 결국 이미 잘 어울린다고 인정받은 도넛 차트 색
+// (Overview/Incidents가 쓰는 DONUT_PALETTE)에서 그대로 3단계를 뽑아 쓰기로.
+// 새 색을 발명하지 않고 이미 검증된 톤을 재사용하는 쪽으로 방향을 바꿨다.
 function intensityColor(count, max, C) {
   const ratio = max ? count / max : 0;
-  if (ratio > 0.66) return C.critical;
-  if (ratio > 0.33) return C.pink;
-  if (ratio > 0) return C.muted;
+  if (ratio > 0.66) return DONUT_PALETTE[0]; // 테라코타 - 가장 집중된 곳
+  if (ratio > 0.33) return DONUT_PALETTE[1]; // 앰버
+  if (ratio > 0) return DONUT_PALETTE[3]; // 스틸 블루
   return C.surfaceAlt;
 }
 
-// The neutral "no attacks" tier uses the surface color, which is light in
-// light mode — white text on it would be unreadable, so only the hot tiers
-// (which stay dark/saturated in both themes) get white text.
+// DONUT_PALETTE 톤(테라코타/앰버/스틸블루)은 중간~어두운 채도라 흰 글자가 다시
+// 잘 읽힌다 - 무채색 "공격 없음" 타일만 어두운 surface 계열이라 밝은 글자.
 function intensityTextColor(count, max, C) {
   return max && count > 0 ? "#FFFFFF" : C.fg;
 }

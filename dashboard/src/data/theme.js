@@ -24,6 +24,10 @@ export const CHART_COLORS = {
     low: "#8890B5",
     live: "#39FF6A",
     was: "#1F57FF",
+    // 2026-07-15: Infrastructure 히트맵(Top 공격 대상 등)에 orange/pink를 써봤는데
+    // 둘 다 "이상하다"는 피드백 - 사용자가 준 터미널 빌드 로그 스크린샷(시안/블루
+    // 구조 텍스트 -> 초록 성공 텍스트) 톤을 참고해서 새로 추가한 중간 단계 색.
+    info: "#22D3EE",
   },
   light: {
     bg: "#F4F5FA",
@@ -40,6 +44,7 @@ export const CHART_COLORS = {
     low: "#8890B5",
     live: "#39FF6A",
     was: "#1D4ED8",
+    info: "#0891B2",
   },
 };
 

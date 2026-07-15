@@ -168,7 +168,7 @@ export function KpiCard({ label, value, delta, positive = true, onClick, active 
   return (
     <Tag
       onClick={onClick}
-      className={`rounded-2xl p-5 flex-1 min-w-[160px] text-left transition-colors border ${
+      className={`rounded-2xl p-5 flex-1 w-full h-full min-w-[160px] text-left transition-colors border ${
         onClick ? "cursor-pointer" : ""
       } ${
         active
@@ -213,11 +213,42 @@ function LevelBadge({ level }) {
 // GET /stats/volume(servers/platform-api/app/stats_api.py) 연동 — 서버가
 // date_histogram으로 버킷을 미리 잘라서 내려주면, 라벨 포맷(timeSeries.js의
 // formatBucketLabel)과 급증 탐지(detectSpike)는 그대로 클라이언트에서 재사용.
-export function LogVolumeChart({ rangeKey, module, chartType = "area" }) {
+// 2026-07-15: 위젯별 차트 타입 전환은 원래 "위젯 설정"으로 만든 커스텀
+// 대시보드에서만 됐는데, 기본 모드에서도 쓰고 싶다는 피드백 - 카드 우측
+// 상단에 작은 토글을 추가한다. 커스텀 대시보드(WidgetFrame)는 이미 자기
+// 방식대로 chartType을 props로 내려주고 있으니, 그 경우엔 여기서 또 토글을
+// 그리지 않도록 "chartType prop이 안 왔을 때만" 이 컴포넌트가 알아서 자체
+// state로 관리 + 토글을 그린다(중복 UI 방지).
+function ChartTypeToggle({ options, value, onChange }) {
+  if (!options) return null;
+  return (
+    <div className="flex items-center gap-0.5">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          title={`${opt.label}로 표시`}
+          className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+            value === opt.value
+              ? "bg-dash-mint/25 text-dash-mint"
+              : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const { pollMs } = usePollInterval();
+  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("log-volume"));
+  const isControlled = chartTypeProp !== undefined;
+  const chartType = isControlled ? chartTypeProp : internalType;
   const { buckets, status, error } = useLogVolume({
     lookbackMs: preset.lookbackMs,
     bucketMs: preset.bucketMs,
@@ -244,11 +275,16 @@ export function LogVolumeChart({ rangeKey, module, chartType = "area" }) {
       title="Log Volume"
       subtitle={`Last ${preset.label} · ${data.length} buckets`}
       action={
-        spike && (
-          <span className="text-[11px] font-medium px-2 py-1 rounded-md bg-dash-pink/15 text-dash-pink whitespace-nowrap">
-            ⚠ {spikePoint.label} 평소 대비 +{spike.pctOverBaseline}% 급증
-          </span>
-        )
+        <div className="flex items-center gap-2">
+          {!isControlled && (
+            <ChartTypeToggle options={chartTypeOptionsFor("log-volume")} value={chartType} onChange={setInternalType} />
+          )}
+          {spike && (
+            <span className="text-[11px] font-medium px-2 py-1 rounded-md bg-dash-pink/15 text-dash-pink whitespace-nowrap">
+              ⚠ {spikePoint.label} 평소 대비 +{spike.pctOverBaseline}% 급증
+            </span>
+          )}
+        </div>
       }
       className="h-80"
     >
@@ -434,10 +470,13 @@ export function ModuleVolumeStackedChart() {
 // Log Levels 차트 실데이터 버전 — event.severity 1~4 그대로 4개 막대(기존
 // LevelDistributionChart의 9단계는 FalcoView 등 여전히 mock인 다른 뷰가
 // 재사용 중이라 그대로 두고, Overview 전용으로 새로 뺐다).
-export function RealLevelDistributionChart({ hours, module, chartType = "bar" }) {
+export function RealLevelDistributionChart({ hours, module, chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { pollMs } = usePollInterval();
+  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("level-distribution"));
+  const isControlled = chartTypeProp !== undefined;
+  const chartType = isControlled ? chartTypeProp : internalType;
   const { levels, total, status, error } = useLogLevels({ hours, module, pollMs });
 
   const data = REAL_SEVERITY_LEVELS.map((l, i) => {
@@ -447,7 +486,16 @@ export function RealLevelDistributionChart({ hours, module, chartType = "bar" })
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
   return (
-    <Card title="Log Levels" subtitle={status === "ready" ? `선택 구간 · ${total}건` : "불러오는 중..."} className="h-80">
+    <Card
+      title="Log Levels"
+      subtitle={status === "ready" ? `선택 구간 · ${total}건` : "불러오는 중..."}
+      action={
+        !isControlled && (
+          <ChartTypeToggle options={chartTypeOptionsFor("level-distribution")} value={chartType} onChange={setInternalType} />
+        )
+      }
+      className="h-80"
+    >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status !== "error" && chartType === "donut" && (
         <div className="flex items-center gap-4 h-[88%]">
@@ -735,9 +783,12 @@ function useCountUp(rawValue, duration = 500) {
 // 탐지 소스별(WAS/Falco/K8s Audit) 도넛 — 3계층 상관분석 프로젝트의 핵심 축이라
 // Overview 요약에도 반드시 있어야 하는 지표. GET /stats(by_module) 연동 - WAF는
 // 비활성화 상태라 보통 안 잡히거나 0건(정상).
-function DetectionSourceDonutCompact({ lookbackMs, chartType = "donut" }) {
+function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-source"));
+  const isControlled = chartTypeProp !== undefined;
+  const chartType = isControlled ? chartTypeProp : internalType;
   const { byModule, status, error } = useDetectionSources({ lookbackMs });
   const data = useMemo(
     () =>
@@ -753,7 +804,15 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType = "donut" }) {
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
   return (
-    <Card title="탐지 소스별 분포" subtitle={status === "ready" ? `WAS / Falco / K8s Audit · 총 ${total}건` : "불러오는 중..."}>
+    <Card
+      title="탐지 소스별 분포"
+      subtitle={status === "ready" ? `WAS / Falco / K8s Audit · 총 ${total}건` : "불러오는 중..."}
+      action={
+        !isControlled && (
+          <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
+        )
+      }
+    >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
@@ -807,10 +866,13 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType = "donut" }) {
 // 같은 데이터(GET /stats/levels)를 비율로 한눈에 보여주는 버전. 탐지 소스별
 // 분포 도넛과 나란히 둬서 "어느 계층에서" + "얼마나 심각한 로그가 많은지"를
 // 같은 화면에서 비교할 수 있게 한다.
-function SeverityDonutCompact({ hours, chartType = "donut" }) {
+function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { pollMs } = usePollInterval();
+  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-severity"));
+  const isControlled = chartTypeProp !== undefined;
+  const chartType = isControlled ? chartTypeProp : internalType;
   const { levels, total, status, error } = useLogLevels({ hours, pollMs });
   const data = useMemo(
     () =>
@@ -826,7 +888,15 @@ function SeverityDonutCompact({ hours, chartType = "donut" }) {
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
   return (
-    <Card title="심각도 분포" subtitle={status === "ready" ? `선택 구간 · 총 ${total}건` : "불러오는 중..."}>
+    <Card
+      title="심각도 분포"
+      subtitle={status === "ready" ? `선택 구간 · 총 ${total}건` : "불러오는 중..."}
+      action={
+        !isControlled && (
+          <ChartTypeToggle options={chartTypeOptionsFor("donut-severity")} value={chartType} onChange={setInternalType} />
+        )
+      }
+    >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
@@ -880,9 +950,12 @@ function SeverityDonutCompact({ hours, chartType = "donut" }) {
 // 네임스페이스 단위로 합쳐서 보여준다. 지금은 관찰 대상(Juice Shop)이 하나뿐이라
 // 조각이 하나일 수 있지만, 나중에 인스턴스가 늘어나면(네임스페이스 여러 개)
 // 여기서 바로 비교가 된다 — Infrastructure 탭의 K8s 타깃 랭킹과 같은 소스.
-function K8sNamespaceDonutCompact({ chartType = "donut" }) {
+function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-k8s-namespace"));
+  const isControlled = chartTypeProp !== undefined;
+  const chartType = isControlled ? chartTypeProp : internalType;
   const { targets, status, error } = useK8sTargets({ limit: 20 });
   const data = useMemo(() => {
     const byNamespace = {};
@@ -897,7 +970,19 @@ function K8sNamespaceDonutCompact({ chartType = "donut" }) {
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
   return (
-    <Card title="K8s 네임스페이스별 분포" subtitle={status === "ready" ? `전체 기간 · 총 ${total}건` : "불러오는 중..."}>
+    <Card
+      title="K8s 네임스페이스별 분포"
+      subtitle={status === "ready" ? `전체 기간 · 총 ${total}건` : "불러오는 중..."}
+      action={
+        !isControlled && (
+          <ChartTypeToggle
+            options={chartTypeOptionsFor("donut-k8s-namespace")}
+            value={chartType}
+            onChange={setInternalType}
+          />
+        )
+      }
+    >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">데이터가 없습니다.</p>}
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
@@ -1221,14 +1306,22 @@ const KPI_MIN_SEVERITY = {
 // chartType/onChartTypeChange는 위젯 "인스턴스" 단위로 호출부에서 내려준다.
 // onRemove가 있을 때만(빌더에서) 제거 버튼이 뜬다 - 저장된 대시보드를 그냥 보는
 // 중(CustomDashboardView)에는 실수로 위젯이 지워지지 않도록 onRemove를 안 넘긴다.
+// 2026-07-15: 상시 보이는 테두리 박스 + 헤더바가 "위젯 배치를 다듬는 화면인데도
+// 실제 위젯이 아니라 틀이 도드라져 보인다"는 피드백 — 평상시엔 완전히 투명해서
+// 위젯 자체(Card/KpiCard 등이 이미 갖고 있는 배경/테두리)만 보이게 하고, 드래그
+// 핸들/차트타입 버튼/제거 버튼은 마우스를 올렸을 때만 우상단에 작은 플로팅
+// 툴바로 뜨도록 바꿨다 - 평소엔 기본 모드와 완전히 똑같이 보인다.
 function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove, children }) {
   const options = chartTypeOptionsFor(widgetType);
 
   return (
-    <div className="h-full flex flex-col bg-dash-surface rounded-2xl overflow-hidden border border-dash-mint/15">
-      <div className="widget-drag-handle cursor-move flex items-center gap-2 px-3 py-1.5 bg-dash-surfaceAlt/70 text-dash-muted text-[10px] uppercase tracking-wide shrink-0 select-none">
-        <span className="opacity-60 tracking-tighter">⠿⠿</span>
-        <span className="truncate flex-1">{title}</span>
+    <div className="group relative h-full w-full">
+      <div className="h-full w-full overflow-auto">{children}</div>
+      <div
+        className="widget-drag-handle cursor-move absolute top-1.5 right-1.5 z-10 flex items-center gap-1.5 max-w-[92%] px-2 py-1 rounded-lg bg-dash-bg/95 border border-dash-mint/25 shadow-lg text-dash-muted text-[10px] uppercase tracking-wide select-none opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
+      >
+        <span className="opacity-70 tracking-tighter shrink-0">⠿⠿</span>
+        <span className="truncate">{title}</span>
         {options && onChartTypeChange && (
           <div
             className="flex items-center gap-0.5 shrink-0 normal-case tracking-normal cursor-default"
@@ -1242,7 +1335,7 @@ function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove
                 className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
                   chartType === opt.value
                     ? "bg-dash-mint/25 text-dash-mint"
-                    : "text-dash-muted hover:text-dash-fg hover:bg-dash-surface"
+                    : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
                 }`}
               >
                 {opt.label}
@@ -1261,7 +1354,6 @@ function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove
           </button>
         )}
       </div>
-      <div className="flex-1 min-h-0 overflow-auto p-2">{children}</div>
     </div>
   );
 }

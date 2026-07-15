@@ -490,7 +490,11 @@ export default function IncidentsView({ pushToast }) {
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
-        <div className="space-y-3">
+        {/* 인시던트가 계속 쌓이면 이 리스트가 끝없이 늘어나서 페이지 전체가
+            하염없이 길어지던 문제 - 높이를 고정하고 리스트 안에서만 스크롤되게
+            바꿨다(InfrastructureView의 "클러스터 구조" 패널과 같은 패턴).
+            pr-2로 스크롤바가 카드 텍스트를 가리지 않게 여백을 둔다. */}
+        <div className="space-y-3 max-h-[640px] overflow-y-auto pr-2">
           {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
           {status === "ready" && filteredIncidents.length === 0 && (
             <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>
