@@ -61,7 +61,8 @@ async def get_technique_incidents(technique_id: str):
         rows = await conn.fetch(
             """
             SELECT i.id, i.title, i.correlation_key_type, i.correlation_key_value, i.severity,
-                   i.status, i.matched_scenario_rule_id, i.mitre_tactics, i.created_at, i.updated_at
+                   i.status, i.matched_scenario_rule_id, i.mitre_tactics, i.created_at, i.updated_at,
+                   i.verdict, i.verdict_note, i.verdict_at
             FROM incidents i
             JOIN scenario_rules sr ON sr.id = i.matched_scenario_rule_id
             WHERE sr.mitre_technique_id = $1
