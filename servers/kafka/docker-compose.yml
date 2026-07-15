@@ -56,13 +56,29 @@ services:
       - |
         # 계약 문서 §1 공통 설정: partitions=1, replication=1, retention 24h,
         # cleanup.policy=delete (retention이 트리밍 정책을 대체 - 별도 정리 job 없음).
-        for topic in events.was events.waf events.falco events.audit events.unknown events.normalized events.dlq; do
+        for topic in events.was events.waf events.falco events.audit events.normalized; do
           /opt/kafka/bin/kafka-topics.sh --create \
             --bootstrap-server kafka:9092 \
             --topic "$$topic" \
             --partitions 1 \
             --replication-factor 1 \
             --config retention.ms=86400000 \
+            --config cleanup.policy=delete \
+            --if-not-exists
+        done
+
+        # events.dlq/events.unknown은 "(수동 점검)" 대상(계약 §1)인데 자동
+        # 소비자/알림이 없어(2026-07-16부로 incident_alerts.py가 깊이 증가 알림을
+        # 보내긴 하나 어디까지나 알림이지 소비가 아님) 24시간 안에 사람이 못 보면
+        # 원본이 영구 소실됐다(감사 O11/§3.3) - 7일로 늘려 대응 시간을 확보한다.
+        # Kafka 등급 외(전송 버퍼) 취급이라 3등급 보존 체계 대상은 아니다.
+        for topic in events.dlq events.unknown; do
+          /opt/kafka/bin/kafka-topics.sh --create \
+            --bootstrap-server kafka:9092 \
+            --topic "$$topic" \
+            --partitions 1 \
+            --replication-factor 1 \
+            --config retention.ms=604800000 \
             --config cleanup.policy=delete \
             --if-not-exists
         done
