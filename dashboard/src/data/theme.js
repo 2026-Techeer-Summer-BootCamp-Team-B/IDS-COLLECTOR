@@ -4,10 +4,16 @@
 // hand — if you change a value in index.css, mirror it here.
 export const CHART_COLORS = {
   dark: {
-    bg: "#05060B",
-    surface: "#0E0F1A",
-    surfaceAlt: "#191B2C",
-    mint: "#14B8A6",
+    // 2026-07-15 피드백: 배경이 살짝 남색(블루 틴트)이 껴있어서 "찐한 블랙"으로
+    // 안 느껴진다는 지적 - R/G/B를 거의 동일하게(중립 무채색) 낮춰서 순수 블랙에
+    // 가깝게 조정. mint는 index.css의 --dash-mint(0 255 166 = #00FFA6, Tailwind
+    // 클래스들이 실제로 쓰는 값)와 그동안 드리프트돼있던 값(#14B8A6, 더 탁한 톤)을
+    // 여기서 맞춰준다 - 같은 "민트"인데 recharts(JS 값)와 텍스트(CSS 변수)가 다른
+    // 톤으로 보이던 버그였음, 겸사겸사 더 네온답게.
+    bg: "#030305",
+    surface: "#0D0D10",
+    surfaceAlt: "#16161B",
+    mint: "#00FFA6",
     pink: "#A64DFF",
     muted: "#8890B5",
     faint: "#5A6288",
@@ -18,6 +24,10 @@ export const CHART_COLORS = {
     low: "#8890B5",
     live: "#39FF6A",
     was: "#1F57FF",
+    // 2026-07-15: Infrastructure 히트맵(Top 공격 대상 등)에 orange/pink를 써봤는데
+    // 둘 다 "이상하다"는 피드백 - 사용자가 준 터미널 빌드 로그 스크린샷(시안/블루
+    // 구조 텍스트 -> 초록 성공 텍스트) 톤을 참고해서 새로 추가한 중간 단계 색.
+    info: "#22D3EE",
   },
   light: {
     bg: "#F4F5FA",
@@ -34,6 +44,7 @@ export const CHART_COLORS = {
     low: "#8890B5",
     live: "#39FF6A",
     was: "#1D4ED8",
+    info: "#0891B2",
   },
 };
 
