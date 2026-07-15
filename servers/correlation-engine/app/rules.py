@@ -6,7 +6,10 @@ sequence: stage1 패턴이 매칭되면 join_key별로 "stage1 대기중" 상태
 
 threshold: join_key별 매칭 카운터를 Redis에 TTL=window_seconds로 유지한다. count가
            threshold 이상이면 발화 -> 카운터 리셋 + 쿨다운 키를 세팅해서 쿨다운
-           기간 동안 재발화를 막는다.
+           기간 동안 새 인시던트 발화(카운터/쿨다운 TTL 갱신)는 막는다. 다만 쿨다운
+           중에도 같은 공격이 계속 들어오면 매번 발화 결과를 반환해서
+           incidents.upsert_incident가 여전히 open인 그 인시던트에 이벤트를 추가하고
+           updated_at을 갱신하게 한다 - 그래야 목록(최신순)에서 계속 맨 위에 남는다.
 
 join_key가 없는 이벤트(join_on 필드가 비어있는 경우)는 상관에서 제외하고 결측
 카운터만 올린다 (파이프라인 헬스 뷰 P7-3에서 노출).
@@ -226,7 +229,19 @@ class ScenarioEngine:
         cooldown_key = f"corr:{scenario_id}:cooldown:{join_key}"
 
         if await self._redis.get(cooldown_key):
-            return None  # 쿨다운 중 - 재발화 안 함
+            # 쿨다운 중엔 새 인시던트를 만들거나 카운터/쿨다운 TTL을 건드리지 않지만,
+            # 그렇다고 아무 것도 안 하면 같은 공격이 계속 들어와도 이미 만든 인시던트가
+            # incidents.upsert_incident의 open 병합 로직을 탈 기회 자체가 없어져서
+            # incident_events에 안 쌓이고 updated_at도 안 갱신된다 - 목록이 최신순
+            # 정렬이라 "예전 공격이 또 오면 맨 위로 와야 하는데 안 올라온다"는 증상으로
+            # 보인다(2026-07-15, 실측 확인). 그래서 여기서도 발화 결과를 계속 반환해서
+            # upsert_incident가 (scenario, join_key)로 여전히 open/investigating인 그
+            # 인시던트를 찾아 이벤트만 추가 + updated_at을 갱신하게 한다 - 이미
+            # closed로 넘어간(=해결 완료) 인시던트라면 upsert_incident가 알아서 새
+            # 인시던트를 만든다.
+            return self._fired_result(
+                scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
+            )
 
         count = await self._redis.incr(count_key)
         if count == 1:
