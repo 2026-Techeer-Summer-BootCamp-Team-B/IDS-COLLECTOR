@@ -96,10 +96,3 @@ def tactics_for_technique(technique_id: Optional[str]) -> List[str]:
         return SCENARIO_TACTIC_OVERRIDE[technique_id]
     info = CONTAINERS_MATRIX.get(technique_id)
     return info["tactics"] if info else []
-
-
-def name_for_technique(technique_id: Optional[str]) -> Optional[str]:
-    if not technique_id:
-        return None
-    info = CONTAINERS_MATRIX.get(technique_id)
-    return info["name"] if info else None

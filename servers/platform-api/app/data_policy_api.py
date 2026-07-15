@@ -1,14 +1,19 @@
-"""데이터 정책 API (/log-policies, /exclusion-rules) - 로그 보존/샘플링 + 제외 규칙.
+"""데이터 정책 API (/log-policies) - 로그 보존/샘플링.
 
-dashboard/src/data/logPolicy.js의 INITIAL_LOG_POLICIES/INITIAL_EXCLUSION_RULES가
-지금까지 프론트 로컬 mock state로만 존재했던 걸 실제 테이블(datastore/postgres/init/
-013-data-policy.sql)로 옮긴 것. 아직 프론트(App.jsx)는 이 API를 안 쓰고 mock 그대로다 -
-연동은 별도 작업.
+dashboard/src/data/logPolicy.js의 INITIAL_LOG_POLICIES가 지금까지 프론트 로컬 mock
+state로만 존재했던 걸 실제 테이블(datastore/postgres/init/013-data-policy.sql)로
+옮긴 것. 아직 프론트(App.jsx)는 이 API를 안 쓰고 mock 그대로다 - 연동은 별도 작업.
 
-record_action(record_id=...)는 여기서 안 쓴다 - log_policies/exclusion_rules 둘 다
-PK가 UUID가 아니라 사람이 읽는 문자열(layer 이름, "EX-01" 등)이라 audit_logs.record_id
-컬럼(UUID) 타입에 안 맞는다. 테이블 종류가 몇 개뿐인 고정 목록이라 target_table만으로도
-행 식별에 충분하다고 보고 생략함."""
+record_action(record_id=...)는 여기서 안 쓴다 - log_policies의 PK가 UUID가 아니라
+사람이 읽는 문자열(layer 이름)이라 audit_logs.record_id 컬럼(UUID) 타입에 안 맞는다.
+테이블 종류가 몇 개뿐인 고정 목록이라 target_table만으로도 행 식별에 충분하다고
+보고 생략함.
+
+제외 규칙(exclusion_rules, 저가치 노이즈 자동 드롭) 기능은 2026-07-15 제거됨 -
+EX-01/EX-02가 룰 이름/신원 패턴만으로 너무 거칠게 매칭해서 correlation-engine의
+S1/S5/S10처럼 실제로 봐야 할 이벤트까지 같이 드롭하는 게 확인됐다(normalizer/app/
+main.py 모듈 docstring 참고). IDS에서는 로그 volume 절감보다 탐지 누락이 훨씬
+위험하다고 판단해 기능 자체를 뺐다."""
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -86,64 +91,3 @@ async def update_log_policy(layer: str, body: LogPolicyPatch, request: Request):
         "LOG_POLICY_UPDATED", "log_policies", _client_ip(request), user_id=current_user_id(request)
     )
     return _row_to_log_policy(row)
-
-
-# --- 제외 규칙 (목록 + on/off 토글만 - 생성/삭제 API는 프론트에 해당 UI가 없어서 범위 밖) ---
-
-router_exclusion_rules = APIRouter(prefix="/exclusion-rules", tags=["data-policy"])
-
-
-class ExclusionRuleOut(BaseModel):
-    id: str
-    layer: str
-    pattern: str
-    reason: Optional[str]
-    estimated_reduction_pct: int
-    enabled: bool
-
-
-class EnabledUpdate(BaseModel):
-    enabled: bool
-
-
-def _row_to_exclusion_rule(row) -> ExclusionRuleOut:
-    return ExclusionRuleOut(
-        id=row["id"],
-        layer=row["layer"],
-        pattern=row["pattern"],
-        reason=row["reason"],
-        estimated_reduction_pct=row["estimated_reduction_pct"],
-        enabled=row["enabled"],
-    )
-
-
-@router_exclusion_rules.get("", response_model=List[ExclusionRuleOut])
-async def list_exclusion_rules():
-    async with pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, layer, pattern, reason, estimated_reduction_pct, enabled
-            FROM exclusion_rules ORDER BY id
-            """
-        )
-    return [_row_to_exclusion_rule(r) for r in rows]
-
-
-@router_exclusion_rules.patch("/{rule_id}/enabled", response_model=ExclusionRuleOut)
-async def set_exclusion_rule_enabled(rule_id: str, body: EnabledUpdate, request: Request):
-    async with pool().acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            UPDATE exclusion_rules SET enabled = $2, updated_at = now()
-            WHERE id = $1
-            RETURNING id, layer, pattern, reason, estimated_reduction_pct, enabled
-            """,
-            rule_id,
-            body.enabled,
-        )
-    if not row:
-        raise HTTPException(status_code=404, detail="exclusion rule not found")
-    await record_action(
-        "EXCLUSION_RULE_TOGGLED", "exclusion_rules", _client_ip(request), user_id=current_user_id(request)
-    )
-    return _row_to_exclusion_rule(row)

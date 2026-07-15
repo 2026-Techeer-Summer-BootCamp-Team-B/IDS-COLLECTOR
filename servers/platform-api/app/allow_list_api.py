@@ -12,8 +12,10 @@ engine이 target_id를 targets.name으로 JOIN해서 event.target_name과 비교
 (같은 IP라도 등록된 target과 다른 target 소속 이벤트면 억제 안 됨, 실측 확인됨).
 falco/k8s_audit 이벤트는 앱 단위가 아니라 클러스터 단위라 target_name이 항상
 없으므로 target_id로 스코프된 항목은 이런 이벤트엔 적용되지 않는다(전역 항목만 적용)."""
+import ipaddress
 from typing import List, Optional
 
+import asyncpg
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -27,6 +29,17 @@ router = APIRouter(prefix="/allow-list", tags=["allow-list"])
 
 def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+
+
+def _validate_ip_or_cidr(value: str) -> None:
+    """correlation-engine(rules.py의 ScenarioEngine.set_allow_list)은 파싱 실패한
+    CIDR/IP를 조용히 건너뛴다(입력 검증은 여기 책임이라는 그쪽 주석 참고) - 여기서
+    막지 않으면 오타난 값이 201로 저장은 되지만 실제로는 아무것도 걸러내지 못하는
+    채로 화면에 "등록됨"으로만 남는다."""
+    try:
+        ipaddress.ip_network(value, strict=False)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid ip_or_cidr {value!r}: {e}")
 
 
 class AllowListIn(BaseModel):
@@ -49,7 +62,11 @@ class AllowListOut(BaseModel):
 def _row_to_out(row) -> AllowListOut:
     return AllowListOut(
         id=str(row["id"]),
-        ip_or_cidr=row["ip_or_cidr"],
+        # ip_or_cidr은 019-db-hardening.sql부터 inet 컬럼 - asyncpg가 문자열이
+        # 아니라 ipaddress.IPv4Interface/IPv6Interface 객체로 돌려주므로 str()로
+        # 감싸야 이전과 동일한 문자열 응답을 유지한다(실측 확인: str()이 입력
+        # 문자열과 정확히 동일하게 왕복됨, 호스트 비트 있는 값도 안 잘림).
+        ip_or_cidr=str(row["ip_or_cidr"]),
         target_id=str(row["target_id"]) if row["target_id"] else None,
         reason=row["reason"],
         expires_at=row["expires_at"].isoformat() if row["expires_at"] else None,
@@ -81,23 +98,31 @@ async def list_allow_list(target_id: Optional[str] = None):
 
 @router.post("", response_model=AllowListOut)
 async def create_allow_list_entry(body: AllowListIn, request: Request):
+    _validate_ip_or_cidr(body.ip_or_cidr)
     async with pool().acquire() as conn:
         if body.target_id is not None:
             exists = await conn.fetchval("SELECT count(*) FROM targets WHERE id = $1", body.target_id)
             if not exists:
                 raise HTTPException(status_code=404, detail="target not found")
 
-        row = await conn.fetchrow(
-            """
-            INSERT INTO allow_list (ip_or_cidr, target_id, reason, expires_at)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, ip_or_cidr, target_id, reason, expires_at, created_at, updated_at
-            """,
-            body.ip_or_cidr,
-            body.target_id,
-            body.reason,
-            parse_iso8601_optional(body.expires_at),
-        )
+        try:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO allow_list (ip_or_cidr, target_id, reason, expires_at)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, ip_or_cidr, target_id, reason, expires_at, created_at, updated_at
+                """,
+                body.ip_or_cidr,
+                body.target_id,
+                body.reason,
+                parse_iso8601_optional(body.expires_at),
+            )
+        except asyncpg.UniqueViolationError:
+            # 019-db-hardening.sql의 idx_allow_list_unique_scoped/_global - 같은
+            # IP/CIDR을 같은 target(또는 둘 다 전역)에 이미 등록한 경우.
+            raise HTTPException(
+                status_code=409, detail="이미 등록된 IP/CIDR입니다 (같은 target 스코프 기준)"
+            )
     await record_action(
         "ALLOW_LIST_CREATED",
         "allow_list",

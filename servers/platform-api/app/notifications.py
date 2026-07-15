@@ -17,6 +17,12 @@ _PAYLOAD_BUILDERS: Dict[str, Callable[[str], Dict[str, Any]]] = {
     "discord": lambda text: {"content": text},
 }
 
+# app/alert_configs_api.py가 channel_type을 저장할 때 이 집합으로 검증한다 - 예전엔
+# 여기서만(발송 시점에) _PAYLOAD_BUILDERS.get()이 None이면 조용히 return해서, 오타난
+# channel_type("slcak" 등)으로 등록해도 API가 200을 반환하고 그 채널은 영원히
+# 알림을 못 받으면서도 화면상 "Active"로 남아있었다(2026-07-15).
+SUPPORTED_CHANNEL_TYPES = frozenset(_PAYLOAD_BUILDERS)
+
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 1.0  # 1s -> 2s -> 4s
 
