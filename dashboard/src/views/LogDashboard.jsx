@@ -42,7 +42,14 @@ import { useGeoStats } from "../hooks/useGeoStats";
 import { useK8sTargets } from "../hooks/useK8sTargets";
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import "react-grid-layout/css/styles.css";
-import { useOverviewLayout, DEFAULT_OVERVIEW_LAYOUT, CHART_TYPE_OPTIONS } from "../context/OverviewLayoutContext";
+import {
+  useOverviewLayout,
+  WIDGET_CATALOG,
+  catalogEntry,
+  chartTypeOptionsFor,
+  defaultChartTypeFor,
+  makeWidgetUid,
+} from "../context/OverviewLayoutContext";
 
 // WidthProvider는 컨테이너 폭을 재서 GridLayout에 넘겨주는 HOC — 컴포넌트 함수
 // 안에서 매 렌더마다 호출하면 그때마다 "새 컴포넌트 타입"이 만들어져서 GridLayout이
@@ -1089,46 +1096,25 @@ const KPI_MIN_SEVERITY = {
   SOURCES: undefined,
 };
 
-// 사용자 모드(자유 배치) 그리드의 위젯 id -> 드래그 핸들에 보여줄 짧은 제목.
-// DEFAULT_OVERVIEW_LAYOUT(OverviewLayoutContext.jsx)의 각 항목 i와 반드시 짝이
-// 맞아야 한다 - 하나라도 빠지면 그 위젯은 커스텀 모드에서 안 보인다.
-const WIDGET_TITLES = {
-  "kpi-total": "Total Logs",
-  "kpi-errors": "Errors",
-  "kpi-warnings": "Warnings",
-  "kpi-sources": "Active Sources",
-  "log-volume": "Log Volume",
-  "level-distribution": "Log Levels",
-  "donut-source": "탐지 소스별 분포",
-  "donut-severity": "심각도 분포",
-  "donut-k8s-namespace": "K8s 네임스페이스 분포",
-  "latency-stats": "API Latency",
-  "recent-logs": "Recent Logs",
-  "top-sources": "Top Sources",
-  "error-rate": "Error Rate",
-  "geo-summary": "지역별 분포",
-};
-
-// 사용자 모드에서만 위젯을 감싸는 얇은 프레임 - 위쪽 좁은 바가 드래그 핸들
-// (react-grid-layout의 draggableHandle=".widget-drag-handle"과 매칭), 본문은
+// 커스텀 대시보드/빌더에서만 위젯을 감싸는 얇은 프레임 - 위쪽 좁은 바가 드래그
+// 핸들(react-grid-layout의 draggableHandle=".widget-drag-handle"과 매칭), 본문은
 // 기존 위젯을 그대로 넣고 넘치면 스크롤. 기본 모드는 이 프레임을 아예 거치지
 // 않으므로(아래 return의 분기 참고) 지금까지의 화면엔 전혀 영향이 없다.
 //
-// widgetId가 CHART_TYPE_OPTIONS에 등록돼 있으면(v2 - 위젯별 차트 타입 전환)
-// 드래그 핸들 오른쪽에 타입 버튼들이 뜬다. 이 버튼도 같은 .widget-drag-handle
-// 영역 안에 있어서 클릭하면 react-grid-layout이 드래그로 오인할 수 있어
-// onMouseDown에서 stopPropagation으로 막는다.
-function WidgetFrame({ widgetId, title, children }) {
-  const { chartTypes, setChartType } = useOverviewLayout();
-  const options = CHART_TYPE_OPTIONS[widgetId];
-  const activeType = chartTypes[widgetId];
+// 인스턴스 기반 위젯 프레임 - context를 직접 참조하지 않고 props로만 동작한다.
+// 같은 widgetType(예: "log-volume")을 여러 개 캔버스에 놓을 수 있어서(중복 허용),
+// chartType/onChartTypeChange는 위젯 "인스턴스" 단위로 호출부에서 내려준다.
+// onRemove가 있을 때만(빌더에서) 제거 버튼이 뜬다 - 저장된 대시보드를 그냥 보는
+// 중(CustomDashboardView)에는 실수로 위젯이 지워지지 않도록 onRemove를 안 넘긴다.
+function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove, children }) {
+  const options = chartTypeOptionsFor(widgetType);
 
   return (
     <div className="h-full flex flex-col bg-dash-surface rounded-2xl overflow-hidden border border-dash-mint/15">
       <div className="widget-drag-handle cursor-move flex items-center gap-2 px-3 py-1.5 bg-dash-surfaceAlt/70 text-dash-muted text-[10px] uppercase tracking-wide shrink-0 select-none">
         <span className="opacity-60 tracking-tighter">⠿⠿</span>
         <span className="truncate flex-1">{title}</span>
-        {options && (
+        {options && onChartTypeChange && (
           <div
             className="flex items-center gap-0.5 shrink-0 normal-case tracking-normal cursor-default"
             onMouseDown={(e) => e.stopPropagation()}
@@ -1136,10 +1122,10 @@ function WidgetFrame({ widgetId, title, children }) {
             {options.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => setChartType(widgetId, opt.value)}
+                onClick={() => onChartTypeChange(opt.value)}
                 title={`${opt.label}로 표시`}
                 className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-                  activeType === opt.value
+                  chartType === opt.value
                     ? "bg-dash-mint/25 text-dash-mint"
                     : "text-dash-muted hover:text-dash-fg hover:bg-dash-surface"
                 }`}
@@ -1149,43 +1135,306 @@ function WidgetFrame({ widgetId, title, children }) {
             ))}
           </div>
         )}
+        {onRemove && (
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={onRemove}
+            title="캔버스에서 위젯 제거"
+            className="shrink-0 normal-case text-dash-muted hover:text-dash-critical text-xs leading-none px-1 cursor-default"
+          >
+            ✕
+          </button>
+        )}
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2">{children}</div>
     </div>
   );
 }
 
-// 기본모드 <-> 사용자모드 전환 + (사용자모드일 때만) 레이아웃 초기화 버튼.
-function OverviewModeToggle() {
-  const { mode, setMode, resetLayout } = useOverviewLayout();
+// 캔버스(react-grid-layout)의 위젯 배치 상태(uid 기준)를 실제 widgets 배열에
+// 병합한다 - onLayoutChange/onDrop 핸들러 여러 곳에서 재사용.
+function applyLayoutToWidgets(widgets, newLayout) {
+  let changed = false;
+  const next = widgets.map((w) => {
+    const pos = newLayout.find((l) => l.i === w.uid);
+    if (!pos) return w;
+    if (pos.x !== w.x || pos.y !== w.y || pos.w !== w.w || pos.h !== w.h) {
+      changed = true;
+      return { ...w, x: pos.x, y: pos.y, w: pos.w, h: pos.h };
+    }
+    return w;
+  });
+  return changed ? next : widgets;
+}
+
+// 왼쪽 위젯 팔레트 + 빈(또는 기존) 캔버스에 드래그로 위젯을 추가/재배치하고,
+// 이름을 정해 저장하는 빌더. baseDashboard가 있으면 그 위젯들로 시작(수정),
+// 없으면 빈 캔버스에서 시작(신규 생성).
+function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent }) {
+  const [widgets, setWidgets] = useState(() => (baseDashboard ? baseDashboard.widgets.map((w) => ({ ...w })) : []));
+  const [name, setName] = useState(baseDashboard ? baseDashboard.name : "");
+  const [draggingType, setDraggingType] = useState(null);
+
+  const handleDrop = (_newLayout, item, e) => {
+    const type = e.dataTransfer.getData("text/plain");
+    const entry = catalogEntry(type);
+    if (!entry) return;
+    setWidgets((prev) => [
+      ...prev,
+      {
+        uid: makeWidgetUid(),
+        type,
+        x: item.x,
+        y: item.y,
+        w: entry.w,
+        h: entry.h,
+        chartType: defaultChartTypeFor(type),
+      },
+    ]);
+  };
+
+  const handleLayoutChange = (newLayout) => {
+    setWidgets((prev) => applyLayoutToWidgets(prev, newLayout));
+  };
+
+  const removeWidget = (uid) => setWidgets((prev) => prev.filter((w) => w.uid !== uid));
+  const setWidgetChartType = (uid, type) =>
+    setWidgets((prev) => prev.map((w) => (w.uid === uid ? { ...w, chartType: type } : w)));
+
+  const gridLayout = widgets.map((w) => ({ i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h }));
+  const dropEntry = draggingType ? catalogEntry(draggingType) : null;
+  const canSave = widgets.length > 0 && name.trim().length > 0;
+
   return (
-    <div className="inline-flex items-center gap-2">
-      <div className="inline-flex items-center gap-1 bg-dash-surface rounded-xl p-1">
-        {[
-          { key: "default", label: "기본 모드" },
-          { key: "custom", label: "사용자 모드" },
-        ].map((m) => (
-          <button
-            key={m.key}
-            onClick={() => setMode(m.key)}
-            className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
-              mode === m.key
-                ? "bg-dash-mint/15 text-dash-mint"
-                : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
-            }`}
+    <div className="flex flex-col lg:flex-row gap-4 items-start">
+      <div className="w-full lg:w-56 shrink-0 bg-dash-surface rounded-2xl border border-dash-mint/15 p-3 space-y-1.5">
+        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-1">위젯 목록 (드래그해서 캔버스에 추가)</p>
+        {WIDGET_CATALOG.map((w) => (
+          <div
+            key={w.type}
+            draggable
+            unselectable="on"
+            onDragStart={(e) => {
+              setDraggingType(w.type);
+              e.dataTransfer.setData("text/plain", w.type);
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            onDragEnd={() => setDraggingType(null)}
+            className="cursor-grab active:cursor-grabbing text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none"
           >
-            {m.label}
-          </button>
+            {w.label}
+          </div>
         ))}
       </div>
-      {mode === "custom" && (
+
+      <div className="flex-1 min-w-0 w-full space-y-3">
+        <div className="flex items-center gap-2 bg-dash-surface rounded-2xl border border-dash-mint/15 px-3 py-2">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="대시보드 이름"
+            className="flex-1 min-w-0 bg-transparent text-sm text-dash-fg placeholder:text-dash-faint outline-none"
+          />
+          <button
+            onClick={onCancel}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors whitespace-nowrap"
+          >
+            취소
+          </button>
+          <button
+            onClick={() => canSave && onSave(name.trim(), widgets)}
+            disabled={!canSave}
+            title={!canSave ? "이름을 입력하고 위젯을 1개 이상 추가하세요" : undefined}
+            className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+              canSave
+                ? "bg-dash-mint/15 text-dash-mint hover:bg-dash-mint/25"
+                : "bg-dash-surfaceAlt text-dash-faint cursor-not-allowed"
+            }`}
+          >
+            저장하기
+          </button>
+        </div>
+
+        <div className="relative">
+          {widgets.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center text-dash-faint text-xs pointer-events-none border border-dashed border-dash-mint/25 rounded-2xl px-6 text-center">
+              왼쪽 목록에서 위젯을 이 캔버스로 드래그해서 추가하세요.
+            </div>
+          )}
+          <ResponsiveGridLayout
+            className="layout"
+            layout={gridLayout}
+            onLayoutChange={handleLayoutChange}
+            cols={12}
+            rowHeight={20}
+            margin={[16, 16]}
+            draggableHandle=".widget-drag-handle"
+            compactType="vertical"
+            isDroppable
+            onDrop={handleDrop}
+            droppingItem={{ i: "__dropping__", w: dropEntry?.w ?? 4, h: dropEntry?.h ?? 6 }}
+            style={{ minHeight: widgets.length === 0 ? 220 : undefined }}
+          >
+            {widgets.map((w) => (
+              <div key={w.uid}>
+                <WidgetFrame
+                  widgetType={w.type}
+                  title={catalogEntry(w.type)?.label}
+                  chartType={w.chartType}
+                  onChartTypeChange={(type) => setWidgetChartType(w.uid, type)}
+                  onRemove={() => removeWidget(w.uid)}
+                >
+                  {renderWidgetContent(w.type, w.chartType)}
+                </WidgetFrame>
+              </div>
+            ))}
+          </ResponsiveGridLayout>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 저장된 커스텀 대시보드 보기 - 드래그/리사이즈/차트타입 전환은 바로바로 저장되고
+// ("위젯 편집" 없이도 배치만 다듬는 건 즉시 반영), 위젯을 추가/제거하려면
+// "위젯 편집" 버튼으로 DashboardBuilder를 연다.
+function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, onChartTypeCommit, onEdit }) {
+  const gridLayout = dashboard.widgets.map((w) => ({ i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h }));
+
+  const handleLayoutChange = (newLayout) => {
+    const next = applyLayoutToWidgets(dashboard.widgets, newLayout);
+    if (next !== dashboard.widgets) onLayoutCommit(next);
+  };
+
+  const handleChartType = (uid, type) => {
+    onChartTypeCommit(dashboard.widgets.map((w) => (w.uid === uid ? { ...w, chartType: type } : w)));
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
         <button
-          onClick={resetLayout}
-          title="위젯 배치를 기본값으로 되돌립니다"
+          onClick={onEdit}
           className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
         >
-          배치 초기화
+          위젯 편집
         </button>
+      </div>
+      {dashboard.widgets.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-dash-mint/20 py-16 text-center text-dash-faint text-xs">
+          이 대시보드엔 위젯이 없습니다. "위젯 편집"에서 추가하세요.
+        </div>
+      ) : (
+        <ResponsiveGridLayout
+          className="layout"
+          layout={gridLayout}
+          onLayoutChange={handleLayoutChange}
+          cols={12}
+          rowHeight={20}
+          margin={[16, 16]}
+          draggableHandle=".widget-drag-handle"
+          compactType="vertical"
+        >
+          {dashboard.widgets.map((w) => (
+            <div key={w.uid}>
+              <WidgetFrame
+                widgetType={w.type}
+                title={catalogEntry(w.type)?.label}
+                chartType={w.chartType}
+                onChartTypeChange={(type) => handleChartType(w.uid, type)}
+              >
+                {renderWidgetContent(w.type, w.chartType)}
+              </WidgetFrame>
+            </div>
+          ))}
+        </ResponsiveGridLayout>
+      )}
+    </div>
+  );
+}
+
+// "위젯 설정" 드롭다운 - 기본 모드 / 저장된 커스텀 대시보드 목록(각각 선택·편집·삭제) /
+// 추가하기. 기본 모드 항목은 항상 맨 위에 고정, activeId==="default"일 때 선택됨.
+function WidgetSettingsMenu({ dashboards, activeId, setActiveId, deleteDashboard, onCreateNew, onEditActive }) {
+  const [open, setOpen] = useState(false);
+  const activeDashboard = dashboards.find((d) => d.id === activeId);
+  const label = activeId === "default" ? "기본 모드" : activeDashboard?.name || "커스텀 대시보드";
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+          open ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surface text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+        }`}
+      >
+        위젯 설정 · {label}
+        <span>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <>
+          {/* 메뉴 바깥 클릭하면 닫히도록 - 화면 전체를 덮는 투명 레이어 */}
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute z-20 mt-1 w-64 bg-dash-surface border border-dash-mint/15 rounded-xl shadow-lg py-1">
+            <button
+              onClick={() => {
+                setActiveId("default");
+                setOpen(false);
+              }}
+              className={`w-full text-left text-xs px-3 py-2 hover:bg-dash-surfaceAlt/70 transition-colors ${
+                activeId === "default" ? "text-dash-mint" : "text-dash-fg"
+              }`}
+            >
+              기본 모드
+            </button>
+            {dashboards.length > 0 && <div className="my-1 border-t border-dash-mint/10" />}
+            {dashboards.map((d) => (
+              <div key={d.id} className={`flex items-center gap-0.5 pl-1 pr-1.5 ${activeId === d.id ? "bg-dash-mint/10" : ""}`}>
+                <button
+                  onClick={() => {
+                    setActiveId(d.id);
+                    setOpen(false);
+                  }}
+                  className={`flex-1 min-w-0 text-left text-xs px-2 py-2 truncate transition-colors ${
+                    activeId === d.id ? "text-dash-mint" : "text-dash-fg"
+                  }`}
+                >
+                  {d.name}
+                </button>
+                <button
+                  onClick={() => {
+                    onEditActive(d.id);
+                    setOpen(false);
+                  }}
+                  title="위젯 편집"
+                  className="shrink-0 text-[10px] px-1.5 py-1 rounded text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
+                >
+                  편집
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm(`"${d.name}" 대시보드를 삭제할까요?`)) deleteDashboard(d.id);
+                  }}
+                  title="삭제"
+                  className="shrink-0 text-[10px] px-1.5 py-1 rounded text-dash-muted hover:text-dash-critical hover:bg-dash-critical/10 transition-colors"
+                >
+                  삭제
+                </button>
+              </div>
+            ))}
+            <div className="my-1 border-t border-dash-mint/10" />
+            <button
+              onClick={() => {
+                onCreateNew();
+                setOpen(false);
+              }}
+              className="w-full text-left text-xs px-3 py-2 text-dash-mint hover:bg-dash-mint/10 transition-colors"
+            >
+              + 추가하기
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -1241,11 +1490,126 @@ export function DashboardContent() {
     pollMs,
   });
 
-  const { mode, layout, setLayout, chartTypes } = useOverviewLayout();
+  const { dashboards, activeId, setActiveId, createDashboard, updateDashboard, deleteDashboard, getDashboard } =
+    useOverviewLayout();
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [editingDashboardId, setEditingDashboardId] = useState(null);
 
-  // 위젯 콘텐츠를 변수로 먼저 뽑아두고 기본모드/사용자모드 둘 다 같은 변수를
-  // 참조한다 — 데이터 fetch나 props가 두 모드에서 갈라지는 일이 없도록(버그가
-  // 생기면 두 모드 모두에 똑같이 반영되게) 하기 위함.
+  function openNewBuilder() {
+    setEditingDashboardId(null);
+    setBuilderOpen(true);
+  }
+  function openEditBuilder(id) {
+    setEditingDashboardId(id);
+    setBuilderOpen(true);
+  }
+  function handleBuilderCancel() {
+    setBuilderOpen(false);
+    setEditingDashboardId(null);
+  }
+  function handleBuilderSave(name, widgets) {
+    if (editingDashboardId) {
+      updateDashboard(editingDashboardId, { name, widgets });
+      setActiveId(editingDashboardId);
+    } else {
+      createDashboard(name, widgets);
+    }
+    setBuilderOpen(false);
+    setEditingDashboardId(null);
+  }
+
+  // 커스텀 대시보드(위젯 설정에서 만든 것들)와 빌더 전용 렌더러 - 위젯 타입 +
+  // 인스턴스별 chartType을 받아 JSX를 만든다. 기본 모드는 이 함수를 전혀 쓰지
+  // 않고 아래의 고정 변수들(kpiTotalWidget 등, chartType 없음)만 참조한다 —
+  // 그래야 커스텀 대시보드에서 뭘 바꾸든 기본 모드가 절대 영향받지 않는다.
+  function renderWidgetContent(type, chartType) {
+    switch (type) {
+      case "kpi-total":
+        return (
+          <KpiCard
+            label={`Total Logs (${preset.label})`}
+            value={kpiStatus === "ready" ? kpi.current.total : "-"}
+            delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
+            positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
+            onClick={() => setKpiFilter("ALL")}
+            active={kpiFilter === "ALL"}
+          />
+        );
+      case "kpi-errors":
+        return (
+          <KpiCard
+            label="Errors (Major~Critical)"
+            value={kpiStatus === "ready" ? kpi.current.errors : "-"}
+            delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
+            positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
+            onClick={() => setKpiFilter("ERROR")}
+            active={kpiFilter === "ERROR"}
+            accent="critical"
+          />
+        );
+      case "kpi-warnings":
+        return (
+          <KpiCard
+            label="Warnings (Minor)"
+            value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
+            delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
+            positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
+            onClick={() => setKpiFilter("WARNING")}
+            active={kpiFilter === "WARNING"}
+          />
+        );
+      case "kpi-sources":
+        return (
+          <KpiCard
+            label="Active Sources"
+            value={kpiStatus === "ready" ? kpi.current.sources : "-"}
+            delta={
+              kpiStatus === "ready" && kpi.sources_delta !== 0
+                ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new`
+                : undefined
+            }
+            positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
+            onClick={() => setKpiFilter("SOURCES")}
+            active={kpiFilter === "SOURCES"}
+          />
+        );
+      case "log-volume":
+        return <LogVolumeChart rangeKey={rangeKey} chartType={chartType || "area"} />;
+      case "level-distribution":
+        return <RealLevelDistributionChart hours={hours} chartType={chartType || "bar"} />;
+      case "donut-source":
+        return <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} chartType={chartType || "donut"} />;
+      case "donut-severity":
+        return <SeverityDonutCompact hours={hours} chartType={chartType || "donut"} />;
+      case "donut-k8s-namespace":
+        return <K8sNamespaceDonutCompact chartType={chartType || "donut"} />;
+      case "latency-stats":
+        return <LatencyStatsPanel events={wasEventsForLatency} />;
+      case "recent-logs":
+        return (
+          <RecentLogsTable events={displayEvents} filterLevels={REAL_SEVERITY_LEVELS} status={logsStatus} error={logsError} />
+        );
+      case "top-sources":
+        return (
+          <TopSources
+            sources={topIps}
+            status={topIpsStatus}
+            error={topIpsError}
+            limit={kpiFilter === "SOURCES" ? 10 : 5}
+            highlighted={kpiFilter === "SOURCES"}
+          />
+        );
+      case "error-rate":
+        return <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />;
+      case "geo-summary":
+        return <GeoSummaryCard />;
+      default:
+        return null;
+    }
+  }
+
+  // 기본 모드 전용 고정 위젯들 - chartType 없이 각 컴포넌트 자체 기본값만 쓴다.
+  // 커스텀 대시보드의 chartType 변경과는 완전히 분리된 별도 변수들.
   const kpiTotalWidget = (
     <KpiCard
       label={`Total Logs (${preset.label})`}
@@ -1287,15 +1651,11 @@ export function DashboardContent() {
       active={kpiFilter === "SOURCES"}
     />
   );
-  const logVolumeWidget = <LogVolumeChart rangeKey={rangeKey} chartType={chartTypes["log-volume"]} />;
-  const levelDistributionWidget = (
-    <RealLevelDistributionChart hours={hours} chartType={chartTypes["level-distribution"]} />
-  );
-  const donutSourceWidget = (
-    <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} chartType={chartTypes["donut-source"]} />
-  );
-  const donutSeverityWidget = <SeverityDonutCompact hours={hours} chartType={chartTypes["donut-severity"]} />;
-  const donutK8sWidget = <K8sNamespaceDonutCompact chartType={chartTypes["donut-k8s-namespace"]} />;
+  const logVolumeWidget = <LogVolumeChart rangeKey={rangeKey} />;
+  const levelDistributionWidget = <RealLevelDistributionChart hours={hours} />;
+  const donutSourceWidget = <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />;
+  const donutSeverityWidget = <SeverityDonutCompact hours={hours} />;
+  const donutK8sWidget = <K8sNamespaceDonutCompact />;
   const latencyWidget = <LatencyStatsPanel events={wasEventsForLatency} />;
   const recentLogsWidget = (
     <RecentLogsTable events={displayEvents} filterLevels={REAL_SEVERITY_LEVELS} status={logsStatus} error={logsError} />
@@ -1312,22 +1672,7 @@ export function DashboardContent() {
   const errorRateWidget = <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />;
   const geoWidget = <GeoSummaryCard />;
 
-  const WIDGET_MAP = {
-    "kpi-total": kpiTotalWidget,
-    "kpi-errors": kpiErrorsWidget,
-    "kpi-warnings": kpiWarningsWidget,
-    "kpi-sources": kpiSourcesWidget,
-    "log-volume": logVolumeWidget,
-    "level-distribution": levelDistributionWidget,
-    "donut-source": donutSourceWidget,
-    "donut-severity": donutSeverityWidget,
-    "donut-k8s-namespace": donutK8sWidget,
-    "latency-stats": latencyWidget,
-    "recent-logs": recentLogsWidget,
-    "top-sources": topSourcesWidget,
-    "error-rate": errorRateWidget,
-    "geo-summary": geoWidget,
-  };
+  const activeDashboard = activeId !== "default" ? getDashboard(activeId) : null;
 
   return (
     <div className="space-y-6">
@@ -1341,9 +1686,16 @@ export function DashboardContent() {
 
       {/* 예전엔 전체 폭 바였는데, 관리자 페이지 탭 스위처처럼 우측 상단에
           작은 버튼 형태로 - 화면을 덜 차지하면서 상태(펼침/접힘)도 pill
-          active 색으로 바로 구분되게 바꿨다. 사용자 모드 토글도 같은 행에 둔다. */}
+          active 색으로 바로 구분되게 바꿨다. 위젯 설정 메뉴도 같은 행에 둔다. */}
       <div className="flex items-center justify-between gap-3">
-        <OverviewModeToggle />
+        <WidgetSettingsMenu
+          dashboards={dashboards}
+          activeId={activeId}
+          setActiveId={setActiveId}
+          deleteDashboard={deleteDashboard}
+          onCreateNew={openNewBuilder}
+          onEditActive={openEditBuilder}
+        />
         <button
           onClick={() => setSearchExpanded((e) => !e)}
           className={`inline-flex items-center gap-2 text-xs font-medium px-3.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
@@ -1370,23 +1722,21 @@ export function DashboardContent() {
         </p>
       )}
 
-      {mode === "custom" ? (
-        <ResponsiveGridLayout
-          className="layout"
-          layout={layout}
-          onLayoutChange={setLayout}
-          cols={12}
-          rowHeight={20}
-          margin={[16, 16]}
-          draggableHandle=".widget-drag-handle"
-          compactType="vertical"
-        >
-          {DEFAULT_OVERVIEW_LAYOUT.map((item) => (
-            <div key={item.i}>
-              <WidgetFrame widgetId={item.i} title={WIDGET_TITLES[item.i]}>{WIDGET_MAP[item.i]}</WidgetFrame>
-            </div>
-          ))}
-        </ResponsiveGridLayout>
+      {builderOpen ? (
+        <DashboardBuilder
+          baseDashboard={editingDashboardId ? getDashboard(editingDashboardId) : null}
+          onCancel={handleBuilderCancel}
+          onSave={handleBuilderSave}
+          renderWidgetContent={renderWidgetContent}
+        />
+      ) : activeDashboard ? (
+        <CustomDashboardView
+          dashboard={activeDashboard}
+          renderWidgetContent={renderWidgetContent}
+          onLayoutCommit={(widgets) => updateDashboard(activeDashboard.id, { widgets })}
+          onChartTypeCommit={(widgets) => updateDashboard(activeDashboard.id, { widgets })}
+          onEdit={() => openEditBuilder(activeDashboard.id)}
+        />
       ) : (
         <>
           <div className="flex flex-wrap gap-4">
