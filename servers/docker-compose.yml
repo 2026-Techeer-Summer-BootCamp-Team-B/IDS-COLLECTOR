@@ -4,9 +4,14 @@ networks:
 
 # REDIS_URL의 비밀번호는 servers/datastore/redis/.env(.env.example 복사본)의
 # REDIS_PASSWORD와 일치해야 한다 - 별도 docker-compose 프로젝트라 .env를 공유할
-# 수 없어서(POSTGRES_DSN도 동일한 이유로 각 서비스에 하드코딩) 값을 여기 그대로
-# 옮겨 적었다. dev 기본값(CHANGE_ME_dev) 대신 실제 비밀번호로 바꾸려면 두 곳
-# (servers/datastore/redis/.env, 여기 3곳) 전부 같이 바꿀 것.
+# 수 없어서 값을 여기 그대로 옮겨 적었다. dev 기본값(CHANGE_ME_dev) 대신 실제
+# 비밀번호로 바꾸려면 두 곳(servers/datastore/redis/.env, 여기 3곳) 전부 같이 바꿀 것.
+#
+# POSTGRES_DSN/CLICKHOUSE_PASSWORD는 ${} 참조다 - 이 프로젝트(servers/)의 .env에서
+# 값을 채운다(servers/.env.example 참고). Postgres는 servers/datastore/postgres/.env의
+# POSTGRES_PASSWORD와, ClickHouse는 servers/datastore/clickhouse/.env의
+# CLICKHOUSE_PASSWORD와 반드시 같은 값이어야 한다 - 이것도 별도 프로젝트라 .env
+# 공유가 안 돼서 servers/.env에 따로 값을 둔다.
 services:
   normalizer:
     # 빌드 컨텍스트를 servers/ 루트로 잡는다 - normalizer/correlation-engine이 공유하는
@@ -51,7 +56,7 @@ services:
       KAFKA_NORMALIZED_TOPIC: events.normalized
       KAFKA_CONSUMER_GROUP: correlation-engine
       REDIS_URL: redis://:CHANGE_ME_dev@redis:6379/0
-      POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
+      POSTGRES_DSN: postgresql://ids_admin:${POSTGRES_PASSWORD}@postgres:5432/ids_platform
     ports:
       - "127.0.0.1:8300:8300" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
@@ -74,8 +79,9 @@ services:
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
-      POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
+      POSTGRES_DSN: postgresql://ids_admin:${POSTGRES_PASSWORD}@postgres:5432/ids_platform
       REDIS_URL: redis://:CHANGE_ME_dev@redis:6379/0
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     ports:
       - "127.0.0.1:8400:8400" # 로컬 디버깅 편의용 직결 포트(호스트 루프백에만 바인딩, forwardAuth 미적용) - 실제 진입 경로는 Traefik(:80/api). 원격 호스트에서 직결하려면 SSH 터널 필요(예: ssh -L 8400:localhost:8400 <host>)

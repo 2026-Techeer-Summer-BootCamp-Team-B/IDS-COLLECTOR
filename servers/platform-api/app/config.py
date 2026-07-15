@@ -2,7 +2,9 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
+    # 이 기본값은 dev 전용 placeholder다 - 실값은 servers/docker-compose.yml의
+    # POSTGRES_DSN(env var, ${POSTGRES_PASSWORD} 참조)이 컨테이너 기동 시 덮어쓴다.
+    postgres_dsn: str = "postgresql://ids_admin:CHANGE_ME_dev@postgres:5432/ids_platform"
     # 세션(app/auth.py) + 시나리오 enabled 플래그(app/scenarios_api.py) 저장소. 비밀번호는
     # servers/datastore/redis/.env의 REDIS_PASSWORD와 일치해야 함(servers/docker-compose.yml
     # 상단 주석 참고).
@@ -20,12 +22,13 @@ class Settings(BaseSettings):
     # Kafka 엔진 테이블이 events.normalized를 직접 구독해서 security_events_analytics
     # (컬럼형 MergeTree)에 실시간 적재해둔다. app/analytics_api.py가 이 테이블을 조회해서
     # 시계열/GeoIP/K8s타겟/Top IP 집계를 낸다 - OpenSearch(app/stats_api.py)는 검색/역인덱스
-    # 용, ClickHouse는 대량 컬럼형 집계용으로 역할이 나뉜다(README 참고). 크리덴셜은
-    # servers/datastore/clickhouse/docker-compose.yml의 dev 기본값 그대로.
+    # 용, ClickHouse는 대량 컬럼형 집계용으로 역할이 나뉜다(README 참고). 아래 password
+    # 기본값은 dev 전용 placeholder다 - 실값은 servers/docker-compose.yml의
+    # CLICKHOUSE_PASSWORD(env var, ${CLICKHOUSE_PASSWORD} 참조)가 덮어쓴다.
     clickhouse_host: str = "clickhouse"
     clickhouse_port: int = 8123
     clickhouse_user: str = "admin"
-    clickhouse_password: str = "mypassword"
+    clickhouse_password: str = "CHANGE_ME_dev"
 
     # AI 트렌드 리포트 (P5-4) - 비어있으면 "미설정" 응답만 반환. Gemini API 무료 티어 사용
     # (Google AI Studio에서 키 발급). 다른 모델로 바꾸고 싶으면 GEMINI_MODEL 환경변수만

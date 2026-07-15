@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     # docker-compose.yml 상단 주석 참고).
     redis_url: str = "redis://:CHANGE_ME_dev@redis:6379/0"
 
-    postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
+    # 이 기본값은 dev 전용 placeholder다 - 실값은 servers/docker-compose.yml의
+    # POSTGRES_DSN(env var, ${POSTGRES_PASSWORD} 참조)이 컨테이너 기동 시 덮어쓴다.
+    postgres_dsn: str = "postgresql://ids_admin:CHANGE_ME_dev@postgres:5432/ids_platform"
 
     # 시나리오 정의 디렉터리 - app 패키지 기준 상대경로 (app/main.py에서 resolve).
     # 이 안의 *.yaml 파일을 전부 읽어서 합친다 (app/scenarios/README.md 참고).

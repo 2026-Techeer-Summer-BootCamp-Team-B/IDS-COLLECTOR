@@ -2,7 +2,11 @@ networks:
   siem-net:
     external: true
 
-# NOTE: local-dev setup. No auth configured beyond the default admin user below.
+# NOTE: local-dev setup. .env.example을 .env로 복사해서 쓰되, dev 기본값
+# (CHANGE_ME_dev)이 아닌 실제 배포에서는 반드시 교체할 것. CLICKHOUSE_PASSWORD는
+# servers/.env(servers/docker-compose.yml의 platform-api가 ${CLICKHOUSE_PASSWORD}로
+# 참조)와 반드시 같은 값이어야 한다 - 별도 docker-compose 프로젝트라 .env를 공유할
+# 수 없어서 두 곳에 따로 둠.
 # P6-3(ClickHouse 예약) 항목 - 대량 데이터 병행 분석 대비 선탑재. 현재 필수 경로 아님.
 services:
   clickhouse:
@@ -13,8 +17,8 @@ services:
       - "127.0.0.1:8123:8123" # http
       - "127.0.0.1:9000:9000" # native
     environment:
-      CLICKHOUSE_USER: admin
-      CLICKHOUSE_PASSWORD: mypassword
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ulimits:
       nofile:
