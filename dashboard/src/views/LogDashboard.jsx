@@ -293,7 +293,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
           )}
         </div>
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : "h-80"}
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
@@ -504,7 +504,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
           <ChartTypeToggle options={chartTypeOptionsFor("level-distribution")} value={chartType} onChange={setInternalType} />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : "h-80"}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status !== "error" && chartType === "donut" && (
@@ -825,7 +825,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : "h-80"}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
@@ -910,7 +910,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-severity")} value={chartType} onChange={setInternalType} />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : "h-80"}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
@@ -997,7 +997,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
           />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : "h-80"}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">데이터가 없습니다.</p>}
