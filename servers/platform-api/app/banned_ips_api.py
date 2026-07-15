@@ -47,7 +47,9 @@ def _client_ip(request: Request) -> Optional[str]:
 def _row_to_out(row) -> BannedIpOut:
     return BannedIpOut(
         id=str(row["id"]),
-        ip_or_cidr=row["ip_or_cidr"],
+        # allow_list_api.py와 동일한 이유 - 019-db-hardening.sql부터 inet 컬럼이라
+        # asyncpg가 ipaddress 객체로 돌려준다.
+        ip_or_cidr=str(row["ip_or_cidr"]),
         reason=row["reason"],
         hit_count=row["hit_count"],
         created_at=row["created_at"].isoformat(),

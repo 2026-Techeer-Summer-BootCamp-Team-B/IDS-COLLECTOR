@@ -102,7 +102,15 @@ async def fetch_active_allow_list() -> List[Dict[str, Optional[str]]]:
             WHERE a.expires_at IS NULL OR a.expires_at > now()
             """
         )
-    return [{"ip_or_cidr": row["ip_or_cidr"], "target_name": row["target_name"]} for row in rows]
+    # ip_or_cidr은 019-db-hardening.sql부터 inet 컬럼이라 asyncpg가 문자열이 아니라
+    # ipaddress.IPv4Interface/IPv6Interface 객체로 돌려준다 - rules.py의
+    # set_allow_list()가 ipaddress.ip_network(entry["ip_or_cidr"], ...)로 다시
+    # 파싱하는데, ip_network()는 그 객체 타입을 못 받아들여 ValueError로 조용히
+    # 건너뛴다(=allow_list 집행 자체가 조용히 전부 무효화됨) - str()로 감싸서
+    # 이전과 동일하게 문자열로 넘긴다.
+    return [
+        {"ip_or_cidr": str(row["ip_or_cidr"]), "target_name": row["target_name"]} for row in rows
+    ]
 
 
 async def fetch_poll_interval_seconds(key: str, default: int) -> int:

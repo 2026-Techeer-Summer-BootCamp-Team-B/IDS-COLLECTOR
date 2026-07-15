@@ -7,14 +7,20 @@
       2) parse (소스별 파서 4종 - 토픽 이름 자체가 소스를 알려준다)
       3) normalize (NormalizedEvent, ECS 서브셋)
       4) enrich (GeoIP + was/waf 정적 orchestrator 매핑)
-      5) exclude (app/exclusion.py - admin이 큐레이션한 exclusion_rules에 매칭되면
-         저가치 노이즈로 보고 드롭, emit 안 함)
-      6) emit (events.normalized 재적재)
+      5) emit (events.normalized 재적재)
+
+  (구 5단계 "exclude"(exclusion_rules 기반 저가치 노이즈 드롭)는 2026-07-15 제거됨 -
+  EX-01/EX-02가 룰 이름/신원 패턴만으로 너무 거칠게 매칭해서, correlation-engine의
+  S1/S5(컨테이너 침투 확인, severity 4)·S10(서비스어카운트 탈취 후 정찰, T1613)이
+  실제로 봐야 할 이벤트까지 같이 드롭하는 게 실측 검토로 확인됐다 - IDS에서 로그
+  volume 절감보다 탐지 누락 쪽이 훨씬 위험하다고 판단해 기능 자체를 뺐다. 노이즈가
+  실제로 스토리지/조회 성능 문제가 될 정도로 쌓이면, 이번처럼 시나리오 매치 조건과
+  겹치는지부터 검토한 뒤 훨씬 좁은 조건으로 다시 설계할 것.)
 
 실패 처리 (P3-7):
   - parse 실패 -> events.dlq로 보내고 offset 커밋 (그 메시지는 버림, 재시도 안 함).
     dedupe 클레임은 유지 - 재시도할 게 아니라서 그대로 둬도 안전하다.
-  - enrich/exclusion/emit 실패 -> 같은 메시지를 최대 _MAX_PROCESS_ATTEMPTS번 그 자리에서
+  - enrich/emit 실패 -> 같은 메시지를 최대 _MAX_PROCESS_ATTEMPTS번 그 자리에서
     즉시 재시도한다(correlation-engine/app/main.py의 재시도 패턴과 동일, 2026-07-15
     수정). 예전엔 "offset을 커밋하지 않고 다음 poll에서 같은 메시지를 재처리한다"고
     문서화돼 있었지만 사실이 아니었다 - aiokafka는 `async for msg in _consumer`가
@@ -61,7 +67,7 @@ from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from app import db, exclusion, producer
+from app import producer
 from app.config import settings
 from app.dedupe import compute_dedupe_key, is_duplicate, release as release_dedupe
 from app.enrichment import enrich
@@ -80,9 +86,7 @@ _TOPIC_TO_SOURCE = {
 
 _consumer: Optional[AIOKafkaConsumer] = None
 _consumer_task: Optional[asyncio.Task] = None
-_exclusion_refresh_task: Optional[asyncio.Task] = None
-_EXCLUSION_REFRESH_SECONDS = 30  # poll_intervals 테이블에 행이 없을 때의 fail-open 기본값
-_MAX_PROCESS_ATTEMPTS = 3  # enrich/exclusion/emit 실패 시 같은 메시지 재시도 상한 (아래 _consume_loop 참고)
+_MAX_PROCESS_ATTEMPTS = 3  # enrich/emit 실패 시 같은 메시지 재시도 상한 (아래 _consume_loop 참고)
 _PROCESS_RETRY_BACKOFF_SECONDS = 1.0
 
 
@@ -145,30 +149,6 @@ def _body_to_payload(body: Any) -> tuple[Dict[str, Any], str]:
     return {"raw": body}, json.dumps({"raw": body}, ensure_ascii=False)
 
 
-async def _exclusion_refresh_loop():
-    """exclusion_rules(admin이 큐레이션한 노이즈 패턴)을 주기적으로 Postgres에서
-    다시 읽어 app/exclusion.py의 인메모리 캐시에 반영한다 - 매 이벤트마다 DB를
-    치면 정규화 hot path에 지연이 그대로 더해지니 correlation-engine의 allow_list
-    캐시(app/main.py _allow_list_refresh_loop)와 동일하게 폴링+캐시로 뺐다.
-    admin이 exclusion_rules를 켜고 꺼도 최대 이 주기만큼만 지나면 반영된다.
-
-    interval 조회도 같은 try/except 안에서 한다 - platform-api의
-    incident_alerts.py에서 실제로 겪은 사고(interval 조회 실패가 안 잡히고
-    poll_loop 태스크 자체가 조용히 죽음)를 여기서 반복하지 않기 위함."""
-    while True:
-        interval = _EXCLUSION_REFRESH_SECONDS
-        try:
-            await exclusion.refresh_from_db()
-            interval = await exclusion.fetch_poll_interval_seconds(
-                "exclusion_rules_refresh_seconds", _EXCLUSION_REFRESH_SECONDS
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            print(f"[normalizer] exclusion_rules 갱신 실패, 다음 주기에 재시도: {e}")
-        await asyncio.sleep(interval)
-
-
 async def _process_body(source: str, observed_time_unix_nano: str, body: Any) -> None:
     payload, original = _body_to_payload(body)
 
@@ -197,19 +177,6 @@ async def _process_body(source: str, observed_time_unix_nano: str, body: Any) ->
     # 의 release() 참고, 실측 확인 2026-07-15).
     try:
         enrich(source, payload, event)
-
-        matched_rule_id = exclusion.matched_rule_id(event)
-        if matched_rule_id is not None:
-            # exclusion_rules에 매칭 - 저가치 노이즈로 판단된 이벤트라 events.normalized로
-            # 내보내지 않는다(색인/상관분석 둘 다 안 봄). otel-logs-raw-*(포렌식 원본
-            # 사본)는 이 워커보다 앞단(Data Prepper가 Kafka에서 직접 읽음)이라 영향
-            # 없음 - 원본은 항상 100% 남는다는 계약 유지. 클레임은 유지 - 이건
-            # 실패가 아니라 의도적으로 완결된 처리라 재시도할 필요가 없다.
-            print(
-                f"[normalizer] exclusion_rules 매칭, 드롭 - source={source} "
-                f"rule={matched_rule_id} module={event.event_module}"
-            )
-            return
 
         # exclude_none=True: 해당 없는 필드는 null로 채우지 않고 아예 생략한다.
         doc = event.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8")
@@ -295,33 +262,25 @@ async def _consume_loop():
 
 @app.on_event("startup")
 async def on_startup():
-    global _consumer_task, _exclusion_refresh_task
-    await db.start()
+    global _consumer_task
     _consumer_task = asyncio.create_task(_consume_loop())
-    _exclusion_refresh_task = asyncio.create_task(_exclusion_refresh_loop())
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    for task in (_consumer_task, _exclusion_refresh_task):
-        if task:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-    await db.stop()
+    if _consumer_task:
+        _consumer_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _consumer_task
 
 
 def _dead_task_reason() -> Optional[str]:
-    """백그라운드 태스크(컨슈머, exclusion_rules 캐시 갱신)가 살아있지 않은
-    이유(있으면) - /health가 503을 반환할지 판단하는 근거. None이면 정상."""
+    """백그라운드 컨슈머 태스크가 살아있지 않은 이유(있으면) - /health가 503을
+    반환할지 판단하는 근거. None이면 정상."""
     if _consumer_task is None:
         return "consumer task not started"
     if _consumer_task.done():
         return "consumer task exited"
-    if _exclusion_refresh_task is None:
-        return "exclusion refresh task not started"
-    if _exclusion_refresh_task.done():
-        return "exclusion refresh task exited"
     return None
 
 
