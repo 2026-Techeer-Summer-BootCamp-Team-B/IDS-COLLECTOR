@@ -127,3 +127,154 @@ scenarios:
       audit_ingress_has_tls: false
     severity: 3
     mitre_technique_id: "T1133"
+
+  # S26 (threshold, threshold=1, 2026-07-15): WAF backend가 이미 자체적으로 판정을
+  # 끝낸 브루트포스 이벤트(attack_type=brute_force, Target 저장소
+  # backend/app/middleware/gateway.py의 record_login_failure_by_ip/_by_account/
+  # record_system_wide_login_failure 3종 - IP 기준/계정 기준(IP 로테이션 대응)/
+  # 시스템 전체 스파이크)를 그대로 받아 발화한다. threshold=1인 이유: WAF가 이미
+  # 자기 내부 윈도우(brute_force_window_seconds)로 카운팅을 끝내고 "임계치를
+  # 넘었다"는 판단까지 마친 뒤에 이 이벤트 하나를 내보내므로, S6/S8/S13처럼 "이
+  # 이벤트 자체가 이미 유의미한 단발성 신호"로 다룬다(correlation-engine에서 또
+  # 카운팅하면 이중 임계값이 되어 오히려 둔감해짐).
+  #
+  # S19(WAS 직결 로그인 실패, join_on=source_ip 단순 카운팅)와 겹치지 않는
+  # 독립적인 탐지 경로다 - S19는 WAF를 거치지 않는 요청만 보고 IP당 카운팅만
+  # 하지만, 이건 WAF를 거친 로그인 시도를 보고 IP 로테이션에도 안 뚫리는 계정
+  # 기준 탐지(brute_force_login_account:*)와 시스템 전체 분산 공격 탐지
+  # (brute_force_system_wide_spike)까지 포함한다 - 서로 다른 공격 표면을 이중화로
+  # 커버.
+  #
+  # severity=3은 gateway.py의 기본 risk_level(RiskLevel.MEDIUM, _log_brute_force의
+  # 기본값)과 맞춘 값 - system-wide-spike만 RiskLevel.CRITICAL로 명시적으로
+  # 올라가지만(gateway.py 316번째 줄), 이 엔진은 시나리오당 severity가 고정값이라
+  # (rules.py의 _fired_result가 scenario["severity"]를 그대로 씀, 개별 이벤트의
+  # event.severity를 안 봄 - S4 등 다른 waf 시나리오도 동일한 한계) 세 변형을
+  # 지금은 구분 못 한다 - 나중에 구분하려면 3개로 쪼개거나 min_severity 매처를
+  # 추가로 걸어야 함.
+  - id: S26
+    name: "WAF 계층 로그인 브루트포스 탐지"
+    type: threshold
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [waf]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 300
+    match:
+      event_module: waf
+      event_action: brute_force
+    severity: 3
+    mitre_technique_id: "T1110"
+
+  # S27 (threshold, threshold=1, 2026-07-15): WAF의 Rate Limiting 탐지
+  # (attack_type=rate_limit_abuse, gateway.py의 _is_rate_limited -
+  # rate_limit_window_seconds 안에 rate_limit_max_requests 초과)를 그대로 받아
+  # DoS 정황으로 발화. README에 "T1499/T1498은 Falco 룰도 없고 pod 상태 변화
+  # 수집기도 없어서 보류"로 기록돼 있었는데, 그건 falco 기반 접근 얘기고 이건
+  # 완전히 다른 경로(WAF가 이미 만들고 있는 신호)라 그 보류 사유와 무관하게 지금
+  # 바로 쓸 수 있다 - 새 수집기 없이 이미 흐르고 있던 신호를 correlation-engine이
+  # 그냥 안 쓰고 있었을 뿐. severity=2는 gateway.py의 RiskLevel.LOW
+  # (_log_rate_limit_exceeded 고정값)와 맞춘 값.
+  - id: S27
+    name: "WAF Rate Limit 남용 (DoS 정황)"
+    type: threshold
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [waf]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 300
+    match:
+      event_module: waf
+      event_action: rate_limit_abuse
+    severity: 2
+    mitre_technique_id: "T1499"
+
+  # S28 (threshold, threshold=1, 2026-07-15): WAF의 Bad Bot 탐지
+  # (attack_type=bad_bot, gateway.py의 BAD_BOT_USER_AGENTS =
+  # ["sqlmap","nikto","nmap","masscan","acunetix","curl/7.0"] User-Agent 서브스트링
+  # 매치)를 그대로 받아 정찰(스캐너 툴 사용) 신호로 발화. T1046(Network Service
+  # Discovery)은 이 프로젝트 카탈로그(ids_shared.mitre_mapping.CONTAINERS_MATRIX)에
+  # 이미 있었지만 지금까지 어떤 시나리오도 안 쓰고 있었음 - 이 시나리오가 첫 사용.
+  # severity=2는 gateway.py의 RiskLevel.MEDIUM(_log_bad_bot 고정값 - 실제로는
+  # severity.yaml 매핑상 MEDIUM=3이지만 정찰 단계(아직 실공격 아님)라 S10(정찰
+  # burst, severity=2)과 급을 맞춰 2로 낮춰 잡음, 실공격 시그니처(sqli/xss 등)가
+  # 뒤이어 오면 그건 S4/S5/S26 등이 별도로 더 높은 severity로 잡음.
+  #
+  # 주의: "curl/7.0"은 공격 툴 시그니처가 아니라 단순 구버전 curl User-Agent
+  # 문자열이라 정상 사용자가 우연히 걸릴 오탐 가능성이 있다(WAF 쪽
+  # BAD_BOT_USER_AGENTS 목록 자체의 한계) - 이 시나리오를 켠 뒤 오탐이 잦으면
+  # PATCH /incidents/{id}/verdict로 false_positive 라벨을 쌓아서(GET /scenarios의
+  # precision) 데이터로 확인하고, 필요하면 WAF 쪽 목록에서 curl/7.0을 빼는 걸
+  # 제안할 것 - 이 프로젝트의 verdict 피드백 루프(015)가 정확히 이런 판단을 위해
+  # 만들어짐.
+  - id: S28
+    name: "알려진 스캐너 툴 User-Agent 탐지"
+    type: threshold
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [waf]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 300
+    match:
+      event_module: waf
+      event_action: bad_bot
+    severity: 2
+    mitre_technique_id: "T1046"
+
+  # S29 (threshold, threshold=1, 2026-07-15): WAF의 JWT 위조 탐지
+  # (attack_type=jwt_forgery, Target 저장소 backend/app/detection/engine.py의
+  # _check_jwt_alg_none - Authorization: Bearer 토큰의 header 세그먼트를
+  # base64url 디코딩해서 alg=="none"인지 확인, 일반 정규식으로는 못 잡아서 별도
+  # 로직으로 분리돼 있음)를 그대로 받아 발화. WAF 자체의 matched_rule_id는
+  # "jwt_alg_none" 하나뿐(변형 없음). MITRE 매핑: WAF 쪽 자체 매핑에서도 이
+  # 공격을 T1550.001(Application Access Token)로 보는데, 이 프로젝트 카탈로그는
+  # sub-technique를 안 담는 컨벤션이라(S20/S21/S25와 동일) 부모 T1550(Use
+  # Alternate Authentication Material)으로 기록 - S25(SA 토큰 명시적 발급 정황)와
+  # 기법을 공유하지만 서로 다른 계층(SA 토큰 vs JWT)의 별개 사건이다.
+  # severity=4는 gateway.py의 RiskLevel.CRITICAL(alg:none은 인증 자체를 완전히
+  # 우회하는 고위험 취약점이라 예외적으로 즉시 CRITICAL 고정값)과 맞춘 값.
+  - id: S29
+    name: "JWT 위조 시도 (alg: none)"
+    type: threshold
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [waf]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 300
+    match:
+      event_module: waf
+      event_action: jwt_forgery
+    severity: 4
+    mitre_technique_id: "T1550"
+
+  # S30 (threshold, join_on=source_ip, 2026-07-15): 동일 IP에서 60초 안에 WAS
+  # 응답 404가 10건 이상이면 발화 - 존재하지 않는 경로를 대량으로 두드리는
+  # 엔드포인트/디렉터리 무차별 탐색(dirbuster류) 정황. 이건 페이로드 기반
+  # 시그니처(SQLi/XSS 등)가 전혀 없는 "정상적인 척하는 요청"이라 WAF 시그니처
+  # 엔진(signatures.py)이 절대 못 잡는 사각지대다 - was 원본 access log의
+  # http_response_status_code만으로 판정하므로 WAF를 거치지 않고 바로 오는
+  # 요청(S19와 같은 이유)도 잡는다. threshold=10은 초기 추정치(정상 사용자가
+  # 60초 안에 서로 다른 404를 10번 이상 만나는 건 드물다는 가정) - 근거로 삼을
+  # 실측 트래픽 기준선이 아직 없어서, 오탐/미탐 여부는 PATCH
+  # /incidents/{id}/verdict로 라벨을 쌓아 GET /scenarios의 precision을 보고
+  # 나중에 조정할 것(015 피드백 루프가 바로 이 목적). MITRE 매핑은 S28과 같은
+  # T1046(Network Service Discovery, 이미 카탈로그에 있음)로 잡았다 - 페이로드
+  # 대신 응답 패턴으로 하는 정찰이라는 점에서 동일 기법으로 분류.
+  - id: S30
+    name: "동일 IP WAS 404 다발 (엔드포인트 무차별 탐색)"
+    type: threshold
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [was]
+    window_seconds: 60
+    threshold: 10
+    cooldown_seconds: 300
+    match:
+      event_module: was
+      http_response_status_code: 404
+    severity: 2
+    mitre_technique_id: "T1046"

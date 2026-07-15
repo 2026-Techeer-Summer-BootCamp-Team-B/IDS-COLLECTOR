@@ -363,20 +363,46 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   로 끝 - platform-api로의 push는 없음(2026-07-13 이전엔 Redis pub/sub(`incidents:events`)
   발행도 했으나 제거됨, 아래 platform-api 절 참고). MITRE 전술은 `mitre_mapping.py`
   (MITRE 공식 Containers 매트릭스 대조 완료)로 technique_id -> tactics 변환해서 저장
-- 23개 시나리오(S1~S23) - S10/S19/S20/S21/S22/S23을 제외한 나머지는 falcosecurity/
-  plugins의 실제 K8s audit 룰에 근거한 설계, 엔진 검증용 예시가 아님
-  (`app/scenarios/README.md` 참고). 나머지 6개는 falcosecurity/plugins(k8s_audit
-  전용 저장소)에 대응 룰이 없어 다른 근거로 이 프로젝트가 설계함 - S19(로그인
-  브루트포스, T1110, WAS 원본 access log 기반), S20/S21(DaemonSet/CronJob 생성,
-  T1543/T1053, MITRE 공식 기법 설명 직접 근거), S22(컨테이너 내 크립토마이닝,
-  T1496, falcosecurity/**rules**(plugins가 아님) 저장소의 falco-sandbox_rules.yaml
-  룰 3개를 Target 저장소 `backend/falco-values.yaml`의 customRules로 이식),
-  S23(시스템 로그 삭제 시도, T1070, falcosecurity/rules **코어** falco_rules.yaml에
-  이미 기본 활성화돼 있던 "Clear Log Activities" 룰을 그대로 사용 - 별도 이식
-  불필요, 전부 2026-07-14). 같은 조사에서 T1036/T1550/T1499/T1498은 코어/sandbox
-  룰셋 어디에도 대응 룰이 없음을 확인(WebFetch로 원본 재확인) - 이 4개는 여전히
-  falcosecurity 근거가 없어 미구현. Notion "상관분석 시나리오" 페이지의 TODO
-  갭 분석에서 나온 항목
+- ~~23개 시나리오(S1~S23)~~ **(2026-07-15, S26~S30 추가로 30개)** - S10/S19/S20/S21/
+  S22/S23을 제외한 나머지는 falcosecurity/plugins의 실제 K8s audit 룰에 근거한
+  설계, 엔진 검증용 예시가 아님(`app/scenarios/README.md` 참고). 그 6개는
+  falcosecurity/plugins(k8s_audit 전용 저장소)에 대응 룰이 없어 다른 근거로 이
+  프로젝트가 설계함 - S19(로그인 브루트포스, T1110, WAS 원본 access log 기반),
+  S20/S21(DaemonSet/CronJob 생성, T1543/T1053, MITRE 공식 기법 설명 직접 근거),
+  S22(컨테이너 내 크립토마이닝, T1496, falcosecurity/**rules**(plugins가 아님)
+  저장소의 falco-sandbox_rules.yaml 룰 3개를 Target 저장소
+  `backend/falco-values.yaml`의 customRules로 이식), S23(시스템 로그 삭제 시도,
+  T1070, falcosecurity/rules **코어** falco_rules.yaml에 이미 기본 활성화돼 있던
+  "Clear Log Activities" 룰을 그대로 사용 - 별도 이식 불필요, 전부 2026-07-14).
+  같은 조사에서 T1036은 코어/sandbox 룰셋 어디에도 대응 룰이 없음을 확인(WebFetch로
+  원본 재확인) - falcosecurity 근거가 없어 여전히 미구현.
+- **S26~S30(2026-07-15 신규, 전부 `network.yaml`)**: 20/25개가 k8s_audit 위주였던
+  불균형을 메우려고 WAF/WAS 신호만으로 발화하는 시나리오 5개를 추가 - 전부
+  threshold=1(또는 S30만 threshold=10)로 Target 저장소(Techeer-12th-b)의 WAF
+  backend가 **이미 자체 판정을 끝내고 emit하는** 이벤트를 그대로 받는 방식이라
+  correlation-engine의 매처(`rules.py::_MATCHERS`) 확장 없이 기존 `event_action`/
+  `http_response_status_code` 매처만으로 구현됨: S26(WAF 로그인 브루트포스,
+  `attack_type=brute_force` - IP/계정/시스템전체 3종 통합, T1110, S19와 상호보완
+  - S19는 WAF 미경유 직결 트래픽만 보고 IP당 단순 카운팅만 하지만 이건 WAF 경유
+  트래픽 + 계정 기준(IP 로테이션 대응) + 시스템 전체 스파이크까지 잡음),
+  S27(WAF Rate Limit 남용, `attack_type=rate_limit_abuse`, T1499 - 위 문단의
+  "T1499/T1498은 falcosecurity 근거가 없어 미구현"은 **Falco 기반 접근 얘기고
+  이건 완전히 다른 경로**라 그 블로커와 무관하게 바로 구현 가능했음), S28(알려진
+  스캐너 툴 User-Agent, `attack_type=bad_bot`, T1046 - 카탈로그에 있었지만 그동안
+  어떤 시나리오도 안 쓰던 기법의 첫 사용), S29(JWT 위조 시도 `alg:none`,
+  `attack_type=jwt_forgery`, T1550 - S25와 기법 공유하지만 계층이 다른 별개
+  사건), S30(동일 IP WAS 404 다발/엔드포인트·리소스ID 무차별 탐색,
+  `http_response_status_code=404`, T1046 - WAF 시그니처가 절대 못 잡는 "페이로드
+  없는 정상적인 척하는 요청" 사각지대. 실측 확인: 이 프로젝트 Juice Shop 배포는
+  `/rest/*`·`/api/*` 밑의 미등록 경로를 진짜 404가 아니라 500(Express catch-all
+  버그, 기존에 S4/S5 payload 테스트 중에도 발견된 것과 동일 증상)으로 응답하고
+  SPA 폴백 경로는 200을 내려서, 진짜 404는 `/api/Products/{id}` 같은 존재하는
+  라우트에 없는 ID를 넣을 때만 남 - 순수 미등록 경로 브루트포스로는 이 시나리오가
+  안 걸리니 테스트/튜닝 시 주의). threshold=10은 실측 기준선이 없는 초기
+  추정치라 `PATCH /incidents/{id}/verdict`로 라벨을 쌓아 `GET /scenarios`의
+  `precision`을 보고 나중에 조정할 것(015 피드백 루프 용도). 5개 전부 실제 k3d
+  클러스터(WAF backend + Juice Shop 대상 curl 트래픽) 대상으로 발화까지 실측
+  확인 완료. Notion "상관분석 시나리오" 페이지의 TODO 갭 분석에서 나온 항목
 
 ### `servers/platform-api`
 - 프론트엔드(별도 팀/레포)의 유일한 연동 지점 - 위 "프론트엔드 연동 API" 참고, CORS 허용
