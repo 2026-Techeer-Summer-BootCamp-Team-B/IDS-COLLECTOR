@@ -82,18 +82,27 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, batch]
       exporters: [routing/by-source]
+    # debug(verbosity: detailed)는 4개 정상 소스 파이프라인에서 뺐다(2026-07-16,
+    # 감사 O9/§3.6) - 상시 켜져 있으면 이벤트 원문(WAS 쿼리스트링, WAF 페이로드
+    # 스니펫 등 자격증명·공격 페이로드가 섞일 수 있는 필드)이 컨테이너 stdout에
+    # 계속 쌓이고, 로그 로테이션이 없던 상태(항목 7에서 추가)와 겹쳐 디스크
+    # 누적의 가장 큰 기여 요인이었다. unknown만 예외로 남긴다(아래 참고).
     logs/was:
       receivers: [routing/by-source]
-      exporters: [kafka/was, debug]
+      exporters: [kafka/was]
     logs/waf:
       receivers: [routing/by-source]
-      exporters: [kafka/waf, debug]
+      exporters: [kafka/waf]
     logs/falco:
       receivers: [routing/by-source]
-      exporters: [kafka/falco, debug]
+      exporters: [kafka/falco]
     logs/audit:
       receivers: [routing/by-source]
-      exporters: [kafka/audit, debug]
+      exporters: [kafka/audit]
+    # log.source 태깅이 안 됐거나 미인식 값인 안전망 경로 - 정상 상태에선 깊이
+    # 0이어야 하므로(계약 §1) debug exporter를 유지해서 여기로 온 이벤트의 원문을
+    # 바로 확인할 수 있게 한다. 4개 정상 파이프라인과 달리 상시 대량 트래픽이
+    # 흐르지 않는 경로라 디스크 누적 우려도 낮다.
     logs/unknown:
       receivers: [routing/by-source]
       exporters: [kafka/unknown, debug]
