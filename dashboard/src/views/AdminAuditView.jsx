@@ -1,13 +1,15 @@
-import React, { useMemo, useState } from "react";
-import { INITIAL_LOG_POLICIES, INITIAL_EXCLUSION_RULES } from "../data/logPolicy";
+import React, { useEffect, useMemo, useState } from "react";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
 import { useTargets } from "../hooks/useTargets";
 import { useAllowList } from "../hooks/useAllowList";
 import { useScenarios } from "../hooks/useScenarios";
 import { useAlertConfigs } from "../hooks/useAlertConfigs";
+import { useLogPolicies } from "../hooks/useLogPolicies";
+import { useExclusionRules } from "../hooks/useExclusionRules";
 import { useTrendReport } from "../hooks/useTrendReport";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
+import { renderMarkdownLite } from "../lib/markdownLite";
 import { usePollInterval } from "../context/PollIntervalContext";
 
 // 실시간 패널(Overview/WAS/Falco/K8sAudit + LiveTicker)이 공유하는 갱신 주기를
@@ -107,14 +109,22 @@ function RuleRow({ rule, rank, onToggle }) {
   );
 }
 
-// 보존 tier + 샘플링 비율을 계층별로 조정하는 입력 행. 숫자 입력이라 로컬 문자열
-// 상태 없이 onChange에서 바로 상위 state로 반영 — 잘못된 값(빈 문자열 등)은
-// blur 전까지는 그냥 두고 커밋 시점에만 숫자로 정규화한다.
+// 보존 tier + 샘플링 비율을 계층별로 조정하는 입력 행. 이제 PATCH /log-policies/{layer}가
+// 실제 네트워크 호출이라 onChange(키 입력)마다 커밋하면 느리고 레이스도 생긴다 -
+// 타이핑 중엔 로컬 draft만 갱신하고, blur 시점에 클램프한 값을 커밋한다.
 function PolicyRow({ policy, onUpdate }) {
-  function commit(field, value, min, max) {
-    const num = Math.min(max, Math.max(min, Number(value) || 0));
-    onUpdate(policy.layer, { [field]: num });
+  const [draft, setDraft] = useState(policy);
+
+  useEffect(() => {
+    setDraft(policy);
+  }, [policy]);
+
+  function commit(field, min, max) {
+    const num = Math.min(max, Math.max(min, Number(draft[field]) || 0));
+    setDraft((d) => ({ ...d, [field]: num }));
+    if (num !== policy[field]) onUpdate(policy.layer, { [field]: num });
   }
+
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-2.5 border-t border-dash-surfaceAlt first:border-t-0 first:pt-0 text-xs">
       <span className="text-dash-fg text-sm font-medium w-24 shrink-0">{policy.layer}</span>
@@ -125,8 +135,9 @@ function PolicyRow({ policy, onUpdate }) {
           type="number"
           min={1}
           max={90}
-          value={policy.hotDays}
-          onChange={(e) => commit("hotDays", e.target.value, 1, 90)}
+          value={draft.hot_days}
+          onChange={(e) => setDraft((d) => ({ ...d, hot_days: e.target.value }))}
+          onBlur={() => commit("hot_days", 1, 90)}
           className="w-14 bg-dash-bg text-dash-fg text-right rounded-md px-1.5 py-1 border border-dash-surfaceAlt focus:outline-none focus:border-dash-mint"
         />
         일
@@ -138,8 +149,9 @@ function PolicyRow({ policy, onUpdate }) {
           type="number"
           min={7}
           max={730}
-          value={policy.coldDays}
-          onChange={(e) => commit("coldDays", e.target.value, 7, 730)}
+          value={draft.cold_days}
+          onChange={(e) => setDraft((d) => ({ ...d, cold_days: e.target.value }))}
+          onBlur={() => commit("cold_days", 7, 730)}
           className="w-16 bg-dash-bg text-dash-fg text-right rounded-md px-1.5 py-1 border border-dash-surfaceAlt focus:outline-none focus:border-dash-mint"
         />
         일
@@ -151,20 +163,21 @@ function PolicyRow({ policy, onUpdate }) {
           type="number"
           min={1}
           max={100}
-          value={policy.samplingRate}
-          onChange={(e) => commit("samplingRate", e.target.value, 1, 100)}
+          value={draft.sampling_rate}
+          onChange={(e) => setDraft((d) => ({ ...d, sampling_rate: e.target.value }))}
+          onBlur={() => commit("sampling_rate", 1, 100)}
           className="w-14 bg-dash-bg text-dash-fg text-right rounded-md px-1.5 py-1 border border-dash-surfaceAlt focus:outline-none focus:border-dash-mint"
         />
         %
       </label>
 
       <button
-        onClick={() => onUpdate(policy.layer, { archiveEnabled: !policy.archiveEnabled })}
+        onClick={() => onUpdate(policy.layer, { archive_enabled: !policy.archive_enabled })}
         className={`ml-auto text-[10px] px-2 py-1 rounded-md shrink-0 ${
-          policy.archiveEnabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"
+          policy.archive_enabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"
         }`}
       >
-        아카이브 {policy.archiveEnabled ? "ON" : "OFF"}
+        아카이브 {policy.archive_enabled ? "ON" : "OFF"}
       </button>
     </div>
   );
@@ -185,7 +198,7 @@ function ExclusionRuleRow({ rule, onToggle }) {
         className={`text-xs font-semibold shrink-0 ${rule.enabled ? "text-dash-mint" : "text-dash-faint"}`}
         title="예상 로그량 감소 비중"
       >
-        -{rule.estimatedReductionPct}%
+        -{rule.estimated_reduction_pct}%
       </span>
     </div>
   );
@@ -589,13 +602,18 @@ function TrendReportPanel({ scenarios }) {
       {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
       {status === "ready" && report && (
         <>
-          <p
+          <div
             className={`text-xs rounded-lg px-3 py-2 mb-3 ${
               report.configured ? "bg-dash-mint/10 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"
             }`}
           >
-            {report.message}
-          </p>
+            {report.configured ? renderMarkdownLite(report.message) : report.message}
+            {report.cached && (
+              <p className="text-dash-muted mt-2">
+                (탐지 결과에 변화가 없어 이전 요약을 그대로 표시 중)
+              </p>
+            )}
+          </div>
           {report.stats.length === 0 ? (
             <p className="text-dash-muted text-xs py-3">최근 7일간 인시던트가 없습니다.</p>
           ) : (
@@ -626,19 +644,12 @@ function TrendReportPanel({ scenarios }) {
   );
 }
 
-export default function AdminAuditView({
-  logPolicies = INITIAL_LOG_POLICIES,
-  onUpdatePolicy,
-  exclusionRules = INITIAL_EXCLUSION_RULES,
-  onToggleExclusion,
-  pushToast,
-}) {
+export default function AdminAuditView({ pushToast }) {
   // GET /audit-logs 실데이터 — 예전엔 App.jsx가 들고 있던 mock auditLog를 prop으로
   // 받았는데, 다른 뷰들(Incidents/WAS/Falco/K8sAudit)과 같은 패턴으로 이 뷰가 직접
   // 자기 데이터를 fetch하도록 통일했다. logPolicies/exclusionRules(데이터 보존·샘플링·
-  // 제외 규칙)만 아직 대응하는 백엔드 엔드포인트가 아예 없어서 App.jsx의 로컬 mock
-  // 상태로 남아있다 — rules(탐지 룰 랭킹)/alert-configs/reports-trend는 이번에 실제
-  // 백엔드(scenarios_api.py/alert_configs_api.py/ai_report.py)로 연결했다.
+  // 제외 규칙)도 이번에 실제 백엔드(data_policy_api.py)로 연결해서, 이제 이 뷰의
+  // 패널 7개가 전부 App.jsx mock 없이 자기 데이터를 직접 fetch한다.
   const { logs: auditLog, status: auditStatus, error: auditError } = useAuditLogs({ limit: 50 });
   const { targets, status: targetsStatus, error: targetsError, reload: reloadTargets } = useTargets();
   const { entries: allowList, status: allowListStatus, error: allowListError, reload: reloadAllowList } =
@@ -646,6 +657,18 @@ export default function AdminAuditView({
   const { scenarios, status: scenariosStatus, error: scenariosError, reload: reloadScenarios } = useScenarios();
   const { configs: alertConfigs, status: alertConfigsStatus, error: alertConfigsError, reload: reloadAlertConfigs } =
     useAlertConfigs();
+  const {
+    policies: logPolicies,
+    status: logPoliciesStatus,
+    error: logPoliciesError,
+    reload: reloadLogPolicies,
+  } = useLogPolicies();
+  const {
+    rules: exclusionRules,
+    status: exclusionRulesStatus,
+    error: exclusionRulesError,
+    reload: reloadExclusionRules,
+  } = useExclusionRules();
   const [activeTab, setActiveTab] = useState("policy");
 
   function toast(message, tone) {
@@ -659,6 +682,25 @@ export default function AdminAuditView({
       reloadScenarios();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "탐지 룰 상태 변경에 실패했습니다.", "error");
+    }
+  }
+
+  async function handleUpdateLogPolicy(layer, patch) {
+    try {
+      await apiPatch(`/log-policies/${encodeURIComponent(layer)}`, patch);
+      reloadLogPolicies();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "데이터 정책 변경에 실패했습니다.", "error");
+    }
+  }
+
+  async function handleToggleExclusionRule(rule) {
+    try {
+      await apiPatch(`/exclusion-rules/${rule.id}/enabled`, { enabled: !rule.enabled });
+      toast(`제외 규칙 ${rule.enabled ? "비활성화" : "활성화"}했습니다 (${rule.id}).`, "success");
+      reloadExclusionRules();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "제외 규칙 상태 변경에 실패했습니다.", "error");
     }
   }
 
@@ -768,7 +810,7 @@ export default function AdminAuditView({
   const activeExclusions = exclusionRules.filter((r) => r.enabled);
   const totalReductionByLayer = useMemo(() => {
     return activeExclusions.reduce((acc, r) => {
-      acc[r.layer] = (acc[r.layer] || 0) + r.estimatedReductionPct;
+      acc[r.layer] = (acc[r.layer] || 0) + r.estimated_reduction_pct;
       return acc;
     }, {});
   }, [exclusionRules]);
@@ -789,22 +831,32 @@ export default function AdminAuditView({
             <p className="text-dash-muted text-xs mb-3">
               계층별 hot/cold tier 보존 기간과 저장 전 샘플링 비율 · 파이프라인 단계에서 걸러낼 저가치 노이즈 규칙
             </p>
-            <div className="mb-4">
-              {logPolicies.map((p) => (
-                <PolicyRow key={p.layer} policy={p} onUpdate={onUpdatePolicy} />
-              ))}
-            </div>
-            <div className="pt-3 border-t border-dash-surfaceAlt">
-              <p className="text-dash-faint text-[11px] mb-2">
-                제외 규칙 {activeExclusions.length}/{exclusionRules.length}개 활성 · 계층별 예상 로그량 감소:{" "}
-                {Object.entries(totalReductionByLayer)
-                  .map(([layer, pct]) => `${layer} -${pct}%`)
-                  .join(" · ") || "없음"}
-              </p>
-              {exclusionRules.map((r) => (
-                <ExclusionRuleRow key={r.id} rule={r} onToggle={onToggleExclusion} />
-              ))}
-            </div>
+            {(logPoliciesStatus === "loading" || exclusionRulesStatus === "loading") && (
+              <p className="text-dash-muted text-xs py-3">불러오는 중...</p>
+            )}
+            {(logPoliciesStatus === "error" || exclusionRulesStatus === "error") && (
+              <p className="text-dash-critical text-xs py-3">{logPoliciesError || exclusionRulesError}</p>
+            )}
+            {logPoliciesStatus === "ready" && exclusionRulesStatus === "ready" && (
+              <>
+                <div className="mb-4">
+                  {logPolicies.map((p) => (
+                    <PolicyRow key={p.layer} policy={p} onUpdate={handleUpdateLogPolicy} />
+                  ))}
+                </div>
+                <div className="pt-3 border-t border-dash-surfaceAlt">
+                  <p className="text-dash-faint text-[11px] mb-2">
+                    제외 규칙 {activeExclusions.length}/{exclusionRules.length}개 활성 · 계층별 예상 로그량 감소:{" "}
+                    {Object.entries(totalReductionByLayer)
+                      .map(([layer, pct]) => `${layer} -${pct}%`)
+                      .join(" · ") || "없음"}
+                  </p>
+                  {exclusionRules.map((r) => (
+                    <ExclusionRuleRow key={r.id} rule={r} onToggle={() => handleToggleExclusionRule(r)} />
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="bg-dash-surface rounded-2xl p-5">

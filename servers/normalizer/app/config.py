@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # severity.yaml 경로 - app 패키지 기준 상대경로 (app/severity.py에서 resolve).
     severity_config_path: str = "severity.yaml"
 
+    # exclusion_rules 캐시 갱신용 (app/exclusion.py, app/db.py) - platform-api/
+    # correlation-engine과 동일한 DSN. 정규화 hot path에서 매 이벤트마다 DB를 치지
+    # 않고 주기 폴링+캐시로 읽는다(poll_intervals의 exclusion_rules_refresh_seconds).
+    postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
+
     class Config:
         env_file = ".env"
 

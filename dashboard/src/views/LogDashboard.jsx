@@ -244,6 +244,13 @@ function ChartTypeToggle({ options, value, onChange }) {
 export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  // 2026-07-15: 형광 민트/critical 빨강이 "에러처럼 보인다"는 피드백 - Overview/
+  // Incidents 도넛에서 이미 검증된 DONUT_PALETTE 톤으로 맞춘다. 전체 로그는
+  // 차분한 스틸블루, Major~Critical(중요 로그)만 도넛의 빨강(테라코타) 톤으로
+  // 구분되게 유지 - 이 두 색은 WAS/Falco/K8sAudit 상세 뷰도 이 컴포넌트를
+  // 그대로 재사용하므로 전체 "계층별 로그" 차트에 다 같이 적용된다.
+  const totalColor = DONUT_PALETTE[3];
+  const errorColor = DONUT_PALETTE[0];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const { pollMs } = usePollInterval();
   const [internalType, setInternalType] = useState(() => defaultChartTypeFor("log-volume"));
@@ -286,7 +293,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
           )}
         </div>
       }
-      className="h-80"
+      className="min-h-80 h-full"
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
@@ -298,28 +305,31 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
-                <Bar dataKey="total" fill={C.mint} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="errorish" fill={C.critical} radius={[3, 3, 0, 0]} />
+                <Tooltip
+                  contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }}
+                  cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+                />
+                <Bar dataKey="total" fill={totalColor} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="errorish" fill={errorColor} radius={[3, 3, 0, 0]} />
               </BarChart>
             ) : (
               <AreaChart data={data}>
                 <defs>
                   <linearGradient id="volumeFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.mint} stopOpacity={0.45} />
-                    <stop offset="100%" stopColor={C.mint} stopOpacity={0} />
+                    <stop offset="0%" stopColor={totalColor} stopOpacity={0.45} />
+                    <stop offset="100%" stopColor={totalColor} stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="errorFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.critical} stopOpacity={0.5} />
-                    <stop offset="100%" stopColor={C.critical} stopOpacity={0} />
+                    <stop offset="0%" stopColor={errorColor} stopOpacity={0.5} />
+                    <stop offset="100%" stopColor={errorColor} stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
                 <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
-                <Area type="monotone" dataKey="total" stroke={C.mint} fill="url(#volumeFill)" strokeWidth={2} />
-                <Area type="monotone" dataKey="errorish" stroke={C.critical} fill="url(#errorFill)" strokeWidth={2} />
+                <Area type="monotone" dataKey="total" stroke={totalColor} fill="url(#volumeFill)" strokeWidth={2} />
+                <Area type="monotone" dataKey="errorish" stroke={errorColor} fill="url(#errorFill)" strokeWidth={2} />
                 {spikePoint && (
                   <ReferenceDot
                     x={spikePoint.label}
@@ -336,10 +346,10 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
           </ResponsiveContainer>
           <div className="flex gap-4 text-xs text-dash-muted mt-2">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-dash-mint inline-block" /> 전체 로그
+              <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: totalColor }} /> 전체 로그
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: C.critical }} /> Major~Critical
+              <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: errorColor }} /> Major~Critical
             </span>
             {spike && (
               <span className="flex items-center gap-1">
@@ -399,7 +409,7 @@ export function ModuleVolumeStackedChart() {
       title="모듈별 로그량 추이"
       subtitle={`Last ${preset.label} · WAS / Falco / K8s Audit 적층`}
       action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
-      className="h-80"
+      className="min-h-80 h-full"
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">모듈별 로그량을 불러오지 못했습니다.</p>}
@@ -494,7 +504,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
           <ChartTypeToggle options={chartTypeOptionsFor("level-distribution")} value={chartType} onChange={setInternalType} />
         )
       }
-      className="h-80"
+      className="min-h-80 h-full"
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status !== "error" && chartType === "donut" && (
@@ -571,7 +581,10 @@ export function LevelDistributionChart({ events }) {
             textAnchor="end"
           />
           <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-          <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
+          <Tooltip
+            contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }}
+            cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+          />
           <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
             {data.map((d) => (
               <Cell key={d.key} fill={d.color} />
@@ -690,7 +703,7 @@ function CategoryBarChart({ data, C, height = 160 }) {
         <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
         <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
         <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} />
-        <Tooltip contentStyle={tooltipStyle(C)} />
+        <Tooltip contentStyle={tooltipStyle(C)} cursor={{ fill: C.surfaceAlt, opacity: 0.5 }} />
         <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
           {data.map((d) => (
             <Cell key={d.key} fill={d.color} />
@@ -812,6 +825,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
         )
       }
+      className="min-h-80 h-full"
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
@@ -896,6 +910,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-severity")} value={chartType} onChange={setInternalType} />
         )
       }
+      className="min-h-80 h-full"
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
@@ -982,6 +997,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
           />
         )
       }
+      className="min-h-80 h-full"
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">데이터가 없습니다.</p>}

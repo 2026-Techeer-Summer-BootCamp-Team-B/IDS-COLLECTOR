@@ -7,7 +7,7 @@ import { MODULE_META } from "../data/moduleMeta";
 import { SOURCE_META } from "../components/badges";
 import { getRealSeverityMeta } from "../data/realSeverity";
 import TimeRangePicker from "../components/TimeRangePicker";
-import { CHART_COLORS, forTheme } from "../data/theme";
+import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
@@ -223,8 +223,11 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
                     <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                     <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} minTickGap={20} />
                     <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
-                    <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 }} />
-                    <Bar dataKey="count" fill={C.mint} radius={[3, 3, 0, 0]} />
+                    <Tooltip
+                      contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 }}
+                      cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+                    />
+                    <Bar dataKey="count" fill={DONUT_PALETTE[3]} radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
