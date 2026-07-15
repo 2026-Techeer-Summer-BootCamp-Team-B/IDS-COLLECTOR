@@ -1,167 +1,200 @@
 import React, { createContext, useContext, useCallback, useState } from "react";
 
-// Overview 페이지 "사용자 모드"(위젯 드래그 이동 + 마우스 리사이즈 + 위젯별
-// 차트 타입 전환) 상태.
+// Overview 페이지 커스텀 대시보드 관리.
 //
-// mode: "default"(기존 고정 레이아웃, 지금까지의 Overview 그대로) | "custom"(자유
-// 배치 그리드). 기본모드는 지금 JSX를 한 글자도 안 바꾸고 그대로 두므로 이 기능이
-// 잘못돼도 "기본 모드로 되돌리기"만 하면 항상 예전 화면으로 복구된다 - 위험을
-// 격리하는 게 이 토글 구조의 핵심 목적.
+// "기본 모드"는 activeId === "default"일 때 - LogDashboard.jsx가 기존 정적
+// JSX(위젯 변수를 그대로 나열)를 렌더링하며, 이 Context의 어떤 상태도 참조하지
+// 않는다. 그래서 커스텀 대시보드를 아무리 만들고 지우고 편집해도 기본 모드는
+// 절대 바뀌지 않는다 - 이게 이 구조 전체의 핵심 안전장치.
 //
-// layout: react-grid-layout이 쓰는 {i, x, y, w, h}[] 배열. 위젯 id(i)별 그리드
-// 좌표/크기 - DEFAULT_OVERVIEW_LAYOUT과 반드시 짝이 맞아야 한다.
-//
-// chartTypes: 위젯 id -> 차트 타입("area"/"bar"/"donut") 맵. 데이터 모양이
-// 안 맞는 위젯(KPI 카드, 테이블, 지도 등)은 아예 이 맵에 없고, CHART_TYPE_OPTIONS에
-// 등록된 위젯만 WidgetFrame에 타입 전환 버튼이 뜬다(LogDashboard.jsx 참고).
-const STORAGE_MODE_KEY = "sentinelops_overview_mode";
-const STORAGE_LAYOUT_KEY = "sentinelops_overview_layout_v1";
-const STORAGE_CHART_TYPES_KEY = "sentinelops_overview_chart_types_v1";
+// "커스텀 대시보드"는 여러 개 만들 수 있다(dashboards 배열). 각 대시보드는
+// 이름(name)과 위젯 인스턴스 목록(widgets)을 가진다. 위젯 인스턴스는
+// { uid, type, x, y, w, h, chartType? } - 같은 type(예: "log-volume")을 여러 번
+// 추가할 수 있어서 type이 아니라 uid로 각 인스턴스를 구분한다.
+const STORAGE_DASHBOARDS_KEY = "sentinelops_overview_dashboards_v2";
+const STORAGE_ACTIVE_KEY = "sentinelops_overview_active_v2";
 
-// 위젯별로 허용되는 차트 타입들 - 데이터가 시계열(구간별 건수)이면 area/bar,
-// 카테고리 집계(항목별 건수)면 donut/bar만 의미가 있어서 위젯마다 다르게 정의.
-export const CHART_TYPE_OPTIONS = {
-  "log-volume": [
-    { value: "area", label: "영역" },
-    { value: "bar", label: "막대" },
-  ],
-  "level-distribution": [
-    { value: "bar", label: "막대" },
-    { value: "donut", label: "도넛" },
-  ],
-  "donut-source": [
-    { value: "donut", label: "도넛" },
-    { value: "bar", label: "막대" },
-  ],
-  "donut-severity": [
-    { value: "donut", label: "도넛" },
-    { value: "bar", label: "막대" },
-  ],
-  "donut-k8s-namespace": [
-    { value: "donut", label: "도넛" },
-    { value: "bar", label: "막대" },
-  ],
-};
-
-export const DEFAULT_CHART_TYPES = {
-  "log-volume": "area",
-  "level-distribution": "bar",
-  "donut-source": "donut",
-  "donut-severity": "donut",
-  "donut-k8s-namespace": "donut",
-};
-
-export const DEFAULT_OVERVIEW_LAYOUT = [
-  // Row 1 - KPI 카드 4개 (기본모드의 flex-wrap 행과 동일한 순서)
-  // h=3(92px)이었을 때 KpiCard 실제 콘텐츠(라벨+큰 숫자+delta, p-5 패딩)가
-  // 안 들어가서 내부 스크롤이 생기던 버그 수정 - h=6(200px)로 확보.
-  { i: "kpi-total", x: 0, y: 0, w: 3, h: 6 },
-  { i: "kpi-errors", x: 3, y: 0, w: 3, h: 6 },
-  { i: "kpi-warnings", x: 6, y: 0, w: 3, h: 6 },
-  { i: "kpi-sources", x: 9, y: 0, w: 3, h: 6 },
-  // Row 2 - 로그 개요 (막대 8 : 4)
-  { i: "log-volume", x: 0, y: 6, w: 8, h: 9 },
-  { i: "level-distribution", x: 8, y: 6, w: 4, h: 9 },
-  // Row 3 - 보안 탐지 요약 도넛 3개
-  { i: "donut-source", x: 0, y: 15, w: 4, h: 9 },
-  { i: "donut-severity", x: 4, y: 15, w: 4, h: 9 },
-  { i: "donut-k8s-namespace", x: 8, y: 15, w: 4, h: 9 },
-  // Row 4 - API Latency
-  { i: "latency-stats", x: 0, y: 24, w: 12, h: 5 },
-  // Row 5 - Recent Logs(8) + Top Sources/Error Rate(4)
-  { i: "recent-logs", x: 0, y: 29, w: 8, h: 14 },
-  { i: "top-sources", x: 8, y: 29, w: 4, h: 7 },
-  { i: "error-rate", x: 8, y: 36, w: 4, h: 7 },
-  // Row 6 - Geo 지도
-  { i: "geo-summary", x: 0, y: 43, w: 12, h: 11 },
+// 위젯 설정 빌더의 팔레트(왼쪽 목록)에 뜨는 전체 위젯 카탈로그. type은
+// LogDashboard.jsx의 renderWidgetContent()가 실제 컴포넌트로 매핑할 때 쓰는 키.
+// w/h는 그 위젯을 처음 캔버스에 놓을 때 기본 크기(12칸 그리드 기준).
+export const WIDGET_CATALOG = [
+  { type: "kpi-total", label: "Total Logs", w: 3, h: 6 },
+  { type: "kpi-errors", label: "Errors", w: 3, h: 6 },
+  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6 },
+  { type: "kpi-sources", label: "Active Sources", w: 3, h: 6 },
+  {
+    type: "log-volume",
+    label: "Log Volume",
+    w: 8,
+    h: 9,
+    chartTypeOptions: [
+      { value: "area", label: "영역" },
+      { value: "bar", label: "막대" },
+    ],
+  },
+  {
+    type: "level-distribution",
+    label: "Log Levels",
+    w: 4,
+    h: 9,
+    chartTypeOptions: [
+      { value: "bar", label: "막대" },
+      { value: "donut", label: "도넛" },
+    ],
+  },
+  {
+    type: "donut-source",
+    label: "탐지 소스별 분포",
+    w: 4,
+    h: 9,
+    chartTypeOptions: [
+      { value: "donut", label: "도넛" },
+      { value: "bar", label: "막대" },
+    ],
+  },
+  {
+    type: "donut-severity",
+    label: "심각도 분포",
+    w: 4,
+    h: 9,
+    chartTypeOptions: [
+      { value: "donut", label: "도넛" },
+      { value: "bar", label: "막대" },
+    ],
+  },
+  {
+    type: "donut-k8s-namespace",
+    label: "K8s 네임스페이스 분포",
+    w: 4,
+    h: 9,
+    chartTypeOptions: [
+      { value: "donut", label: "도넛" },
+      { value: "bar", label: "막대" },
+    ],
+  },
+  { type: "latency-stats", label: "API Latency", w: 12, h: 5 },
+  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14 },
+  { type: "top-sources", label: "Top Sources", w: 4, h: 7 },
+  { type: "error-rate", label: "Error Rate", w: 4, h: 7 },
+  { type: "geo-summary", label: "지역별 분포", w: 12, h: 11 },
 ];
 
-function loadMode() {
+const CATALOG_BY_TYPE = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w]));
+
+export function catalogEntry(type) {
+  return CATALOG_BY_TYPE[type];
+}
+
+export function chartTypeOptionsFor(type) {
+  return CATALOG_BY_TYPE[type]?.chartTypeOptions;
+}
+
+export function defaultChartTypeFor(type) {
+  return CATALOG_BY_TYPE[type]?.chartTypeOptions?.[0]?.value;
+}
+
+let uidCounter = 0;
+export function makeWidgetUid() {
+  uidCounter += 1;
+  return `w${Date.now().toString(36)}${uidCounter}`;
+}
+
+function loadDashboards() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_DASHBOARDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // 저장된 데이터 중 지금 카탈로그에 없는 위젯 타입이 섞여있으면(위젯이
+    // 제거된 배포 등) 그 위젯만 걸러내고 나머지는 그대로 유지 - 대시보드
+    // 하나가 통째로 깨지는 것보다 안전.
+    return parsed
+      .filter((d) => d && typeof d.id === "string" && typeof d.name === "string" && Array.isArray(d.widgets))
+      .map((d) => ({
+        ...d,
+        widgets: d.widgets.filter((w) => w && typeof w.uid === "string" && CATALOG_BY_TYPE[w.type]),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function loadActiveId(dashboards) {
   if (typeof window === "undefined") return "default";
-  return window.localStorage.getItem(STORAGE_MODE_KEY) === "custom" ? "custom" : "default";
-}
-
-function loadLayout() {
-  if (typeof window === "undefined") return DEFAULT_OVERVIEW_LAYOUT;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_LAYOUT_KEY);
-    if (!raw) return DEFAULT_OVERVIEW_LAYOUT;
-    const parsed = JSON.parse(raw);
-    // 저장된 레이아웃이 지금 위젯 목록과 다르면(위젯이 새로 추가/제거된 배포
-    // 직후 등) 부분적으로 깨진 화면 대신 기본 레이아웃으로 안전하게 폴백.
-    const ids = new Set(parsed.map((it) => it.i));
-    const stillMatches = DEFAULT_OVERVIEW_LAYOUT.every((it) => ids.has(it.i));
-    return stillMatches ? parsed : DEFAULT_OVERVIEW_LAYOUT;
-  } catch {
-    return DEFAULT_OVERVIEW_LAYOUT;
-  }
-}
-
-function loadChartTypes() {
-  if (typeof window === "undefined") return DEFAULT_CHART_TYPES;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_CHART_TYPES_KEY);
-    if (!raw) return DEFAULT_CHART_TYPES;
-    const parsed = JSON.parse(raw);
-    // 저장된 값 중 지금도 유효한 옵션인 것만 반영하고, 나머지(새로 추가된
-    // 위젯 등)는 기본값으로 채운다 - loadLayout()의 폴백과 같은 이유.
-    const merged = { ...DEFAULT_CHART_TYPES };
-    for (const [widgetId, type] of Object.entries(parsed)) {
-      const validTypes = (CHART_TYPE_OPTIONS[widgetId] || []).map((o) => o.value);
-      if (validTypes.includes(type)) merged[widgetId] = type;
-    }
-    return merged;
-  } catch {
-    return DEFAULT_CHART_TYPES;
-  }
+  const raw = window.localStorage.getItem(STORAGE_ACTIVE_KEY) || "default";
+  if (raw === "default") return "default";
+  return dashboards.some((d) => d.id === raw) ? raw : "default";
 }
 
 const OverviewLayoutContext = createContext(null);
 
 export function OverviewLayoutProvider({ children }) {
-  const [mode, setModeState] = useState(loadMode);
-  const [layout, setLayoutState] = useState(loadLayout);
-  const [chartTypes, setChartTypesState] = useState(loadChartTypes);
+  const [dashboards, setDashboardsState] = useState(loadDashboards);
+  const [activeId, setActiveIdState] = useState(() => loadActiveId(loadDashboards()));
 
-  const setMode = useCallback((next) => {
-    setModeState(next);
+  const persistDashboards = useCallback((next) => {
+    setDashboardsState(next);
     try {
-      window.localStorage.setItem(STORAGE_MODE_KEY, next);
-    } catch {
-      // 무시 - 이번 세션 안에서는 state만으로 정상 동작
-    }
-  }, []);
-
-  const setLayout = useCallback((next) => {
-    setLayoutState(next);
-    try {
-      window.localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(next));
+      window.localStorage.setItem(STORAGE_DASHBOARDS_KEY, JSON.stringify(next));
     } catch {
       // 무시
     }
   }, []);
 
-  const resetLayout = useCallback(() => {
-    setLayout(DEFAULT_OVERVIEW_LAYOUT);
-  }, [setLayout]);
-
-  const setChartType = useCallback((widgetId, type) => {
-    const validTypes = (CHART_TYPE_OPTIONS[widgetId] || []).map((o) => o.value);
-    if (!validTypes.includes(type)) return;
-    setChartTypesState((prev) => {
-      const next = { ...prev, [widgetId]: type };
-      try {
-        window.localStorage.setItem(STORAGE_CHART_TYPES_KEY, JSON.stringify(next));
-      } catch {
-        // 무시
-      }
-      return next;
-    });
+  const setActiveId = useCallback((id) => {
+    setActiveIdState(id);
+    try {
+      window.localStorage.setItem(STORAGE_ACTIVE_KEY, id);
+    } catch {
+      // 무시
+    }
   }, []);
+
+  // 새 커스텀 대시보드 생성. widgets는 빌더에서 만든 [{uid,type,x,y,w,h,chartType}] 배열.
+  const createDashboard = useCallback(
+    (name, widgets) => {
+      const id = `dash_${makeWidgetUid()}`;
+      const next = [...dashboards, { id, name, widgets }];
+      persistDashboards(next);
+      setActiveId(id);
+      return id;
+    },
+    [dashboards, persistDashboards, setActiveId]
+  );
+
+  // 기존 대시보드 갱신 - 빌더에서 위젯을 추가/삭제하고 저장하거나, 그리드에서
+  // 드래그/리사이즈해서 위치가 바뀌었을 때(자동 저장) 둘 다 이 함수를 쓴다.
+  const updateDashboard = useCallback(
+    (id, patch) => {
+      const next = dashboards.map((d) => (d.id === id ? { ...d, ...patch } : d));
+      persistDashboards(next);
+    },
+    [dashboards, persistDashboards]
+  );
+
+  const deleteDashboard = useCallback(
+    (id) => {
+      const next = dashboards.filter((d) => d.id !== id);
+      persistDashboards(next);
+      if (activeId === id) setActiveId("default");
+    },
+    [dashboards, persistDashboards, activeId, setActiveId]
+  );
+
+  const getDashboard = useCallback((id) => dashboards.find((d) => d.id === id), [dashboards]);
 
   return (
     <OverviewLayoutContext.Provider
-      value={{ mode, setMode, layout, setLayout, resetLayout, chartTypes, setChartType }}
+      value={{
+        dashboards,
+        activeId,
+        setActiveId,
+        createDashboard,
+        updateDashboard,
+        deleteDashboard,
+        getDashboard,
+      }}
     >
       {children}
     </OverviewLayoutContext.Provider>
@@ -172,13 +205,13 @@ export function useOverviewLayout() {
   const ctx = useContext(OverviewLayoutContext);
   if (!ctx) {
     return {
-      mode: "default",
-      setMode: () => {},
-      layout: DEFAULT_OVERVIEW_LAYOUT,
-      setLayout: () => {},
-      resetLayout: () => {},
-      chartTypes: DEFAULT_CHART_TYPES,
-      setChartType: () => {},
+      dashboards: [],
+      activeId: "default",
+      setActiveId: () => {},
+      createDashboard: () => {},
+      updateDashboard: () => {},
+      deleteDashboard: () => {},
+      getDashboard: () => undefined,
     };
   }
   return ctx;
