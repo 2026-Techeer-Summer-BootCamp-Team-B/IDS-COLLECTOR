@@ -19,7 +19,12 @@ services:
     networks:
       - siem-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      # -d 없이 -U만 주면 pg_isready가 대상 데이터베이스명을 유저명(ids_admin)으로
+      # 기본 가정하는데, 실제 DB명은 POSTGRES_DB(ids_platform)라 매번
+      # "database \"ids_admin\" does not exist" FATAL이 postgres 로그에 10초마다
+      # 쌓인다(헬스체크 자체는 서버 응답만 보면 통과라 기능상 무해하지만, 로그
+      # 노이즈가 진짜 에러를 찾기 어렵게 만든다 - 실측 확인, 2026-07-14).
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 10
