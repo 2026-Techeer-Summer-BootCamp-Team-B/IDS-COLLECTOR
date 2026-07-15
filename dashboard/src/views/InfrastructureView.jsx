@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import WorldMap from "../components/WorldMap";
-import { CHART_COLORS } from "../data/theme";
+import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
 import { useSourceHealth } from "../hooks/useSourceHealth";
@@ -174,25 +174,22 @@ function PipelineHealthPanel() {
 // 뒤덮이는 문제 — 낮음 티어는 색을 아예 빼고(무채도 회색) "집중된 곳"만 색이
 // 튀도록 바꿨다.
 //
-// 2026-07-15: orange, 그다음 pink까지 써봤는데 둘 다 "여전히 이상하다"는
-// 피드백 — 사용자가 준 터미널 빌드 로그 스크린샷(시안/블루 구조 텍스트 ->
-// 초록 성공 텍스트) 톤을 그대로 가져와서 무채색(회색) → 시안 → 네온 초록
-// 순으로 바꿨다. 빨강/주황/핑크를 아예 빼서 "경고" 느낌 대신 그 스크린샷과
-// 같은 차분한 터미널 톤이 되도록.
+// 2026-07-15: orange -> pink -> cyan/초록까지 세 번 바꿔봤는데도 계속
+// "이상하다"는 피드백 - 결국 이미 잘 어울린다고 인정받은 도넛 차트 색
+// (Overview/Incidents가 쓰는 DONUT_PALETTE)에서 그대로 3단계를 뽑아 쓰기로.
+// 새 색을 발명하지 않고 이미 검증된 톤을 재사용하는 쪽으로 방향을 바꿨다.
 function intensityColor(count, max, C) {
   const ratio = max ? count / max : 0;
-  if (ratio > 0.66) return C.live;
-  if (ratio > 0.33) return C.info;
-  if (ratio > 0) return C.muted;
+  if (ratio > 0.66) return DONUT_PALETTE[0]; // 테라코타 - 가장 집중된 곳
+  if (ratio > 0.33) return DONUT_PALETTE[1]; // 앰버
+  if (ratio > 0) return DONUT_PALETTE[3]; // 스틸 블루
   return C.surfaceAlt;
 }
 
-// 2026-07-15: intensityColor를 critical/high(어두운 빨강/주황)에서 info/live
-// (밝은 시안/네온초록)로 바꾸면서 그 위에 얹던 흰 글자가 밝은 배경 위 흰 글자라
-// 대비가 죽어버렸다 - 이제 hot 티어일수록 오히려 더 밝아지므로 어두운 글자로
-// 뒤집었다. 무채색 "공격 없음" 타일만 어두운 배경(surface 계열)이라 밝은 글자.
+// DONUT_PALETTE 톤(테라코타/앰버/스틸블루)은 중간~어두운 채도라 흰 글자가 다시
+// 잘 읽힌다 - 무채색 "공격 없음" 타일만 어두운 surface 계열이라 밝은 글자.
 function intensityTextColor(count, max, C) {
-  return max && count > 0 ? "#05060B" : C.fg;
+  return max && count > 0 ? "#FFFFFF" : C.fg;
 }
 
 // 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
