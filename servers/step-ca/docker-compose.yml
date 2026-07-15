@@ -1,0 +1,27 @@
+networks:
+  siem-net:
+    external: true
+
+# 사설 CA(step-ca) - 크로스-서버 OTLP mTLS용 인증서 발급 전용. PoC 범위(2~3주)라
+# 프로비저너 1개(JWK, password 인증)만 두고 ACME는 안 씀 - 갱신은 step CLI를 스크립트로
+# 도는 방식(renew-central-certs.sh / scripts/renew-edge-tls.sh)이라 ACME 클라이언트가
+# 굳이 필요 없다. CA 개인키는 named volume(step-ca-data)에만 있고 bind-mount/커밋 대상이
+# 아니다 - 이 볼륨이 곧 CA 신뢰 루트이므로 삭제/유출 시 전체 PKI를 다시 세워야 한다.
+services:
+  step-ca:
+    image: smallstep/step-ca:latest
+    container_name: step-ca
+    restart: unless-stopped
+    environment:
+      DOCKER_STEPCA_INIT_NAME: "TeamB SIEM Root CA"
+      DOCKER_STEPCA_INIT_DNS_NAMES: "step-ca,localhost"
+      DOCKER_STEPCA_INIT_PROVISIONER_NAME: "admin"
+      DOCKER_STEPCA_INIT_PASSWORD_FILE: /home/step/password-init
+    volumes:
+      - step-ca-data:/home/step
+      - ./secrets/password:/home/step/password-init:ro
+    networks:
+      - siem-net
+
+volumes:
+  step-ca-data:

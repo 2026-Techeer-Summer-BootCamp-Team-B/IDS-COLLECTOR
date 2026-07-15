@@ -2,18 +2,25 @@ networks:
   siem-net:
     external: true
 
-# gRPC(4317)는 Traefik의 otlp-grpc 엔트리포인트를 통해서만 들어온다 (h2c preface를
-# HTTP/1.1로 오인하는 문제를 Traefik v3 + loadbalancer.server.scheme=h2c 조합으로
-# 해결 - proxy/traefik/traefik.yml, 아래 labels 참고). HTTP(4318)는 h2c 이슈가 없어서
-# 그대로 직접 포트 노출.
+# gRPC(4317) - Traefik은 이제 이 포트를 TLS 패스스루(TCP 라우터, SNI만 보고 그대로
+# 흘려보냄)로만 다룬다. mTLS 종단(서버 인증서 제시 + 클라 인증서 검증)은 otel-collector
+# 자신이 직접 한다 - Traefik의 passTLSClientCert 미들웨어가 scheme=h2c 백엔드 조합에서
+# 헤더를 안 넘기는 걸 실측으로 확인(2026-07-15)했고, 그 우회로 커스텀 컬렉터
+# (custom-collector/, mtlsclientauth 확장)를 빌드해 otelcol이 검증된 클라 인증서의
+# CN을 직접 auth.cn으로 노출하게 함. HTTP(4318)는 이 문제와 무관해서 그대로 직접 노출.
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.156.0
+    build: ./custom-collector
     container_name: otel-collector
     restart: unless-stopped
     command: ["--config=/etc/otel/otel-config.yaml"]
     volumes:
       - ./config/otel-config.yaml:/etc/otel/otel-config.yaml:ro
+      # step-ca가 발급한 서버 인증서/키 + CA - Traefik이 쓰던 것과 동일한 파일을 그대로
+      # 재사용 (SNI/클라가 접속하는 hostname "traefik"과 인증서 SAN이 이미 맞춰져 있음).
+      - ../proxy/traefik/certs/traefik-server.crt:/etc/otel/certs/server.crt:ro
+      - ../proxy/traefik/certs/traefik-server.key:/etc/otel/certs/server.key:ro
+      - ../proxy/traefik/certs/ca.crt:/etc/otel/certs/ca.crt:ro
     ports:
       - "4318:4318"
     networks:
@@ -21,8 +28,13 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=siem-net"
-      - "traefik.http.routers.otlp-grpc.entrypoints=otlp-grpc"
-      - "traefik.http.routers.otlp-grpc.rule=PathPrefix(`/`)"
-      - "traefik.http.routers.otlp-grpc.service=otlp-grpc"
-      - "traefik.http.services.otlp-grpc.loadbalancer.server.scheme=h2c"
-      - "traefik.http.services.otlp-grpc.loadbalancer.server.port=4317"
+      - "traefik.tcp.routers.otlp-grpc.entrypoints=otlp-grpc"
+      # TCP 라우터는 HTTP Host()가 아니라 TLS ClientHello의 SNI로 매칭한다
+      # (HostSNI) - 클라(엣지 exporter)가 endpoint로 쓰는 "traefik:4317"의
+      # 호스트명, 서버 인증서 SAN(traefik) 양쪽 다 이 값으로 맞춤.
+      - "traefik.tcp.routers.otlp-grpc.rule=HostSNI(`traefik`)"
+      - "traefik.tcp.routers.otlp-grpc.service=otlp-grpc"
+      # 여기가 핵심 - TLS를 까지 않고 암호화된 바이트를 그대로 otel-collector로
+      # 전달한다. otel-collector가 서버 인증서 제시 + 클라 인증서 검증(mTLS)을 직접 함.
+      - "traefik.tcp.routers.otlp-grpc.tls.passthrough=true"
+      - "traefik.tcp.services.otlp-grpc.loadbalancer.server.port=4317"
