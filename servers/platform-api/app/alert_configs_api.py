@@ -9,12 +9,24 @@ from pydantic import BaseModel
 from app.audit import record_action
 from app.auth import current_user_id
 from app.db import pool
+from app.notifications import SUPPORTED_CHANNEL_TYPES
 
 router = APIRouter(prefix="/alert-configs", tags=["alert-configs"])
 
 
 def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+
+
+def _validate_channel_type(channel_type: str) -> None:
+    """오타난 channel_type("slcak" 등)은 예전엔 저장은 그대로 되고 발송 시점에
+    app/notifications.py가 조용히 무시했다 - 등록/토글 시점에 막아서 그 채널이
+    조용히 죽어있는 상태로 남는 걸 방지한다."""
+    if channel_type not in SUPPORTED_CHANNEL_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid channel_type {channel_type!r} (허용: {sorted(SUPPORTED_CHANNEL_TYPES)})",
+        )
 
 
 class AlertConfigIn(BaseModel):
@@ -49,6 +61,7 @@ async def list_alert_configs():
 
 @router.post("", response_model=AlertConfigOut)
 async def create_alert_config(body: AlertConfigIn, request: Request):
+    _validate_channel_type(body.channel_type)
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -73,6 +86,7 @@ async def create_alert_config(body: AlertConfigIn, request: Request):
 
 @router.patch("/{config_id}", response_model=AlertConfigOut)
 async def update_alert_config(config_id: str, body: AlertConfigIn, request: Request):
+    _validate_channel_type(body.channel_type)
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """

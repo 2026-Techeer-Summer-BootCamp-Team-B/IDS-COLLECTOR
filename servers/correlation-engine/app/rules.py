@@ -125,6 +125,16 @@ class ScenarioEngine:
             Tuple[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], Optional[str]]
         ] = []
 
+    def set_scenarios(self, scenarios: List[Dict[str, Any]]) -> None:
+        """app/main.py의 _scenario_reload_loop가 주기적으로 다시 읽은
+        app/scenarios/*.yaml 결과로 평가 대상 목록을 교체한다 - 예전엔 엔진
+        기동 시 한 번만 읽어서 시나리오를 추가/수정하려면 재배포가 필요했다
+        (2026-07-15). Redis에 쌓인 진행 중 상태(corr:{scenario_id}:*, threshold
+        카운터/쿨다운/sequence stage1 대기)는 scenario_id가 안 바뀌는 한 그대로
+        유효하다 - 교체 도중 평가와 겹쳐도 self._scenarios를 새 리스트로 통째로
+        바꿔치기할 뿐이라(원소를 하나씩 변경하지 않음) 이 대입 자체는 원자적이다."""
+        self._scenarios = scenarios
+
     def set_allow_list(self, entries: List[Dict[str, Optional[str]]]) -> None:
         """allow_list 전체(전역 + target_name으로 스코프된 항목)를 반영한다 -
         entries는 incidents.fetch_active_allow_list()가 만든

@@ -1,6 +1,6 @@
 # IDS Dashboard (SENTINEL-OPS)
 
-IDS-COLLECTOR가 수집한 로그(WAS / Falco / K8s Audit)를 보여주는 프론트엔드. 지금은 전부 목업 데이터(`src/data/`)로 동작하며, 실데이터 연동은 백엔드에 조회 API가 추가된 이후 진행 예정.
+IDS-COLLECTOR가 수집한 로그(WAS / Falco / K8s Audit)를 보여주는 프론트엔드. 전체 9개 뷰(Overview/Incidents/ATT&CK/Infrastructure/Admin·Audit/WAS/Falco/K8s Audit/Search·Discover) 모두 실데이터 API(`servers/platform-api`)와 연동되어 있다. `src/data/`의 목업 파일들은 이제 원시 이벤트/인시던트 데이터 소스가 아니라, 클라이언트 집계 계산(예: latency 통계) 등에 쓰이는 순수 헬퍼로만 일부 남아있다.
 
 ## 실행
 

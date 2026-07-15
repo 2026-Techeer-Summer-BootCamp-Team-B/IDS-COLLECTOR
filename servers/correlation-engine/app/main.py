@@ -48,6 +48,10 @@ _engine: Optional[ScenarioEngine] = None
 _redis: Optional["redis.Redis"] = None
 _allow_list_task: Optional[asyncio.Task] = None
 _ALLOW_LIST_REFRESH_SECONDS = 30  # poll_intervals 테이블에 행이 없을 때의 fail-open 기본값
+_scenario_reload_task: Optional[asyncio.Task] = None
+_SCENARIO_RELOAD_SECONDS = 30  # poll_intervals 테이블에 행이 없을 때의 fail-open 기본값
+_MAX_EVAL_ATTEMPTS = 3  # 상관분석/인시던트 upsert 재시도 상한 (아래 _evaluate_and_upsert 참고)
+_EVAL_RETRY_BACKOFF_SECONDS = 1.0
 
 
 def _load_scenarios() -> list:
@@ -116,8 +120,58 @@ async def _allow_list_refresh_loop():
         await asyncio.sleep(interval)
 
 
+async def _scenario_reload_loop():
+    """app/scenarios/*.yaml을 주기적으로 다시 읽어 ScenarioEngine에 반영한다 -
+    예전엔 _consume_loop 기동 시 딱 한 번만 로드해서 시나리오를 추가/수정하려면
+    correlation-engine을 재배포해야 했다(2026-07-15, _allow_list_refresh_loop와
+    같은 폴링+캐시 패턴).
+
+    새로 읽은 목록은 scenario_rules(Postgres)에도 sync해서(sync_scenario_rules)
+    admin 화면(GET/PATCH /scenarios)이 새로 추가된 시나리오도 바로 보고 토글할
+    수 있게 한다 - sync_scenario_rules의 UPSERT는 enabled 컬럼을 건드리지 않으므로
+    (ON CONFLICT UPDATE에 없음) admin이 이미 꺼둔 기존 룰은 YAML을 다시 읽어도
+    계속 꺼진 채로 남는다. 새로 추가된 시나리오는 Redis에 scenario:enabled:{id}
+    키가 아직 없어 evaluate()의 fail-open 기본값(키 없음=활성)으로 시작한다.
+
+    interval 조회도 같은 try/except 안에서 한다 - _allow_list_refresh_loop와
+    동일한 이유(poll_intervals 조회 실패가 안 잡히면 이 태스크 자체가 조용히
+    죽는 사고를 반복하지 않기 위함)."""
+    global _engine
+    while True:
+        interval = _SCENARIO_RELOAD_SECONDS
+        try:
+            scenarios = _load_scenarios()
+            if _engine is not None:
+                _engine.set_scenarios(scenarios)
+            await incidents.sync_scenario_rules(scenarios)
+            interval = await incidents.fetch_poll_interval_seconds(
+                "scenario_reload_seconds", _SCENARIO_RELOAD_SECONDS
+            )
+        except Exception as e:
+            print(f"[correlation] 시나리오 재로드 실패: {e}")
+        await asyncio.sleep(interval)
+
+
+async def _evaluate_and_upsert(event: NormalizedEvent) -> None:
+    fired = await _engine.evaluate(event)
+    for f in fired:
+        await incidents.upsert_incident(
+            f["scenario_db_id"],
+            f["scenario_name"],
+            f["correlation_key_type"],
+            f["join_key"],
+            f["severity"],
+            mitre_mapping.tactics_for_technique(f["mitre_technique_id"]),
+            f["events"],
+        )
+        print(
+            f"[correlation] 인시던트 발화 - {f['scenario_name']} "
+            f"join_key={f['join_key']}"
+        )
+
+
 async def _consume_loop():
-    global _consumer, _engine, _redis, _allow_list_task
+    global _consumer, _engine, _redis, _allow_list_task, _scenario_reload_task
 
     _redis = redis.from_url(settings.redis_url, decode_responses=True)
     scenarios = _load_scenarios()
@@ -141,6 +195,7 @@ async def _consume_loop():
     await incidents.start()
     await incidents.sync_scenario_rules(scenarios)
     _allow_list_task = asyncio.create_task(_allow_list_refresh_loop())
+    _scenario_reload_task = asyncio.create_task(_scenario_reload_loop())
 
     # platform-api의 PATCH /scenarios/{id}/enabled 토글은 Redis 키
     # scenario:enabled:{id}로 실시간 반영된다(ScenarioEngine.evaluate() 참고) -
@@ -162,21 +217,34 @@ async def _consume_loop():
                 await _consumer.commit()
                 continue
 
-            fired = await _engine.evaluate(event)
-            for f in fired:
-                await incidents.upsert_incident(
-                    f["scenario_db_id"],
-                    f["scenario_name"],
-                    f["correlation_key_type"],
-                    f["join_key"],
-                    f["severity"],
-                    mitre_mapping.tactics_for_technique(f["mitre_technique_id"]),
-                    f["events"],
-                )
-                print(
-                    f"[correlation] 인시던트 발화 - {f['scenario_name']} "
-                    f"join_key={f['join_key']}"
-                )
+            # evaluate/upsert는 Redis(카운터/쿨다운)와 Postgres(incidents) 둘 다
+            # 건드리는데, 예전엔 여기 아무 try/except가 없어서 순간적인 커넥션
+            # 오류 하나가 이 async for 루프 전체를 죽였다 - asyncio.CancelledError만
+            # 잡는 바깥 except로는 안 걸러지고, Docker healthcheck가 unhealthy를
+            # 감지해도 프로세스 자체는 안 죽어서(restart: unless-stopped는 종료 시에만
+            # 작동) 사람이 눈치채고 수동 재시작할 때까지 상관분석이 영구히 멈췄다
+            # (2026-07-15 실측 확인 후 수정). 짧은 재시도로 일시적 장애는 흡수하고,
+            # 그래도 안 되면(결정적 실패) 이 이벤트 하나만 건너뛰고 계속 진행한다 -
+            # 재시도 없이 그냥 무시하면 poison pill 하나가 이 파티션을 영원히
+            # 막을 위험도 같이 없앤다.
+            for attempt in range(1, _MAX_EVAL_ATTEMPTS + 1):
+                try:
+                    await _evaluate_and_upsert(event)
+                    break
+                except Exception as e:
+                    if attempt < _MAX_EVAL_ATTEMPTS:
+                        print(
+                            f"[correlation] 상관분석/인시던트 upsert 실패 "
+                            f"({attempt}/{_MAX_EVAL_ATTEMPTS}회), "
+                            f"{_EVAL_RETRY_BACKOFF_SECONDS}초 후 재시도: {e}"
+                        )
+                        await asyncio.sleep(_EVAL_RETRY_BACKOFF_SECONDS)
+                    else:
+                        print(
+                            f"[correlation] 상관분석/인시던트 upsert 실패, "
+                            f"{_MAX_EVAL_ATTEMPTS}회 재시도 소진 - 이 이벤트는 "
+                            f"건너뜀: {e}"
+                        )
 
             await _consumer.commit()
     except asyncio.CancelledError:
@@ -186,6 +254,10 @@ async def _consume_loop():
             _allow_list_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await _allow_list_task
+        if _scenario_reload_task:
+            _scenario_reload_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _scenario_reload_task
         await incidents.stop()
         await _consumer.stop()
 
