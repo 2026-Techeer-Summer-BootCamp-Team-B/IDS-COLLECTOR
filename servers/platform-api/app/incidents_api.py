@@ -25,7 +25,7 @@ _VALID_TRANSITIONS = {
 
 # status(처리 단계)와 별개 축 - "이 탐지가 실제로 맞았는가" 정답 라벨. status처럼
 # 선형 전이가 아니라 analyst가 판단을 바꾸면 언제든 덮어쓸 수 있다(예: false_positive로
-# 잘못 표시했다가 true_positive로 정정) - datastore/postgres/init/015-incident-verdict.sql
+# 잘못 표시했다가 true_positive로 정정) - datastore/postgres/init/018-incident-verdict.sql
 # 참고.
 _VALID_VERDICTS = {"true_positive", "false_positive"}
 

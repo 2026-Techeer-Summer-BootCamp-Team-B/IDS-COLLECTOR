@@ -5,7 +5,7 @@ scenario_rules/incidents/incident_events 참고.
 (correlation_key_value)로 이미 open 또는 investigating인(=아직 해결 안 된)
 인시던트가 있으면 새로 만들지 않고 incident_events에 이벤트만 추가한다 -
 "조사중"은 분석가가 보고 있을 뿐 미해결 상태라 open과 동일하게 취급해야
-한다(2026-07-15, datastore/postgres/init/014-incidents-active-dedup.sql에서
+한다(2026-07-15, datastore/postgres/init/015-incidents-active-dedup.sql에서
 바로잡음 - 이전엔 open만 병합 대상이라 조사중인 인시던트에 같은 공격이 또
 들어오면 매번 새 인시던트가 생겼다). closed(=해결 완료)로 넘어간 뒤 같은
 공격이 다시 들어오면 그건 별개의 새 인시던트가 맞다.

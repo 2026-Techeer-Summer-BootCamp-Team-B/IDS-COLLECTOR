@@ -12,7 +12,7 @@ notified_at IS NULL인 행이 다음 폴링에 그대로 잡히므로 유실이 
 참고) - 이제 이 파일이 여는 WebSocket 엔드포인트는 없다.
 
 폴링 주기는 더 이상 settings.alert_poll_interval_seconds(env var, 바꾸려면 재시작
-필요) 고정값이 아니라 poll_intervals 테이블(013-poll-intervals.sql, GET/PATCH
+필요) 고정값이 아니라 poll_intervals 테이블(014-poll-intervals.sql, GET/PATCH
 /poll-intervals API)에서 매 반복마다 다시 읽는다(2026-07-15) - admin이 API로
 바꾸면 재시작 없이 다음 반복부터 바로 반영된다.
 
