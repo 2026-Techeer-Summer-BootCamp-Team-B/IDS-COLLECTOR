@@ -1221,14 +1221,22 @@ const KPI_MIN_SEVERITY = {
 // chartType/onChartTypeChange는 위젯 "인스턴스" 단위로 호출부에서 내려준다.
 // onRemove가 있을 때만(빌더에서) 제거 버튼이 뜬다 - 저장된 대시보드를 그냥 보는
 // 중(CustomDashboardView)에는 실수로 위젯이 지워지지 않도록 onRemove를 안 넘긴다.
+// 2026-07-15: 상시 보이는 테두리 박스 + 헤더바가 "위젯 배치를 다듬는 화면인데도
+// 실제 위젯이 아니라 틀이 도드라져 보인다"는 피드백 — 평상시엔 완전히 투명해서
+// 위젯 자체(Card/KpiCard 등이 이미 갖고 있는 배경/테두리)만 보이게 하고, 드래그
+// 핸들/차트타입 버튼/제거 버튼은 마우스를 올렸을 때만 우상단에 작은 플로팅
+// 툴바로 뜨도록 바꿨다 - 평소엔 기본 모드와 완전히 똑같이 보인다.
 function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove, children }) {
   const options = chartTypeOptionsFor(widgetType);
 
   return (
-    <div className="h-full flex flex-col bg-dash-surface rounded-2xl overflow-hidden border border-dash-mint/15">
-      <div className="widget-drag-handle cursor-move flex items-center gap-2 px-3 py-1.5 bg-dash-surfaceAlt/70 text-dash-muted text-[10px] uppercase tracking-wide shrink-0 select-none">
-        <span className="opacity-60 tracking-tighter">⠿⠿</span>
-        <span className="truncate flex-1">{title}</span>
+    <div className="group relative h-full w-full">
+      <div className="h-full w-full overflow-auto">{children}</div>
+      <div
+        className="widget-drag-handle cursor-move absolute top-1.5 right-1.5 z-10 flex items-center gap-1.5 max-w-[92%] px-2 py-1 rounded-lg bg-dash-bg/95 border border-dash-mint/25 shadow-lg text-dash-muted text-[10px] uppercase tracking-wide select-none opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
+      >
+        <span className="opacity-70 tracking-tighter shrink-0">⠿⠿</span>
+        <span className="truncate">{title}</span>
         {options && onChartTypeChange && (
           <div
             className="flex items-center gap-0.5 shrink-0 normal-case tracking-normal cursor-default"
@@ -1242,7 +1250,7 @@ function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove
                 className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
                   chartType === opt.value
                     ? "bg-dash-mint/25 text-dash-mint"
-                    : "text-dash-muted hover:text-dash-fg hover:bg-dash-surface"
+                    : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
                 }`}
               >
                 {opt.label}
@@ -1261,7 +1269,6 @@ function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove
           </button>
         )}
       </div>
-      <div className="flex-1 min-h-0 overflow-auto p-2">{children}</div>
     </div>
   );
 }

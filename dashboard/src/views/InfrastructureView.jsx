@@ -174,22 +174,25 @@ function PipelineHealthPanel() {
 // 뒤덮이는 문제 — 낮음 티어는 색을 아예 빼고(무채도 회색) "집중된 곳"만 색이
 // 튀도록 바꿨다.
 //
-// 2026-07-15: 중간 티어에 orange(C.high)를 쓰니 앱 전체의 민트/핑크 네온
-// 톤과 안 어울리고 뜬금없이 튄다는 피드백 — pink로 바꿔서 무채색(회색) →
-// 네온 핑크 → critical 빨강 순으로, 브랜드 액센트 색 계열 안에서만 진행되게.
+// 2026-07-15: orange, 그다음 pink까지 써봤는데 둘 다 "여전히 이상하다"는
+// 피드백 — 사용자가 준 터미널 빌드 로그 스크린샷(시안/블루 구조 텍스트 ->
+// 초록 성공 텍스트) 톤을 그대로 가져와서 무채색(회색) → 시안 → 네온 초록
+// 순으로 바꿨다. 빨강/주황/핑크를 아예 빼서 "경고" 느낌 대신 그 스크린샷과
+// 같은 차분한 터미널 톤이 되도록.
 function intensityColor(count, max, C) {
   const ratio = max ? count / max : 0;
-  if (ratio > 0.66) return C.critical;
-  if (ratio > 0.33) return C.pink;
+  if (ratio > 0.66) return C.live;
+  if (ratio > 0.33) return C.info;
   if (ratio > 0) return C.muted;
   return C.surfaceAlt;
 }
 
-// The neutral "no attacks" tier uses the surface color, which is light in
-// light mode — white text on it would be unreadable, so only the hot tiers
-// (which stay dark/saturated in both themes) get white text.
+// 2026-07-15: intensityColor를 critical/high(어두운 빨강/주황)에서 info/live
+// (밝은 시안/네온초록)로 바꾸면서 그 위에 얹던 흰 글자가 밝은 배경 위 흰 글자라
+// 대비가 죽어버렸다 - 이제 hot 티어일수록 오히려 더 밝아지므로 어두운 글자로
+// 뒤집었다. 무채색 "공격 없음" 타일만 어두운 배경(surface 계열)이라 밝은 글자.
 function intensityTextColor(count, max, C) {
-  return max && count > 0 ? "#FFFFFF" : C.fg;
+  return max && count > 0 ? "#05060B" : C.fg;
 }
 
 // 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
