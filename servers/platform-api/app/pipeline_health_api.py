@@ -34,7 +34,7 @@ _MONITORED_GROUPS: Dict[str, List[str]] = {
 
 # normalizer가 파싱/정규화 실패 시 버리는 대신 보내는 토픽(KAFKA_DLQ_TOPIC) - 이걸
 # "소비"하는 컨슈머 그룹은 없으므로 lag이 아니라 절대 적재량(깊이)만 의미가 있다.
-_DLQ_TOPIC = "events.dlq"
+DLQ_TOPIC = "events.dlq"
 
 # otel-collector의 routing 커넥터가 log.source가 알려진 4종(was/waf/falco/
 # k8s-audit) 중 어디에도 안 걸리는 이벤트를 조용히 버리지 않고 보내는 토픽
@@ -42,7 +42,7 @@ _DLQ_TOPIC = "events.dlq"
 # events.dlq와 마찬가지로 "소비"하는 컨슈머 그룹이 없어서(2026-07-15까지는 깊이
 # 조회조차 없어서 사실상 완전히 안 보이는 상태였음 - events.dlq는 최소한
 # /stats/dlq-depth라도 있었는데 이쪽은 그것조차 없었다) 깊이만 노출한다.
-_UNKNOWN_TOPIC = "events.unknown"
+UNKNOWN_TOPIC = "events.unknown"
 
 # events.dlq 원본 메시지 미리보기(peek)에서 raw 필드가 너무 길면 응답이 비대해지므로
 # 여기서 자른다 - 전체 원본이 필요하면 Kafka에 직접 붙어야 함(이 엔드포인트는
@@ -140,7 +140,7 @@ async def get_consumer_lag() -> List[Dict[str, Any]]:
     return results
 
 
-async def _topic_depth(topic: str) -> int:
+async def get_topic_depth(topic: str) -> int:
     end_offsets = await _end_offsets([topic])
     beginning_offsets = await _beginning_offsets([topic])
     return sum(max(end_offset - beginning_offsets.get(tp, 0), 0) for tp, end_offset in end_offsets.items())
@@ -149,7 +149,7 @@ async def _topic_depth(topic: str) -> int:
 @router.get("/dlq-depth")
 async def get_dlq_depth() -> Dict[str, Any]:
     """events.dlq에 현재 쌓여 있는 메시지 수(파티션별 최신-시작 오프셋 차이 합산)."""
-    return {"topic": _DLQ_TOPIC, "depth": await _topic_depth(_DLQ_TOPIC)}
+    return {"topic": DLQ_TOPIC, "depth": await get_topic_depth(DLQ_TOPIC)}
 
 
 @router.get("/unknown-depth")
@@ -158,7 +158,7 @@ async def get_unknown_depth() -> Dict[str, Any]:
     않으려고 분리해둔 토픽)의 적재량 - events.dlq와 같은 방식으로 계산한다.
     2026-07-15 이전에는 이 토픽에 깊이 조회조차 없어서 events.dlq보다도 더
     안 보이는 상태였다(실측 확인 후 추가)."""
-    return {"topic": _UNKNOWN_TOPIC, "depth": await _topic_depth(_UNKNOWN_TOPIC)}
+    return {"topic": UNKNOWN_TOPIC, "depth": await get_topic_depth(UNKNOWN_TOPIC)}
 
 
 @router.get("/dlq-peek")
@@ -177,9 +177,9 @@ async def get_dlq_peek(limit: int = 20) -> Dict[str, Any]:
     consumer = AIOKafkaConsumer(bootstrap_servers=settings.kafka_brokers)
     await consumer.start()
     try:
-        tps = await _topic_partitions(consumer, [_DLQ_TOPIC])
+        tps = await _topic_partitions(consumer, [DLQ_TOPIC])
         if not tps:
-            return {"topic": _DLQ_TOPIC, "messages": []}
+            return {"topic": DLQ_TOPIC, "messages": []}
 
         consumer.assign(tps)
         end_offsets = await consumer.end_offsets(tps)
@@ -228,7 +228,7 @@ async def get_dlq_peek(limit: int = 20) -> Dict[str, Any]:
                 break
 
         messages.sort(key=lambda m: m["timestamp"], reverse=True)
-        return {"topic": _DLQ_TOPIC, "messages": messages[:limit]}
+        return {"topic": DLQ_TOPIC, "messages": messages[:limit]}
     finally:
         await consumer.stop()
 
