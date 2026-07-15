@@ -8,12 +8,13 @@ import WASView from "./views/WASView";
 import FalcoView from "./views/FalcoView";
 import K8sAuditView from "./views/K8sAuditView";
 import LiveTicker from "./components/LiveTicker";
-import CriticalAlertPopup from "./components/CriticalAlertPopup";
 import ToastStack from "./components/ToastStack";
 import LoginScreen from "./components/LoginScreen";
+import { SOURCE_META } from "./components/badges";
 import { useLiveAttackFeed } from "./hooks/useLiveFeed";
 import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
+import { forTheme } from "./data/theme";
 import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { PollIntervalProvider } from "./context/PollIntervalContext";
@@ -41,9 +42,55 @@ const LAYER_NAV_ITEMS = [
   { key: "k8s-audit", label: "K8s API" },
 ];
 
+// CRITICAL(severity=4) 이벤트 알림 — 예전엔 화면 우측 상단에 fixed 팝업으로
+// 떠서 작업 중인 화면을 가렸다는 피드백을 받고, 사이드바 하단(nav 아래 여백)에
+// 자리 잡는 일회성 카드로 옮겼다. dismissedId로 "이 이벤트는 이미 봤음"을
+// 기억해서, 조사하기/닫기 중 하나라도 누르면 그 이벤트에 한해 다시 안 뜬다 -
+// 다음에 새 CRITICAL 이벤트(다른 id)가 오면 다시 나타남.
+function SidebarCriticalAlert({ event, onInvestigate }) {
+  const { theme } = useTheme();
+  const [dismissedId, setDismissedId] = useState(null);
+
+  if (!event || event.id === dismissedId) return null;
+
+  const src = SOURCE_META[event.source] || { label: event.source, color: "#8890B5" };
+
+  return (
+    <div className="mt-4 bg-dash-surface border border-dash-critical rounded-xl p-3 glow-box-critical">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-dash-critical/20 text-dash-critical">
+          CRITICAL
+        </span>
+        <button
+          onClick={() => setDismissedId(event.id)}
+          aria-label="알림 닫기"
+          className="text-dash-muted hover:text-dash-fg text-xs leading-none"
+        >
+          ✕
+        </button>
+      </div>
+      <p className="text-dash-fg text-xs font-medium mb-1 leading-snug line-clamp-2">{event.message}</p>
+      <p className="text-dash-muted text-[10px] mb-2 truncate">
+        {event.namespace && `${event.namespace}/${event.pod} · `}
+        {event.sourceIp && `${event.sourceIp} · `}
+        <span style={{ color: forTheme(src.color, theme) }}>{src.label}</span>
+      </p>
+      <button
+        onClick={() => {
+          setDismissedId(event.id);
+          onInvestigate?.();
+        }}
+        className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical w-full"
+      >
+        조사하기 →
+      </button>
+    </div>
+  );
+}
+
 // Fixed-width inner wrapper + shrinking outer <aside> is what makes the
 // collapse animate smoothly instead of content reflowing/wrapping mid-transition.
-function Sidebar({ active, onSelect, open, incidentBadge }) {
+function Sidebar({ active, onSelect, open, incidentBadge, lastCritical, onInvestigateCritical }) {
   return (
     <aside
       className={`shrink-0 flex flex-col bg-dash-bg border-r border-dash-surfaceAlt overflow-hidden transition-all duration-200 ease-in-out ${
@@ -96,6 +143,8 @@ function Sidebar({ active, onSelect, open, incidentBadge }) {
             </button>
           ))}
         </nav>
+
+        <SidebarCriticalAlert event={lastCritical} onInvestigate={onInvestigateCritical} />
       </div>
     </aside>
   );
@@ -243,7 +292,14 @@ function AppShell() {
 
   return (
     <div className="flex min-h-screen bg-dash-bg font-sans">
-      <Sidebar active={active} onSelect={setActive} open={sidebarOpen} incidentBadge={incidentStats.activeIncidents} />
+      <Sidebar
+        active={active}
+        onSelect={setActive}
+        open={sidebarOpen}
+        incidentBadge={incidentStats.activeIncidents}
+        lastCritical={lastCritical}
+        onInvestigateCritical={() => setActive("incidents")}
+      />
       <div className="flex-1 flex flex-col min-h-screen min-w-0">
         <TopBar
           sidebarOpen={sidebarOpen}
@@ -263,7 +319,6 @@ function AppShell() {
         </main>
         <LiveTicker feed={feed} />
       </div>
-      <CriticalAlertPopup event={lastCritical} onInvestigate={() => setActive("incidents")} />
       <ToastStack toasts={toasts} />
     </div>
   );

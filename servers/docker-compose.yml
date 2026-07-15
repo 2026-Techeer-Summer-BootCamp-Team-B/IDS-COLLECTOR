@@ -30,7 +30,7 @@ services:
       KAFKA_NORMALIZED_TOPIC: events.normalized
       KAFKA_DLQ_TOPIC: events.dlq
       REDIS_URL: redis://:CHANGE_ME_dev@redis:6379/0
-      POSTGRES_DSN: postgresql://ids_admin:devpassword123@postgres:5432/ids_platform
+      POSTGRES_DSN: postgresql://ids_admin:${POSTGRES_PASSWORD}@postgres:5432/ids_platform
     ports:
       - "127.0.0.1:8200:8200" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:

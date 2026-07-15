@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     # exclusion_rules 캐시 갱신용 (app/exclusion.py, app/db.py) - platform-api/
     # correlation-engine과 동일한 DSN. 정규화 hot path에서 매 이벤트마다 DB를 치지
     # 않고 주기 폴링+캐시로 읽는다(poll_intervals의 exclusion_rules_refresh_seconds).
-    postgres_dsn: str = "postgresql://ids_admin:devpassword123@postgres:5432/ids_platform"
+    # 이 기본값은 dev 전용 placeholder다 - 실값은 servers/docker-compose.yml의
+    # POSTGRES_DSN(env var, ${POSTGRES_PASSWORD} 참조)이 컨테이너 기동 시 덮어쓴다.
+    postgres_dsn: str = "postgresql://ids_admin:CHANGE_ME_dev@postgres:5432/ids_platform"
 
     class Config:
         env_file = ".env"

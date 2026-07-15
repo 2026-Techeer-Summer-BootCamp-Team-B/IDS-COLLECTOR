@@ -186,19 +186,31 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
           >
             검색
           </button>
-          <button
-            onClick={() => setExpanded((e) => !e)}
-            title={expanded ? "결과 패널 접기" : "결과 패널 펼치기"}
-            className="text-xs text-dash-muted hover:text-dash-fg px-1.5 py-1.5 rounded-lg hover:bg-dash-surfaceAlt whitespace-nowrap"
-          >
-            {results.length.toLocaleString()} hits {expanded ? "▴" : "▾"}
-          </button>
         </div>
         {appliedQuery && (
           <p className="text-dash-faint text-[11px] mt-1.5">
             적용된 쿼리: <span className="text-dash-mint">{appliedQuery}</span>
           </p>
         )}
+      </div>
+
+      {/* 예전엔 이 토글이 검색바 우측 끝에 있었는데, 대시보드 상단 위젯 설정
+          행에도 똑같은 버튼이 하나 더 있어서 중복이었다 - 검색창 바로 아래
+          가운데로 옮기고 하나로 합쳤다. */}
+      <div className="flex justify-center">
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          title={expanded ? "결과 패널 접기" : "결과 패널 펼치기"}
+          className={`inline-flex items-center gap-2 text-xs font-medium px-4 py-1.5 rounded-full transition-colors whitespace-nowrap ${
+            expanded
+              ? "bg-dash-mint/15 text-dash-mint"
+              : "bg-dash-surface text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+          }`}
+        >
+          <span className="font-semibold">{results.length.toLocaleString()} hits</span>
+          검색 결과 {expanded ? "접기" : "펼치기"}
+          <span>{expanded ? "▴" : "▾"}</span>
+        </button>
       </div>
 
       {expanded && (

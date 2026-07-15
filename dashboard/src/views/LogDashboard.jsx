@@ -293,7 +293,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
           )}
         </div>
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : "h-80"}
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
@@ -504,7 +504,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
           <ChartTypeToggle options={chartTypeOptionsFor("level-distribution")} value={chartType} onChange={setInternalType} />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : "h-80"}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status !== "error" && chartType === "donut" && (
@@ -825,7 +825,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
@@ -910,7 +910,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-severity")} value={chartType} onChange={setInternalType} />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
@@ -997,7 +997,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
           />
         )
       }
-      className="min-h-80 h-full"
+      className={isControlled ? "min-h-80 h-full" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">데이터가 없습니다.</p>}
@@ -1522,7 +1522,7 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
 // 저장된 커스텀 대시보드 보기 - 드래그/리사이즈/차트타입 전환은 바로바로 저장되고
 // ("위젯 편집" 없이도 배치만 다듬는 건 즉시 반영), 위젯을 추가/제거하려면
 // "위젯 편집" 버튼으로 DashboardBuilder를 연다.
-function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, onChartTypeCommit, onEdit }) {
+function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, onChartTypeCommit }) {
   const gridLayout = dashboard.widgets.map((w) => ({ i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h }));
 
   const handleLayoutChange = (newLayout) => {
@@ -1536,14 +1536,6 @@ function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, o
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
-        <button
-          onClick={onEdit}
-          className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
-        >
-          위젯 편집
-        </button>
-      </div>
       {dashboard.widgets.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-dash-mint/20 py-16 text-center text-dash-faint text-xs">
           이 대시보드엔 위젯이 없습니다. "위젯 편집"에서 추가하세요.
@@ -1909,10 +1901,10 @@ export function DashboardContent() {
         onResultsCountChange={setSearchHits}
       />
 
-      {/* 예전엔 전체 폭 바였는데, 관리자 페이지 탭 스위처처럼 우측 상단에
-          작은 버튼 형태로 - 화면을 덜 차지하면서 상태(펼침/접힘)도 pill
-          active 색으로 바로 구분되게 바꿨다. 위젯 설정 메뉴도 같은 행에 둔다. */}
-      <div className="flex items-center justify-between gap-3">
+      {/* 위젯 설정 메뉴 + (커스텀 대시보드 보는 중이면) 위젯 편집 버튼을 같은 행에 둔다 -
+          예전엔 위젯 편집이 CustomDashboardView 안쪽 상단에 따로 있어서 그리드가
+          한 줄 아래로 밀렸는데, 여기로 옮겨서 그 공백을 없앴다. */}
+      <div className="flex items-center gap-3">
         <WidgetSettingsMenu
           dashboards={dashboards}
           activeId={activeId}
@@ -1921,18 +1913,14 @@ export function DashboardContent() {
           onCreateNew={openNewBuilder}
           onEditActive={openEditBuilder}
         />
-        <button
-          onClick={() => setSearchExpanded((e) => !e)}
-          className={`inline-flex items-center gap-2 text-xs font-medium px-3.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
-            searchExpanded
-              ? "bg-dash-mint/15 text-dash-mint"
-              : "bg-dash-surface text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
-          }`}
-        >
-          <span className="font-semibold">{searchHits.toLocaleString()} hits</span>
-          검색 결과 {searchExpanded ? "접기" : "펼치기"}
-          <span>{searchExpanded ? "▴" : "▾"}</span>
-        </button>
+        {activeDashboard && (
+          <button
+            onClick={() => openEditBuilder(activeDashboard.id)}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
+          >
+            위젯 편집
+          </button>
+        )}
       </div>
 
       {kpiFilter !== "ALL" && (
@@ -1960,7 +1948,6 @@ export function DashboardContent() {
           renderWidgetContent={renderWidgetContent}
           onLayoutCommit={(widgets) => updateDashboard(activeDashboard.id, { widgets })}
           onChartTypeCommit={(widgets) => updateDashboard(activeDashboard.id, { widgets })}
-          onEdit={() => openEditBuilder(activeDashboard.id)}
         />
       ) : (
         <>
