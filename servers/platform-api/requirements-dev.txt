@@ -1,0 +1,24 @@
+# 로컬 테스트 실행용. requirements.txt를 그대로 -r로 끌어오지 않는 이유는
+# normalizer/correlation-engine과 동일 - 그 파일의 `./shared` 줄은 Docker 빌드
+# 컨텍스트(servers/) 전제 상대경로라 여기(servers/platform-api/)에서 그대로
+# 실행하면 존재하지 않는 경로를 가리킨다.
+#
+# 실행: pip install -r requirements-dev.txt && pytest
+# (사전 조건: Postgres/OpenSearch/ClickHouse/Redis/Kafka가 localhost에 떠 있어야
+# 함 - 저장소 루트에서 `make up`, 또는 이미 떠 있는 dev 스택을 그대로 사용. 자세한
+# 내용은 tests/conftest.py 모듈 docstring 참고)
+fastapi==0.139.0
+uvicorn[standard]==0.50.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+asyncpg==0.30.0
+redis==5.2.1
+opensearch-py[async]==2.8.0
+clickhouse-connect==0.8.3
+aiokafka==0.12.0
+google-genai==2.11.0
+-e ../shared
+
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.28.1

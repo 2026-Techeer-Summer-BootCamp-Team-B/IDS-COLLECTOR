@@ -595,7 +595,7 @@ export default function IncidentsView({ pushToast }) {
               </p>
             </div>
 
-            <div>
+            <div className="max-h-[640px] overflow-y-auto pr-2">
               {timelineStatus === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
               {timelineStatus === "ready" && timeline.length === 0 && (
                 <p className="text-dash-muted text-xs">이 인시던트에 연결된 로그가 없습니다.</p>
