@@ -89,7 +89,12 @@ async def _allow_list_refresh_loop():
 
     주기 자체도 poll_intervals 테이블(platform-api GET/PATCH /poll-intervals)에서
     매 반복마다 다시 읽는다(2026-07-15, 이전엔 코드에 아예 하드코딩돼 있어서 env var로도
-    못 바꿨음) - admin이 API로 바꾸면 재시작 없이 다음 반복부터 반영된다."""
+    못 바꿨음) - admin이 API로 바꾸면 재시작 없이 다음 반복부터 반영된다.
+
+    interval 조회도 같은 try/except 안에서 한다 - platform-api의
+    incident_alerts.py에서 실제로 겪은 사고(interval 조회 실패가 안 잡히고
+    poll_loop 태스크 자체가 조용히 죽어서 /health가 영구히 503을 낸 사고)를
+    여기서 반복하지 않기 위함(2026-07-14)."""
     global _engine
     # 2026-07-15 버그 수정: fetch_poll_interval_seconds() 호출이 try/except 밖에
     # 있어서 poll_intervals 테이블이 없는 배포 직후 같은 상황에서 예외가 나면
