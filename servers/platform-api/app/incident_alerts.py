@@ -56,18 +56,15 @@ async def _dispatch_pending() -> None:
 
 
 async def poll_loop() -> None:
+    # 2026-07-15 버그 수정: _current_interval_seconds() 호출이 try/except 밖에
+    # 있어서 (예: poll_intervals 테이블이 아직 없는 배포 직후처럼) 여기서 예외가
+    # 나면 잡히지 않고 while 루프 전체가 죽었다 - 그러면 이 태스크가
+    # done()이 되고, /health가 영구 503을 반환하고, Traefik이 platform-api
+    # 라우팅 자체를 내려버려서 로그인을 포함한 모든 /api/*가 대시보드 정적
+    # 서버로 새서 405가 나는 사고로 이어졌다(실측 확인, 2026-07-15). 폴링 주기
+    # 조회도 같은 try/except 안으로 넣어서, 실패해도 기본 간격으로 다음
+    # 주기에 재시도하도록 고쳤다.
     while True:
-        # (2026-07-14) interval 조회는 원래 이 try/except 밖에 있었다 - 그러면
-        # _current_interval_seconds()가 던지는 예외(예: poll_intervals 테이블이
-        # 아직 없는 상태 - 013 마이그레이션이 postgres-data 볼륨 재사용으로 인해
-        # 누락된 경우, 실제로 한 번 겪음)가 안 잡히고 poll_loop() 태스크 자체가
-        # 조용히 죽어버린다. 이 태스크가 죽으면 /health가 영구히 503을 내고,
-        # Traefik이 unhealthy 컨테이너를 라우팅에서 제외해버려서 /api/* 전체(로그인
-        # 포함)가 dashboard 정적 서버로 새서 끊긴다 - _dispatch_pending()과 같은
-        # try/except 안으로 옮기고 실패 시 fail-open 기본값(_DEFAULT_INTERVAL_SECONDS)
-        # 으로 다음 주기에 재시도하게 했다. interval 변수를 try 앞에서 기본값으로
-        # 초기화해두는 이유도 동일 - _dispatch_pending()만 실패하고
-        # _current_interval_seconds()는 못 도는 경우에도 sleep에 쓸 값이 있어야 한다.
         interval = _DEFAULT_INTERVAL_SECONDS
         try:
             await _dispatch_pending()

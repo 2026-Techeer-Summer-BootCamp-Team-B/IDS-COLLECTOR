@@ -14,9 +14,11 @@
  * reads great on near-black but has almost no contrast as text on white.
  */
 :root {
-  --dash-bg: 5 6 11;
-  --dash-surface: 14 15 26;
-  --dash-surfaceAlt: 25 27 44;
+  /* 2026-07-15: 살짝 남색 도는 배경("찐한 블랙"이 아니라는 피드백)을 중립에
+     가까운 순수 블랙 쪽으로 낮춤 - R/G/B 값을 서로 비슷하게 맞춰서 블루 틴트 제거. */
+  --dash-bg: 3 3 5;
+  --dash-surface: 13 13 16;
+  --dash-surfaceAlt: 22 22 27;
   --dash-mint: 0 255 166;
   --dash-pink: 166 77 255;
   --dash-muted: 136 144 181;

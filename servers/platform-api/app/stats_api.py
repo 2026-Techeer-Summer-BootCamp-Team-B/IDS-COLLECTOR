@@ -11,6 +11,26 @@ from app.opensearch_client import client as opensearch_client
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
+# 소스 헬스체크(absent_over_time류 - 이 소스가 조용해졌는가) 대상 event.module 목록과
+# 임계치. dashboard/src/views/InfrastructureView.jsx의 SourceHealthPanel이 예전엔
+# dashboard/src/data/attackEvents.js의 sourceHealth()로 흉내만 냈다(고정 mock
+# 날짜 기준이라 실제 파이프라인 상태와 무관하게 항상 같은 값이 나옴, 2026-07-15
+# 확인) - 여기서 attack-logs-*의 실제 최신 문서 시각으로 대체한다. waf는 현재
+# 비활성화 상태(moduleMeta.js 참고)라 모니터링 대상에서 뺐다 - 항상 조용한
+# 소스를 넣어봐야 매번 critical만 찍혀 신호가 아니라 잡음이 된다.
+_HEALTH_MODULES = ["was", "falco", "k8s_audit"]
+_HEALTH_WARNING_SECONDS = 30 * 60
+_HEALTH_CRITICAL_SECONDS = 2 * 60 * 60
+
+
+def _health_status(silent_seconds: Optional[float]) -> str:
+    if silent_seconds is None or silent_seconds >= _HEALTH_CRITICAL_SECONDS:
+        return "critical"
+    if silent_seconds >= _HEALTH_WARNING_SECONDS:
+        return "warning"
+    return "healthy"
+
+
 # Falco rule.name -> 공격 유형 카테고리. 이 저장소 시나리오 주석(workload.yaml 등)에
 # 실제로 나오는 falco 룰 이름 기준 - 가벼운 정적 매핑이라 여기 없는 rule.name은
 # "OTHER"로 묶인다(예: 테스트용 더미 룰).
@@ -85,6 +105,51 @@ async def get_stats(start: Optional[str] = None, end: Optional[str] = None) -> D
             {"severity": b["key"], "count": b["doc_count"]} for b in aggs["by_severity"]["buckets"]
         ],
     }
+
+
+@router.get("/source-health")
+async def get_source_health() -> List[Dict[str, Any]]:
+    """모니터링 대상 소스(_HEALTH_MODULES)별 최신 attack-logs-* 문서 시각과
+    무응답 경과 시간 - terms agg로 한 번에 묶고 max agg로 모듈별 최신
+    @timestamp만 뽑는다(top_hits로 문서 전체를 끌어올 필요 없음). 한 번도
+    수신한 적 없는 모듈은 agg 버킷 자체에 안 잡히므로(문서가 0건이면 bucket이
+    안 생김) last_seen=None, status="critical"로 채워서 응답한다."""
+    result = await opensearch_client.search(
+        index=settings.attack_log_index_pattern,
+        body={
+            "size": 0,
+            "query": {"terms": {"event.module": _HEALTH_MODULES}},
+            "aggs": {
+                "by_module": {
+                    "terms": {"field": "event.module", "size": len(_HEALTH_MODULES)},
+                    "aggs": {"last_seen": {"max": {"field": "@timestamp"}}},
+                }
+            },
+        },
+    )
+
+    last_seen_ms: Dict[str, Optional[float]] = {module: None for module in _HEALTH_MODULES}
+    for bucket in result["aggregations"]["by_module"]["buckets"]:
+        value = bucket["last_seen"]["value"]
+        if value is not None:
+            last_seen_ms[bucket["key"]] = value
+
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000
+    health = []
+    for module in _HEALTH_MODULES:
+        seen_ms = last_seen_ms[module]
+        silent_seconds = None if seen_ms is None else (now_ms - seen_ms) / 1000
+        health.append(
+            {
+                "module": module,
+                "last_seen": datetime.fromtimestamp(seen_ms / 1000, tz=timezone.utc).isoformat()
+                if seen_ms is not None
+                else None,
+                "silent_seconds": silent_seconds,
+                "status": _health_status(silent_seconds),
+            }
+        )
+    return health
 
 
 # GET /top-ips는 여기 없다 - app/analytics_api.py(ClickHouse) 참고. 한때 이 파일에도
