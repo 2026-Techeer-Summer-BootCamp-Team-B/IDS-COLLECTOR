@@ -6,7 +6,6 @@ import { useAllowList } from "../hooks/useAllowList";
 import { useScenarios } from "../hooks/useScenarios";
 import { useAlertConfigs } from "../hooks/useAlertConfigs";
 import { useLogPolicies } from "../hooks/useLogPolicies";
-import { useExclusionRules } from "../hooks/useExclusionRules";
 import { useTrendReport } from "../hooks/useTrendReport";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
 import { renderMarkdownLite } from "../lib/markdownLite";
@@ -109,9 +108,13 @@ function RuleRow({ rule, rank, onToggle }) {
   );
 }
 
-// 보존 tier + 샘플링 비율을 계층별로 조정하는 입력 행. 이제 PATCH /log-policies/{layer}가
-// 실제 네트워크 호출이라 onChange(키 입력)마다 커밋하면 느리고 레이스도 생긴다 -
-// 타이핑 중엔 로컬 draft만 갱신하고, blur 시점에 클램프한 값을 커밋한다.
+// 3등급(기록/원본/파생) 보존 기간을 조정하는 입력 행 (2026-07-16, 023-log-policies-
+// retention-tiers.sql - hot_days/cold_days/sampling_rate를 걷어내고 단일
+// retention_days로 통합됨: sampling_rate는 어디서도 집행 안 하던 죽은 컨트롤이었고,
+// OpenSearch가 단일 노드라 hot/cold 분리 저장 자체가 애초에 불가능했음). 이제
+// PATCH /log-policies/{layer}가 실제 네트워크 호출이라 onChange(키 입력)마다
+// 커밋하면 느리고 레이스도 생긴다 - 타이핑 중엔 로컬 draft만 갱신하고, blur
+// 시점에 클램프한 값을 커밋한다.
 function PolicyRow({ policy, onUpdate }) {
   const [draft, setDraft] = useState(policy);
 
@@ -130,45 +133,17 @@ function PolicyRow({ policy, onUpdate }) {
       <span className="text-dash-fg text-sm font-medium w-24 shrink-0">{policy.layer}</span>
 
       <label className="flex items-center gap-1.5 text-dash-muted">
-        Hot tier
+        보존 기간
         <input
           type="number"
           min={1}
-          max={90}
-          value={draft.hot_days}
-          onChange={(e) => setDraft((d) => ({ ...d, hot_days: e.target.value }))}
-          onBlur={() => commit("hot_days", 1, 90)}
-          className="w-14 bg-dash-bg text-dash-fg text-right rounded-md px-1.5 py-1 border border-dash-surfaceAlt focus:outline-none focus:border-dash-mint"
-        />
-        일
-      </label>
-
-      <label className="flex items-center gap-1.5 text-dash-muted">
-        Cold/Archive
-        <input
-          type="number"
-          min={7}
-          max={730}
-          value={draft.cold_days}
-          onChange={(e) => setDraft((d) => ({ ...d, cold_days: e.target.value }))}
-          onBlur={() => commit("cold_days", 7, 730)}
+          max={3650}
+          value={draft.retention_days}
+          onChange={(e) => setDraft((d) => ({ ...d, retention_days: e.target.value }))}
+          onBlur={() => commit("retention_days", 1, 3650)}
           className="w-16 bg-dash-bg text-dash-fg text-right rounded-md px-1.5 py-1 border border-dash-surfaceAlt focus:outline-none focus:border-dash-mint"
         />
         일
-      </label>
-
-      <label className="flex items-center gap-1.5 text-dash-muted">
-        샘플링
-        <input
-          type="number"
-          min={1}
-          max={100}
-          value={draft.sampling_rate}
-          onChange={(e) => setDraft((d) => ({ ...d, sampling_rate: e.target.value }))}
-          onBlur={() => commit("sampling_rate", 1, 100)}
-          className="w-14 bg-dash-bg text-dash-fg text-right rounded-md px-1.5 py-1 border border-dash-surfaceAlt focus:outline-none focus:border-dash-mint"
-        />
-        %
       </label>
 
       <button
@@ -179,27 +154,6 @@ function PolicyRow({ policy, onUpdate }) {
       >
         아카이브 {policy.archive_enabled ? "ON" : "OFF"}
       </button>
-    </div>
-  );
-}
-
-function ExclusionRuleRow({ rule, onToggle }) {
-  return (
-    <div className="flex items-start gap-3 py-2.5 border-t border-dash-surfaceAlt first:border-t-0 first:pt-0">
-      <RuleToggle enabled={rule.enabled} onToggle={() => onToggle?.(rule.id)} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-dash-surfaceAlt text-dash-muted shrink-0">{rule.layer}</span>
-          <p className="text-dash-fg text-xs font-mono truncate">{rule.pattern}</p>
-        </div>
-        <p className="text-dash-muted text-[11px] mt-0.5">{rule.reason}</p>
-      </div>
-      <span
-        className={`text-xs font-semibold shrink-0 ${rule.enabled ? "text-dash-mint" : "text-dash-faint"}`}
-        title="예상 로그량 감소 비중"
-      >
-        -{rule.estimated_reduction_pct}%
-      </span>
     </div>
   );
 }
@@ -663,12 +617,6 @@ export default function AdminAuditView({ pushToast }) {
     error: logPoliciesError,
     reload: reloadLogPolicies,
   } = useLogPolicies();
-  const {
-    rules: exclusionRules,
-    status: exclusionRulesStatus,
-    error: exclusionRulesError,
-    reload: reloadExclusionRules,
-  } = useExclusionRules();
   const [activeTab, setActiveTab] = useState("policy");
 
   function toast(message, tone) {
@@ -691,16 +639,6 @@ export default function AdminAuditView({ pushToast }) {
       reloadLogPolicies();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "데이터 정책 변경에 실패했습니다.", "error");
-    }
-  }
-
-  async function handleToggleExclusionRule(rule) {
-    try {
-      await apiPatch(`/exclusion-rules/${rule.id}/enabled`, { enabled: !rule.enabled });
-      toast(`제외 규칙 ${rule.enabled ? "비활성화" : "활성화"}했습니다 (${rule.id}).`, "success");
-      reloadExclusionRules();
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : "제외 규칙 상태 변경에 실패했습니다.", "error");
     }
   }
 
@@ -807,14 +745,6 @@ export default function AdminAuditView({ pushToast }) {
     () => scenarios.map((s) => ({ id: s.id, name: s.name, description: describeScenario(s), hits: s.hit_count, enabled: s.enabled, _raw: s })),
     [scenarios]
   );
-  const activeExclusions = exclusionRules.filter((r) => r.enabled);
-  const totalReductionByLayer = useMemo(() => {
-    return activeExclusions.reduce((acc, r) => {
-      acc[r.layer] = (acc[r.layer] || 0) + r.estimated_reduction_pct;
-      return acc;
-    }, {});
-  }, [exclusionRules]);
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -827,35 +757,19 @@ export default function AdminAuditView({ pushToast }) {
           <PollIntervalPanel />
 
           <div className="bg-dash-surface rounded-2xl p-5">
-            <h3 className="text-dash-fg text-sm font-semibold mb-1">데이터 정책 (보존 · 샘플링 · 제외)</h3>
+            <h3 className="text-dash-fg text-sm font-semibold mb-1">데이터 정책 (보존 기간)</h3>
             <p className="text-dash-muted text-xs mb-3">
-              계층별 hot/cold tier 보존 기간과 저장 전 샘플링 비율 · 파이프라인 단계에서 걸러낼 저가치 노이즈 규칙
+              3등급(기록 · 원본 · 파생) 보존 기간 — app/log_retention.py가 이 값을 읽어 오래된
+              인덱스/레코드를 주기적으로 정리한다. (제외 규칙 기능은 탐지 누락 위험으로 2026-07-16 제거됨)
             </p>
-            {(logPoliciesStatus === "loading" || exclusionRulesStatus === "loading") && (
-              <p className="text-dash-muted text-xs py-3">불러오는 중...</p>
-            )}
-            {(logPoliciesStatus === "error" || exclusionRulesStatus === "error") && (
-              <p className="text-dash-critical text-xs py-3">{logPoliciesError || exclusionRulesError}</p>
-            )}
-            {logPoliciesStatus === "ready" && exclusionRulesStatus === "ready" && (
-              <>
-                <div className="mb-4">
-                  {logPolicies.map((p) => (
-                    <PolicyRow key={p.layer} policy={p} onUpdate={handleUpdateLogPolicy} />
-                  ))}
-                </div>
-                <div className="pt-3 border-t border-dash-surfaceAlt">
-                  <p className="text-dash-faint text-[11px] mb-2">
-                    제외 규칙 {activeExclusions.length}/{exclusionRules.length}개 활성 · 계층별 예상 로그량 감소:{" "}
-                    {Object.entries(totalReductionByLayer)
-                      .map(([layer, pct]) => `${layer} -${pct}%`)
-                      .join(" · ") || "없음"}
-                  </p>
-                  {exclusionRules.map((r) => (
-                    <ExclusionRuleRow key={r.id} rule={r} onToggle={() => handleToggleExclusionRule(r)} />
-                  ))}
-                </div>
-              </>
+            {logPoliciesStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+            {logPoliciesStatus === "error" && <p className="text-dash-critical text-xs py-3">{logPoliciesError}</p>}
+            {logPoliciesStatus === "ready" && (
+              <div>
+                {logPolicies.map((p) => (
+                  <PolicyRow key={p.layer} policy={p} onUpdate={handleUpdateLogPolicy} />
+                ))}
+              </div>
             )}
           </div>
 
