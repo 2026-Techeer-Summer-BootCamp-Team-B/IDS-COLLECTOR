@@ -1,15 +1,12 @@
 import React from "react";
 import OnboardingCard from "./OnboardingCard";
+import { ONBOARDING_PAGES } from "./onboardingPages";
 
 // App.jsx NAV_ITEMS의 "incidents" 페이지 소개 카드 - 영상 교체는
 // dashboard/public/onboarding/incidents.mp4만 추가하면 된다(코드 수정 불필요).
-const PAGE = {
-  key: "incidents",
-  label: "Incidents",
-  desc: "상관분석을 통해 여러 이벤트를 하나의 공격 인시던트로 통합",
-  video: "/onboarding/incidents.mp4",
-  image: "/onboarding/incidents.png",
-};
+// 2026-07-17: 내용은 onboardingPages.js로 옮기고 여기서는 자기 항목만 꺼내 쓴다
+// (OnboardingPlayer.jsx와 데이터를 공유하기 위함).
+const PAGE = ONBOARDING_PAGES.find((p) => p.key === "incidents");
 
 export default function IncidentsOnboardingCard() {
   return <OnboardingCard page={PAGE} />;

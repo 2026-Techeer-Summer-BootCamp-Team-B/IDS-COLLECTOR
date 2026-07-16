@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 // 2026-07-16(2차): 로그인 페이지의 온보딩 카드 5개(Overview/Incidents/ATT&CK/
 // Infrastructure/Admin)를 LoginScreen.jsx 안에 전부 몰아넣었던 걸 "각 페이지마다
@@ -20,7 +20,19 @@ import React, { useRef, useState } from "react";
 // 대시보드 스크린샷은 폭이 넓은 경우가 많아서 object-cover로 자르면 양옆이
 // 잘려나가 "화면이 깨진 것처럼" 보인다는 피드백 때문 - 검정 레터박스를 감수하고
 // 원본 비율 그대로 다 보이게 했다.
-export default function OnboardingCard({ page }) {
+//
+// 2026-07-17: OnboardingPlayer.jsx(영상 5개를 이어붙여 하나의 흐름으로 재생)가
+// 이 컴포넌트를 그대로 재사용할 수 있도록 onEnded를 optional prop으로 받는다.
+// onEnded가 없으면(OnboardingSection.jsx의 정적 갤러리 용도) 기존처럼 계속
+// 반복재생(loop)한다. onEnded가 있으면(플레이어 모드) 한 번만 재생하고 끝나면
+// 다음 단계로 넘어가야 하므로 loop를 끄고 video의 onEnded 이벤트를 그대로
+// 전달한다. 영상/이미지가 아예 없어서 플레이스홀더만 뜨는 단계는 onEnded 이벤트
+// 자체가 발생할 수 없어 플레이어가 그 자리에서 영영 멈춰버린다 - 그런 단계는
+// 일정 시간(PLACEHOLDER_ADVANCE_MS) 뒤 자동으로 다음 단계로 넘어가도록 폴백
+// 처리해서, 영상 파일이 아직 없는 페이지가 있어도 전체 흐름이 막히지 않는다.
+const PLACEHOLDER_ADVANCE_MS = 4000;
+
+export default function OnboardingCard({ page, onEnded }) {
   const [videoFailed, setVideoFailed] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   // 2026-07-16: 자동재생 영상을 사용자가 멈출 수 있어야 한다는 피드백 - video
@@ -32,6 +44,15 @@ export default function OnboardingCard({ page }) {
   const showVideo = page.video && !videoFailed;
   const showImage = !showVideo && page.image && !imageFailed;
   const showPlaceholder = !showVideo && !showImage;
+
+  // 정지 이미지/플레이스홀더는 "재생이 끝난다"는 개념이 없어서 onEnded가
+  // 자연 발생하지 않는다 - 플레이어 모드(onEnded 존재)에서는 이 단계에 일정
+  // 시간 머문 뒤 자동으로 다음 단계로 넘어가게 폴백한다.
+  useEffect(() => {
+    if (showVideo || !onEnded) return;
+    const t = setTimeout(onEnded, PLACEHOLDER_ADVANCE_MS);
+    return () => clearTimeout(t);
+  }, [showVideo, onEnded]);
 
   function togglePlay() {
     const el = videoRef.current;
@@ -68,9 +89,10 @@ export default function OnboardingCard({ page }) {
             className="w-full h-full object-cover"
             autoPlay
             muted
-            loop
+            loop={!onEnded}
             playsInline
             onError={() => setVideoFailed(true)}
+            onEnded={onEnded}
           />
         )}
         {showImage && (

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme";
-import OnboardingSection from "./onboarding/OnboardingSection";
+import OnboardingPlayer from "./onboarding/OnboardingPlayer";
 
 // 2026-07-16: 처음 로그인하는 사용자가 "이 대시보드에 뭐가 있지?"부터 궁금할 것
 // 같다는 피드백 - App.jsx의 NAV_ITEMS/LAYER_NAV_ITEMS와 같은 5개 메인 페이지를
@@ -10,9 +10,13 @@ import OnboardingSection from "./onboarding/OnboardingSection";
 // 통일했다.
 //
 // 2026-07-16(2차): 온보딩 카드 5개 + 그 렌더러가 전부 이 파일 안에 있던 걸
-// components/onboarding/ 폴더로 분리했다("각 페이지마다 각 컴포넌트로" 요청) -
-// 이 파일은 이제 OnboardingSection 하나만 가져다 쓴다. 개별 카드 내용은
-// components/onboarding/OverviewOnboardingCard.jsx 등을 참고.
+// components/onboarding/ 폴더로 분리했다("각 페이지마다 각 컴포넌트로" 요청).
+// 개별 카드 내용은 components/onboarding/OverviewOnboardingCard.jsx 등을 참고.
+//
+// 2026-07-17(3차): "온보딩 영상을 다 봐야 로그인 창이 나오게" 요청으로,
+// 5개를 스크롤로 훑어보는 OnboardingSection 대신 한 번에 하나씩 순서대로
+// 이어 재생하는 OnboardingPlayer를 쓴다. OnboardingSection.jsx는 코드는
+// 남아있지만 이 파일에서는 더 이상 쓰지 않는다.
 
 // 상단 툴바의 마이크/카메라/화면공유/전체화면 아이콘 - 참고 스타일 프롬프트에
 // 있던 장식용 요소라 실제 동작은 없다(로그인 화면에 화상회의 컨트롤이 있을
@@ -35,6 +39,13 @@ export default function LoginScreen() {
   // 로드가 실패하면 기존의 흰 사각 아이콘으로 조용히 대체 - 깨진 이미지 아이콘이
   // 그대로 노출되는 것보다 낫다.
   const [logoFailed, setLogoFailed] = useState(false);
+  // 2026-07-17: "온보딩 영상 5개를 이어서 하나의 영상처럼 만들고, 다 시청해야
+  // 로그인/회원가입 창이 나오게 해달라"는 요청 - 온보딩을 다 보기 전엔
+  // onboardingDone이 false라 로그인 폼 대신 OnboardingPlayer만 보이고,
+  // 마지막 영상까지 끝나면(OnboardingPlayer의 onComplete) true로 바뀌면서
+  // 로그인 폼으로 전환된다. 새로고침하면 다시 처음부터 - 별도로 localStorage에
+  // "이미 봤음"을 저장해두진 않았다(요청에 없던 부분이라 우선 뺐다).
+  const [onboardingDone, setOnboardingDone] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -162,75 +173,79 @@ export default function LoginScreen() {
         <span className="text-white text-xl leading-none">✦</span>
       </div>
 
-      {/* 2026-07-16: "로그인은 상단 고정, 온보딩 소개는 여러 장을 세로로 쌓아
-          스크롤로 훑어본다"는 요청대로 구조를 다시 짰다 - 로그인 카드가 위에
-          먼저 오고(페이지 자체는 스크롤 안 해도 항상 보임), 그 아래 소개 카드가
-          내부 스크롤 영역(온보딩 카드 5개, 각각 전보다 훨씬 큰 h-64)을 갖는다. */}
+      {/* 2026-07-17: "온보딩 영상을 다 봐야 로그인/회원가입 창이 나오게"라는
+          요청으로 구조가 다시 바뀌었다 - 이전엔 로그인 카드가 항상 위에 고정
+          노출되고 그 아래 온보딩 카드 5개가 스크롤 갤러리로 같이 떠 있었지만,
+          이제는 onboardingDone이 false인 동안은 OnboardingPlayer(영상을
+          이어붙여 순서대로 자동재생하는 컴포넌트)만 보이고, 마지막 영상까지
+          다 끝나야 로그인 카드로 화면이 바뀐다. */}
       {/* 2026-07-16: "로그인 입력창은 작아도 되니 대시보드(온보딩) 크기를
           1240x800 스케일로 크게 키워달라"는 요청 - 바깥 컬럼 폭을
-          max-w-xl(576px) -> max-w-[1240px]로 크게 넓히고, 로그인 카드만
-          별도로 max-w-sm(384px)로 좁혀서 중앙에 작게 띄운다. 온보딩 섹션은
-          넓어진 폭 전체를 그대로 쓴다. */}
+          max-w-xl(576px) -> max-w-[1240px]로 크게 넓혔다. 로그인 카드가 보일
+          때는 그 안에서만 max-w-sm(384px)로 좁혀서 중앙에 작게 띄운다.
+          OnboardingPlayer는 넓어진 폭 전체를 그대로 쓴다. */}
       <div className="relative w-full max-w-[1240px] space-y-5">
-        <div className="max-w-sm mx-auto bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
-          <div className="flex items-center gap-2.5 mb-4">
-            {!logoFailed ? (
-              <img
-                src="/logo.png"
-                alt="SENTINEL-OPS"
-                onError={() => setLogoFailed(true)}
-                className="w-11 h-11 rounded-xl object-cover shadow-lg shrink-0"
-              />
-            ) : (
-              <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
-                <span className="w-4 h-4 rounded-sm bg-white" />
+        {!onboardingDone ? (
+          <OnboardingPlayer onComplete={() => setOnboardingDone(true)} />
+        ) : (
+          <div className="max-w-sm mx-auto bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              {!logoFailed ? (
+                <img
+                  src="/logo.png"
+                  alt="SENTINEL-OPS"
+                  onError={() => setLogoFailed(true)}
+                  className="w-11 h-11 rounded-xl object-cover shadow-lg shrink-0"
+                />
+              ) : (
+                <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
+                  <span className="w-4 h-4 rounded-sm bg-white" />
+                </div>
+              )}
+              <div>
+                <p className="text-white font-semibold text-base leading-none tracking-wide">SENTINEL-OPS</p>
+                <p className="text-white/60 text-[11px] mt-1.5 leading-relaxed">
+                  WAS · WAF · Falco · K8s Audit 로그를 실시간으로 수집하고 상관분석하여 공격을 하나의
+                  인시던트로 재구성해 조기에 탐지하는 보안 관제 플랫폼
+                </p>
               </div>
-            )}
-            <div>
-              <p className="text-white font-semibold text-base leading-none tracking-wide">SENTINEL-OPS</p>
-              <p className="text-white/60 text-[11px] mt-1.5 leading-relaxed">
-                WAS · WAF · Falco · K8s Audit 로그를 실시간으로 수집하고 상관분석하여 공격을 하나의
-                인시던트로 재구성해 조기에 탐지하는 보안 관제 플랫폼
-              </p>
             </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div>
+                <label className="text-white/50 text-xs block mb-1.5">아이디</label>
+                <input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoFocus
+                  autoComplete="username"
+                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
+                />
+              </div>
+              <div>
+                <label className="text-white/50 text-xs block mb-1.5">비밀번호</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {error && <p className="text-white text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-2">{error}</p>}
+
+              <button
+                type="submit"
+                disabled={!username || !password || submitting}
+                className="w-full text-sm font-medium py-2 rounded-lg bg-white/90 text-black hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                {submitting ? "로그인 중..." : "로그인"}
+              </button>
+            </form>
           </div>
-
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div>
-              <label className="text-white/50 text-xs block mb-1.5">아이디</label>
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoFocus
-                autoComplete="username"
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
-              />
-            </div>
-            <div>
-              <label className="text-white/50 text-xs block mb-1.5">비밀번호</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
-                placeholder="••••••••"
-              />
-            </div>
-
-            {error && <p className="text-white text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-2">{error}</p>}
-
-            <button
-              type="submit"
-              disabled={!username || !password || submitting}
-              className="w-full text-sm font-medium py-2 rounded-lg bg-white/90 text-black hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              {submitting ? "로그인 중..." : "로그인"}
-            </button>
-          </form>
-        </div>
-
-        <OnboardingSection />
+        )}
       </div>
     </div>
   );

@@ -1,15 +1,12 @@
 import React from "react";
 import OnboardingCard from "./OnboardingCard";
+import { ONBOARDING_PAGES } from "./onboardingPages";
 
 // App.jsx NAV_ITEMS의 "admin"(Admin / Audit) 페이지 소개 카드 - 영상 교체는
 // dashboard/public/onboarding/admin.mp4만 추가하면 된다(코드 수정 불필요).
-const PAGE = {
-  key: "admin",
-  label: "Admin / Audit",
-  desc: "탐지 정책, 알림 채널, 차단 IP 관리 및 관리자 감사 로그",
-  video: "/onboarding/admin.mp4",
-  image: "/onboarding/admin.png",
-};
+// 2026-07-17: 내용은 onboardingPages.js로 옮기고 여기서는 자기 항목만 꺼내 쓴다
+// (OnboardingPlayer.jsx와 데이터를 공유하기 위함).
+const PAGE = ONBOARDING_PAGES.find((p) => p.key === "admin");
 
 export default function AdminOnboardingCard() {
   return <OnboardingCard page={PAGE} />;
