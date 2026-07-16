@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState, Suspense, lazy } from "react";
 import GoogleGeoMap from "../components/GoogleGeoMap";
 import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
@@ -6,6 +6,12 @@ import { usePipelineHealth } from "../hooks/usePipelineHealth";
 import { useSourceHealth } from "../hooks/useSourceHealth";
 import { useGeoStats } from "../hooks/useGeoStats";
 import { ModuleVolumeStackedChart } from "./LogDashboard";
+
+// 2026-07-17(6차): "구글 지도(2D)랑 기존 3D 지구본을 합쳐서 버튼으로 전환하게
+// 해달라" - Globe3D는 three.js 기반이라 무겁다(LogDashboard.jsx도 같은 이유로
+// lazy+Suspense로 분리해서 씀). 여기서도 3D를 실제로 선택했을 때만 청크를
+// 받아오도록 동일하게 지연 로드한다.
+const Globe3D = lazy(() => import("../components/Globe3D"));
 
 const STATUS_META = {
   healthy: { label: "정상 수신중" },
@@ -248,6 +254,7 @@ export default function InfrastructureView() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 50 });
+  const [mapMode, setMapMode] = useState("2d"); // "2d" (Google Maps) | "3d" (지구본)
 
   return (
     <div className="space-y-6">
@@ -271,15 +278,51 @@ export default function InfrastructureView() {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-dash-surface rounded-2xl p-5">
-          <div className="mb-4">
-            <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
-            <p className="text-dash-muted text-xs mt-0.5">
-              전체 기간 · 도시 단위 탐지 건수 (원 크기 = 건수) · 스크롤로 확대해서 지역별로 자세히 볼 수 있습니다
-            </p>
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
+              <p className="text-dash-muted text-xs mt-0.5">
+                {mapMode === "2d"
+                  ? "전체 기간 · 도시 단위 탐지 건수 (원 크기 = 건수) · 스크롤로 확대해서 지역별로 자세히 볼 수 있습니다"
+                  : "전체 기간 · 도시 단위 탐지 건수 · 드래그로 회전, 스크롤로 확대"}
+              </p>
+            </div>
+            {/* 2D(Google Maps)/3D(지구본) 전환 버튼 - RuleToggle과 같은 단순 on/off 톤 */}
+            <div className="flex items-center gap-1 shrink-0 bg-dash-surfaceAlt rounded-lg p-0.5">
+              {[
+                { key: "2d", label: "2D" },
+                { key: "3d", label: "3D" },
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setMapMode(opt.key)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                    mapMode === opt.key
+                      ? "bg-dash-fg text-dash-bg"
+                      : "text-dash-muted hover:text-dash-fg"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
           {geoStatus === "error" && <p className="text-dash-critical text-xs mb-2">{geoError}</p>}
           <div className="h-80">
-            <GoogleGeoMap points={countries} />
+            {mapMode === "2d" ? (
+              <GoogleGeoMap points={countries} />
+            ) : (
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">
+                    지구본 로딩 중...
+                  </div>
+                }
+              >
+                <Globe3D points={countries} theme={theme} />
+              </Suspense>
+            )}
           </div>
         </div>
 
