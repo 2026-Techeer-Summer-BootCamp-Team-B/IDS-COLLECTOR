@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../hooks/useTheme";
 
 // 2026-07-16: 처음 로그인하는 사용자가 "이 대시보드에 뭐가 있지?"부터 궁금할 것
 // 같다는 피드백 - App.jsx의 NAV_ITEMS/LAYER_NAV_ITEMS와 같은 5개 메인 페이지를
@@ -59,16 +60,35 @@ const FEATURE_PAGES = [
 function OnboardingCard({ page }) {
   const [videoFailed, setVideoFailed] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  // 2026-07-16: 자동재생 영상을 사용자가 멈출 수 있어야 한다는 피드백 - video
+  // 엘리먼트를 ref로 직접 잡고 play()/pause()를 토글한다. isPlaying은 autoPlay
+  // 기본값(true)에서 시작해서 버튼을 누를 때만 바뀐다.
+  const videoRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(true);
 
   const showVideo = page.video && !videoFailed;
   const showImage = !showVideo && page.image && !imageFailed;
   const showPlaceholder = !showVideo && !showImage;
 
+  function togglePlay() {
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) {
+      el.play();
+      setIsPlaying(true);
+    } else {
+      el.pause();
+      setIsPlaying(false);
+    }
+  }
+
   return (
     <div>
-      <div className="relative h-64 rounded-xl overflow-hidden bg-black/50 border border-white/10">
+      {/* h-64(256px) -> h-96(384px, 1.5배)로 확대(2026-07-16) */}
+      <div className="relative h-96 rounded-xl overflow-hidden bg-black/50 border border-white/10">
         {showVideo && (
           <video
+            ref={videoRef}
             src={page.video}
             className="w-full h-full object-cover"
             autoPlay
@@ -90,6 +110,26 @@ function OnboardingCard({ page }) {
           <div className="absolute inset-0 flex items-center justify-center bg-black/70">
             <span className="text-white/35 text-xs">{page.label} 화면 준비 중</span>
           </div>
+        )}
+
+        {showVideo && (
+          <button
+            type="button"
+            onClick={togglePlay}
+            aria-label={isPlaying ? "영상 멈추기" : "영상 재생"}
+            className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
+          >
+            {isPlaying ? (
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="3" y="2" width="4" height="12" rx="1" />
+                <rect x="9" y="2" width="4" height="12" rx="1" />
+              </svg>
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M4 2.5v11l10-5.5-10-5.5Z" />
+              </svg>
+            )}
+          </button>
         )}
       </div>
 
@@ -116,6 +156,8 @@ function ToolbarIcon({ children }) {
 // ADMIN_INITIAL_PASSWORD(.env)로 시드한다 - 화면에 기본 자격증명을 노출하지 않는다.
 export default function LoginScreen() {
   const { login, error } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const isLight = theme === "light";
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -201,6 +243,42 @@ export default function LoginScreen() {
         </ToolbarIcon>
       </div>
 
+      {/* 2026-07-16: 로그인 페이지는 지금까지 앱 테마(useTheme)와 무관하게 항상
+          같은 모노크롬 대각선 배경을 썼다 - 이건 의도적인 브랜드 스타일이라
+          그대로 두고, 대신 "로그인 후 들어갈 대시보드가 라이트/다크 중 뭘로
+          보일지"를 미리 골라둘 수 있게 토글 버튼만 추가했다. App.jsx의
+          ThemeToggle과 완전히 같은 아이콘/로직(useTheme)을 재사용 - 여기서
+          바꾼 값이 localStorage에 저장되고 로그인 후 대시보드에도 그대로
+          이어진다. */}
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label="라이트/다크 모드 전환"
+        title={isLight ? "다크 모드로 전환" : "라이트 모드로 전환"}
+        className="absolute top-5 left-5 w-9 h-9 flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-md border border-white/10 text-white/70 hover:text-white shadow-lg transition-colors"
+      >
+        {isLight ? (
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 1.5v2M8 12.5v2M2.6 2.6l1.4 1.4M12 12l1.4 1.4M1.5 8h2M12.5 8h2M2.6 13.4l1.4-1.4M12 4l1.4-1.4"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+            />
+            <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.3" />
+          </svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M13.5 9.6A5.8 5.8 0 1 1 6.4 2.5a4.6 4.6 0 0 0 7.1 7.1Z"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
+      </button>
+
       {/* 우하단 반짝임 장식 */}
       <div className="absolute bottom-8 right-10 hidden sm:flex items-end gap-2.5 pointer-events-none opacity-80">
         <span className="text-white text-base leading-none">✦</span>
@@ -212,31 +290,34 @@ export default function LoginScreen() {
           스크롤로 훑어본다"는 요청대로 구조를 다시 짰다 - 로그인 카드가 위에
           먼저 오고(페이지 자체는 스크롤 안 해도 항상 보임), 그 아래 소개 카드가
           내부 스크롤 영역(온보딩 카드 5개, 각각 전보다 훨씬 큰 h-64)을 갖는다. */}
+      {/* 2026-07-16: 온보딩 영상이 1.5배 커진 만큼 로그인 카드는 상대적으로
+          작게 - 패딩/폰트/입력창 높이를 한 단계씩 줄였다(px-7 py-7 -> px-6
+          py-5, 로고 56px -> 44px, 제목 text-lg -> text-base 등). */}
       <div className="relative w-full max-w-xl space-y-5">
-        <div className="bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-7 py-7">
-          <div className="flex items-center gap-3 mb-6">
+        <div className="bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
+          <div className="flex items-center gap-2.5 mb-4">
             {!logoFailed ? (
               <img
                 src="/logo.png"
                 alt="SENTINEL-OPS"
                 onError={() => setLogoFailed(true)}
-                className="w-14 h-14 rounded-2xl object-cover shadow-lg shrink-0"
+                className="w-11 h-11 rounded-xl object-cover shadow-lg shrink-0"
               />
             ) : (
-              <div className="w-14 h-14 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
-                <span className="w-5 h-5 rounded-sm bg-white" />
+              <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
+                <span className="w-4 h-4 rounded-sm bg-white" />
               </div>
             )}
             <div>
-              <p className="text-white font-semibold text-lg leading-none tracking-wide">SENTINEL-OPS</p>
-              <p className="text-white/60 text-xs mt-2 leading-relaxed">
+              <p className="text-white font-semibold text-base leading-none tracking-wide">SENTINEL-OPS</p>
+              <p className="text-white/60 text-[11px] mt-1.5 leading-relaxed">
                 WAS · WAF · Falco · K8s Audit 로그를 실시간으로 수집하고 상관분석하여 공격을 하나의
                 인시던트로 재구성해 조기에 탐지하는 보안 관제 플랫폼
               </p>
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
             <div>
               <label className="text-white/50 text-xs block mb-1.5">아이디</label>
               <input
@@ -244,7 +325,7 @@ export default function LoginScreen() {
                 onChange={(e) => setUsername(e.target.value)}
                 autoFocus
                 autoComplete="username"
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-1 focus:ring-white/40"
+                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
               />
             </div>
             <div>
@@ -254,7 +335,7 @@ export default function LoginScreen() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2.5 outline-none focus:ring-1 focus:ring-white/40"
+                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
                 placeholder="••••••••"
               />
             </div>
@@ -264,7 +345,7 @@ export default function LoginScreen() {
             <button
               type="submit"
               disabled={!username || !password || submitting}
-              className="w-full text-sm font-medium py-2.5 rounded-lg bg-white/90 text-black hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="w-full text-sm font-medium py-2 rounded-lg bg-white/90 text-black hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {submitting ? "로그인 중..." : "로그인"}
             </button>
@@ -273,7 +354,7 @@ export default function LoginScreen() {
 
         <div className="bg-black/35 backdrop-blur-xl rounded-2xl border border-white/10 shadow-xl p-5">
           <p className="text-white/45 text-[11px] uppercase tracking-wide mb-4 px-1">대시보드 둘러보기</p>
-          <div className="space-y-6 max-h-[420px] overflow-y-auto pr-2">
+          <div className="space-y-6 max-h-[640px] overflow-y-auto pr-2">
             {FEATURE_PAGES.map((page) => (
               <OnboardingCard key={page.key} page={page} />
             ))}
