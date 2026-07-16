@@ -47,7 +47,10 @@ export function formatBucketLabel(date, bucketMs) {
   const isDayBucket = bucketMs >= 24 * 60 * 60 * 1000;
   const isHourPlus = bucketMs >= 60 * 60 * 1000;
   if (isDayBucket) return date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", timeZone: DISPLAY_TIMEZONE });
-  if (isHourPlus) return date.toLocaleTimeString("ko-KR", { hour: "2-digit", hour12: false, timeZone: DISPLAY_TIMEZONE }) + "시";
+  // ko-KR 로케일은 hour만 지정해도 이미 "14시"처럼 단위(시)를 붙여서 반환한다 -
+  // 여기서 "시"를 또 붙이면 "14시시"로 겹쳐 보이는 버그였다(계층별 로그 4개
+  // 페이지의 Log Volume 차트 x축에서 발견). 그대로 반환하면 된다.
+  if (isHourPlus) return date.toLocaleTimeString("ko-KR", { hour: "2-digit", hour12: false, timeZone: DISPLAY_TIMEZONE });
   return date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: DISPLAY_TIMEZONE });
 }
  

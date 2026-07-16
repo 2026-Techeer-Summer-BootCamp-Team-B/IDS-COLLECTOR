@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
-import { SeverityBadge, SourceBadge } from "../components/badges";
+import { SeverityBadge, SourceBadge, SEVERITY_META } from "../components/badges";
 import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
@@ -11,7 +11,7 @@ import { useScenarios } from "../hooks/useScenarios";
 import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
-import { REAL_SEVERITY_LEVELS, getRealSeverityMeta } from "../data/realSeverity";
+import { getRealSeverityMeta } from "../data/realSeverity";
 import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
@@ -21,6 +21,11 @@ const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" 
 function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
 }
+// 2026-07-17(5차): "심각도 분포" 도넛이 REAL_SEVERITY_LEVELS 원래 라벨
+// (Critical/Major/Minor/Info)을 그대로 써서, 같은 화면의 공격 스토리라인
+// 카드 배지(CRITICAL/HIGH/MEDIUM/LOW)와 단어가 달라 보였다는 피드백 -
+// 도넛도 같은 배지 라벨 체계로 통일한다.
+const SEVERITY_BADGE_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 
 // 2026-07-16: "전체 인시던트/Open/조사중/종결"처럼 한/영이 섞여있던 걸 실제
 // 인시던트 관리 툴(PagerDuty/Opsgenie류)에서 쓰는 영문 상태명으로 통일 -
@@ -127,12 +132,16 @@ function SeverityDonut({ incidents }) {
   const data = useMemo(() => {
     const counts = {};
     incidents.forEach((i) => {
-      counts[i.severity] = (counts[i.severity] || 0) + 1;
+      const key = severityBadgeKey(i.severity);
+      counts[key] = (counts[key] || 0) + 1;
     });
-    return REAL_SEVERITY_LEVELS.filter((l) => counts[l.severity]).map((l, i) => ({
-      key: l.key,
-      label: l.label,
-      count: counts[l.severity],
+    // 공격 스토리라인 카드 배지(CRITICAL/HIGH/MEDIUM/LOW)와 같은 라벨을 쓴다 -
+    // 예전엔 REAL_SEVERITY_LEVELS 원래 이름(Critical/Major/Minor/Info)을 써서
+    // 같은 화면 안에서 같은 심각도가 다른 단어로 보였다.
+    return SEVERITY_BADGE_ORDER.filter((key) => counts[key]).map((key, i) => ({
+      key,
+      label: SEVERITY_META[key].label,
+      count: counts[key],
       // Overview의 도넛들(SeverityDonutCompact 등)과 같은 톤 다운 순환 팔레트로
       // 통일 - severity 배지 등 다른 곳의 의미색(빨강=critical 등)과는 별개.
       color: DONUT_PALETTE[i % DONUT_PALETTE.length],

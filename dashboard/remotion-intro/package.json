@@ -1,0 +1,18 @@
+{
+  "name": "remotion-intro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SENTINEL-OPS 제품 소개/데모 영상 - 로그인부터 조치까지 스토리로 구성",
+  "scripts": {
+    "preview": "remotion studio src/index.js",
+    "render": "remotion render src/index.js IntroDemo out/intro-demo.mp4"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.490"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.490"
+  }
+}

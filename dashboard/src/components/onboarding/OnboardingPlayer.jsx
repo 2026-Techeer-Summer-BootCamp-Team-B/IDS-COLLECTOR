@@ -1,58 +1,64 @@
-import React, { useState } from "react";
-import OnboardingCard from "./OnboardingCard";
-import { ONBOARDING_PAGES } from "./onboardingPages";
+import React, { useRef, useState } from "react";
 
-// 2026-07-17: "온보딩 영상들을 컴포넌트로 이어서 하나의 영상처럼 만들고,
-// 다 시청해야 로그인/회원가입 창이 나오게 해달라"는 요청 - 기존
-// OnboardingSection.jsx(5개 카드를 세로로 쌓아 스크롤로 훑어보는 방식, 로그인
-// 폼과 항상 같이 노출)와는 별개의 새 컴포넌트다. 여기서는 한 번에 카드 하나만
-// 보여주고, 그 영상이 끝나면(onEnded) 자동으로 다음 카드로 넘어가는 식으로
-// 5개를 이어붙여 "하나의 연속 재생"처럼 보이게 한다. 마지막 카드까지 다 끝나면
-// onComplete()를 호출해서 LoginScreen.jsx가 로그인 폼으로 전환한다.
-//
-// 의도적으로 "다음"으로 건너뛰는 버튼은 넣지 않았다 - 요청이 "모든 영상을
-// 시청해야" 로그인 창이 나오는 것이었기 때문. 영상이 없는 단계(플레이스홀더만
-// 뜨는 경우)는 OnboardingCard 안에서 일정 시간 뒤 자동으로 다음으로 넘어가게
-// 처리해뒀다(PLACEHOLDER_ADVANCE_MS) - 그래서 영상 파일이 빠진 단계가 있어도
-// 전체 흐름이 막히지 않는다.
+// 2026-07-17(4차): "로그인 화면 온보딩을 Remotion으로 만든 온보딩데모.mp4
+// 하나로 바꿔달라, 건너뛰기도 되게 해달라, 영상 끝나면 로그인 창이 나오게"
+// 요청으로 완전히 다시 짰다. 이전엔 페이지별 카드 5개를 순서대로 넘기는
+// 방식(ONBOARDING_PAGES + OnboardingCard)이었지만, 이제는 이미
+// dashboard/remotion-onboarding에서 사전 렌더링해 dashboard/public/onboarding/
+// 에 넣어둔 단일 영상(onboarding-demo.mp4) 하나만 재생한다 - 페이지별
+// 컴포넌트들(OnboardingCard.jsx, onboardingPages.js, XxxOnboardingCard.jsx)은
+// 더 이상 여기서 쓰지 않지만 혹시 몰라 폴더에는 남겨뒀다.
+const VIDEO_SRC = "/onboarding/onboarding-demo.mp4";
+
 export default function OnboardingPlayer({ onComplete }) {
-  const [index, setIndex] = useState(0);
-  const total = ONBOARDING_PAGES.length;
-  const page = ONBOARDING_PAGES[index];
-  const isLast = index === total - 1;
+  const videoRef = useRef(null);
+  const [ready, setReady] = useState(false);
 
-  function handleEnded() {
-    if (isLast) {
-      onComplete?.();
-      return;
-    }
-    setIndex((i) => Math.min(i + 1, total - 1));
+  function handleSkip() {
+    onComplete?.();
   }
 
   return (
     <div className="bg-black/35 backdrop-blur-xl rounded-2xl border border-white/10 shadow-xl p-5">
       <div className="flex items-center justify-between mb-4 px-1">
         <p className="text-white/45 text-[11px] uppercase tracking-wide">대시보드 둘러보기</p>
-        <p className="text-white/45 text-[11px]">
-          {index + 1} / {total}
-        </p>
+        <button
+          type="button"
+          onClick={handleSkip}
+          className="text-white/40 hover:text-white/70 text-[11px] underline-offset-2 hover:underline transition-colors"
+        >
+          건너뛰기
+        </button>
       </div>
 
-      {/* key={page.key}로 카드를 단계마다 완전히 새로 마운트한다 - video 엘리먼트
-          자체가 새로 생성돼야 src가 바뀐 다음 영상이 처음부터 자동재생된다
-          (같은 인스턴스를 유지한 채 src만 바꾸면 재생 상태가 꼬이기 쉽다). */}
-      <OnboardingCard page={page} onEnded={handleEnded} key={page.key} />
+      {/* 영상이 끝나면(onEnded) 자동으로 로그인 폼으로 넘어간다. 기다리기 싫으면
+          우측 상단/하단 "건너뛰기" 버튼으로 언제든 바로 넘길 수 있다. */}
+      <div className="relative rounded-xl overflow-hidden bg-black" style={{ aspectRatio: "16 / 9" }}>
+        {!ready && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="w-6 h-6 border-2 border-white/25 border-t-white/70 rounded-full animate-spin" />
+          </div>
+        )}
+        <video
+          ref={videoRef}
+          src={VIDEO_SRC}
+          autoPlay
+          muted
+          playsInline
+          onCanPlay={() => setReady(true)}
+          onEnded={handleSkip}
+          className="w-full h-full object-contain"
+        />
+      </div>
 
-      {/* 진행 표시 점 - 지금까지 지나온 단계는 채워서, 남은 단계는 옅게 */}
-      <div className="flex items-center justify-center gap-1.5 mt-4">
-        {ONBOARDING_PAGES.map((p, i) => (
-          <span
-            key={p.key}
-            className={`h-1.5 rounded-full transition-all ${
-              i === index ? "w-5 bg-white" : i < index ? "w-1.5 bg-white/60" : "w-1.5 bg-white/20"
-            }`}
-          />
-        ))}
+      <div className="flex items-center justify-end mt-4">
+        <button
+          type="button"
+          onClick={handleSkip}
+          className="text-black text-xs font-medium px-4 py-1.5 rounded-lg bg-white/90 hover:bg-white transition-colors"
+        >
+          건너뛰고 로그인하기 →
+        </button>
       </div>
     </div>
   );
