@@ -67,7 +67,17 @@ async def sync_scenario_rules(scenarios: List[Dict[str, Any]]) -> None:
                 scenario["required_modules"],
                 scenario["correlation_key_type"],
                 scenario["window_seconds"],
-                scenario.get("min_severity", 1),
+                # scenario_rules.min_severity 컬럼(스키마명은 유지)에는 YAML의
+                # "min_severity" 키가 아니라 "severity"(발화 시 실제 부여되는
+                # 심각도, app/rules.py의 scenario.get("severity", 1)과 동일 값)를
+                # 채운다 - 8개 scenarios/*.yaml 전체가 top-level min_severity 키를
+                # 쓰지 않아(S5 stage1 매치 조건에만 중첩 사용) 예전 코드는 항상
+                # 기본값 1만 저장했다(감사 D5, docs/reports/repo-audit-20260715.md).
+                # sync_scenario_rules는 매 재로드(_scenario_reload_loop, 30초 주기)마다
+                # ON CONFLICT UPDATE로 다시 쓰므로, 이미 잘못 저장된 기존 25개 행도
+                # 이 코드가 반영된 채로 재시작(또는 다음 재로드 주기)하면 자동으로
+                # 바로잡힌다 - 별도 수동 SQL 불필요.
+                scenario.get("severity", 1),
                 scenario.get("mitre_technique_id"),
             )
 
