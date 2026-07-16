@@ -977,44 +977,66 @@ export function LiveActivityTree() {
   const { feed } = useLiveAttackFeed({ feedLimit: 80 });
   // 새 이벤트가 안 들어와도 시간은 계속 흐르므로(1분이 지나면 점이 빠져야 함),
   // 2초마다 강제로 리렌더해서 "지금으로부터 1분 이내" 기준을 다시 계산한다.
-  const [, forceTick] = useState(0);
+  // (2026-07-16 6차: 이전엔 [, forceTick] = useState(0)로 값 자체를 버려서
+  // 아래 useMemo가 실제로는 재계산되지 않던 버그가 있었다 - tick을 deps에
+  // 넣어서 2초마다 진짜로 다시 계산되게 고쳤다.)
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => forceTick((n) => n + 1), 2000);
+    const t = setInterval(() => setTick((n) => n + 1), 2000);
     return () => clearInterval(t);
   }, []);
 
+  // "로그 하나당 점 하나가 깜빡이며 나타난다"는 걸 표현하기 위해, 이전
+  // 렌더에서 이미 본 이벤트 키를 기억해뒀다가 이번 렌더에 처음 보이는
+  // 이벤트만 _isNew로 표시한다(딱 한 번만 반짝이는 activity-dot-blink 적용
+  // 대상). ref라 렌더 중 읽어도 리렌더를 유발하지 않고, 실제 갱신은 아래
+  // useEffect에서 커밋 이후에 한다.
+  const seenKeysRef = useRef(new Set());
+
   const layers = useMemo(() => {
     const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+    const seen = seenKeysRef.current;
     return ACTIVITY_MODULE_ORDER.map((module) => {
       const events = feed
         .filter((e) => e.module === module && e.timestamp.getTime() >= cutoff)
         .sort((a, b) => b.timestamp - a.timestamp);
       const maxSeverity = events.reduce((m, e) => Math.max(m, e.severity || 0), 0);
+      const recent = events.slice(0, 10).map((e) => {
+        const key = `${module}-${e.timestamp.getTime()}-${e.sourceIp || e.pod || e.namespace || ""}`;
+        return { ...e, _key: key, _isNew: !seen.has(key) };
+      });
       return {
         module,
         meta: getModuleMeta(module),
         count: events.length,
         maxSeverity,
-        recent: events.slice(0, 10),
+        recent,
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [feed]);
+  }, [feed, tick]);
 
-  const hasAny = layers.some((l) => l.count > 0);
+  // 렌더 커밋 후 이번에 보인 키들을 "이미 본 것"으로 표시 - 다음 렌더부터는
+  // 같은 이벤트가 다시 새것으로 판정되어 반짝이지 않는다.
+  useEffect(() => {
+    const seen = seenKeysRef.current;
+    layers.forEach((layer) => layer.recent.forEach((e) => seen.add(e._key)));
+    // 메모리 누수 방지 - 너무 오래된 키가 계속 쌓이지 않도록 현재 보이는
+    // 키 기준으로만 정리(30분 이상 지난 항목은 어차피 다시 볼 일이 없다).
+    if (seen.size > 500) {
+      const keep = new Set(layers.flatMap((layer) => layer.recent.map((e) => e._key)));
+      seenKeysRef.current = keep;
+    }
+  }, [layers]);
 
   return (
     <Card
       title="실시간 활동 흐름"
       subtitle="WAF → WAS → K8s Audit → Falco, 건물 비유의 4단계 지하 구조 — 최근 1분 이내 로그만 점으로 표시"
     >
-      {!hasAny ? (
-        <p className="text-dash-muted text-xs py-6 text-center">최근 1분간 활동이 없습니다.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <ActivityLayerDiagram layers={layers} C={C} />
-        </div>
-      )}
+      <div className="overflow-x-auto">
+        <ActivityLayerDiagram layers={layers} C={C} />
+      </div>
     </Card>
   );
 }
@@ -1091,7 +1113,7 @@ function ActivityLayerDiagram({ layers, C }) {
                 const eDanger = (e.severity || 0) >= REAL_ERROR_MIN_SEVERITY;
                 const isNewest = j === 0;
                 return (
-                  <g key={`${layer.module}-${e.timestamp}-${j}`}>
+                  <g key={e._key || `${layer.module}-${e.timestamp}-${j}`}>
                     {eDanger && (
                       <circle
                         cx={ex}
@@ -1111,6 +1133,7 @@ function ActivityLayerDiagram({ layers, C }) {
                       opacity={isNewest ? 1 : Math.max(0.25, 0.85 - j * 0.07)}
                       stroke={C.bg}
                       strokeWidth={1}
+                      className={e._isNew ? "activity-dot-blink" : undefined}
                     >
                       <title>{`${e.sourceIp || e.pod || e.namespace || "-"} · ${eSevMeta.label}`}</title>
                     </circle>
@@ -1514,7 +1537,9 @@ function GeoSummaryCard() {
   return (
     <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`전체 기간 · ${countries.length}개국 · 총 ${total}건 · 드래그로 회전`}>
       {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
-      <div className="h-80">
+      {/* 2026-07-16(6차): 지구본이 카드 하단에서 살짝 잘린다는 피드백 - h-80(320px)
+          에서 조금만 늘렸다. */}
+      <div className="h-[360px]">
         <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
           <Globe3D points={countries} theme={theme} />
         </Suspense>
@@ -2364,6 +2389,13 @@ export function DashboardContent() {
   );
   const errorRateWidget = <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />;
   const geoWidget = <GeoSummaryCard />;
+  // 2026-07-16(6차): "실시간 활동 흐름 옆에 뭘 놓으면 좋을지" - GeoIP가 원래
+  // 자리(맨 아래 단독 행)로 돌아가면서 비는 오른쪽 자리에, 같은 4개 모듈
+  // (WAF/WAS/K8s Audit/Falco)을 다른 각도(누적 시계열)로 보여주는 모듈별
+  // 로그량 추이를 배치 - Activity Flow의 "지금 이 순간"과 짝을 이루는
+  // "시간 흐름" 관점이라 자연스럽게 어울리고, 기본 Overview 레이아웃 다른
+  // 곳엔 아직 쓰이지 않던 위젯이라 중복도 없다.
+  const moduleVolumeWidget = <ModuleVolumeStackedChart fillHeight />;
 
   const activeDashboard = activeId !== "default" ? getDashboard(activeId) : null;
 
@@ -2461,17 +2493,17 @@ export function DashboardContent() {
           </div>
 
           {/* 2026-07-16(5차): "실시간 활동 흐름 왼쪽을 Log Volume이랑 같은
-              크기로 맞추고 오른쪽엔 GeoIP를 두자"는 요청 - 로그 개요 행과 같은
-              xl:grid-cols-3(2+1) 비율을 그대로 재사용해서 두 행의 왼쪽 폭이
-              시각적으로 일치하게 맞췄다. GeoSummaryCard(3D 지구본)는 원래
-              페이지 맨 아래 단독 행이었는데 여기로 옮겨왔다. */}
+              크기로 맞추자"는 요청 - 로그 개요 행과 같은 xl:grid-cols-3(2+1)
+              비율을 재사용해서 두 행의 왼쪽 폭이 시각적으로 일치하게 맞췄다.
+              (6차: 오른쪽엔 GeoIP 대신 모듈별 로그량 추이를 두고, GeoIP는
+              원래 자리인 맨 아래 단독 행으로 되돌렸다.) */}
           <div>
             <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">실시간 활동</p>
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="xl:col-span-2">
                 <LiveActivityTree />
               </div>
-              {geoWidget}
+              {moduleVolumeWidget}
             </div>
           </div>
 
@@ -2507,6 +2539,8 @@ export function DashboardContent() {
               {errorRateWidget}
             </div>
           </div>
+
+          {geoWidget}
         </>
       )}
     </div>

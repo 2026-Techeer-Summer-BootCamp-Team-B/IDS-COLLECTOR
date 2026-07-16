@@ -111,3 +111,36 @@ body {
   transform-box: fill-box;
   transform-origin: center;
 }
+
+/* 2026-07-16(6차): "로그 발생 = 점 하나 + 깜빡임"이 명확히 보이도록 - 새로
+   나타난 점에만(LogDashboard.jsx의 seenKeysRef가 판정) 딱 한 번 재생되는
+   반짝임. 작게 시작 -> 확 커지며 밝아짐 -> 살짝 가라앉음 -> 원래 크기로
+   정착, 총 700ms - 그 뒤로는 애니메이션이 끝나 평소 상태(고정 opacity)로
+   남는다(무한 반복 아님, activity-ripple-ring과 다른 점).*/
+@keyframes activity-dot-blink {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.7);
+  }
+  45% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.activity-dot-blink {
+  animation: activity-dot-blink 700ms ease-out;
+  transform-box: fill-box;
+  transform-origin: center;
+}
