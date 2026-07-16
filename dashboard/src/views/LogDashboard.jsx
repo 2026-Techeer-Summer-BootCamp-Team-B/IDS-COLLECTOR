@@ -36,7 +36,7 @@ import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
 import TimeRangePicker from "../components/TimeRangePicker";
-import WorldMap from "../components/WorldMap";
+import GoogleGeoMap from "../components/GoogleGeoMap";
 // three.js는 이 카드에서만 쓰이는데도 LogDashboard.jsx가 Card/KpiCard 등 공용
 // 프리미티브를 export하다보니 다른 뷰(WAS/Falco/K8sAudit/Incidents)들이 전부 이
 // 파일을 import한다 — 정적 import로 넣으면 그 뷰들 번들에도 300~400KB가 얹혀버려서
@@ -1326,16 +1326,51 @@ function GeoSummaryCard() {
   const { countries, status, error } = useGeoStats({ limit: 50 });
   const total = countries.reduce((s, c) => s + c.count, 0);
   const countryCount = new Set(countries.map((c) => c.countryCode)).size;
+  // 2026-07-17(7차): "Infrastructure처럼 Overview 지도도 2D/3D 토글로 바꿀 수
+  // 있게 해달라" - Infrastructure 패널과 같은 2D(Google Maps)/3D(지구본) 전환을
+  // 여기도 그대로 적용. 기본은 지금까지 써왔던 3D(지구본)를 유지해서 랜딩 화면의
+  // "화려한" 첫인상은 그대로 두고, 자세히 보고 싶을 때만 2D로 바꾸게 했다.
+  const [mapMode, setMapMode] = useState("3d");
 
   return (
-    <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`전체 기간 · ${countryCount}개국 · 총 ${total}건 · 드래그로 회전`}>
+    <Card
+      title="공격 발원지 (GeoIP)"
+      subtitle={
+        mapMode === "3d"
+          ? `전체 기간 · ${countryCount}개국 · 총 ${total}건 · 드래그로 회전`
+          : `전체 기간 · ${countryCount}개국 · 총 ${total}건 · 스크롤로 확대`
+      }
+      action={
+        <div className="flex items-center gap-1 shrink-0 bg-dash-surfaceAlt rounded-lg p-0.5">
+          {[
+            { key: "2d", label: "2D" },
+            { key: "3d", label: "3D" },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setMapMode(opt.key)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                mapMode === opt.key ? "bg-dash-fg text-dash-bg" : "text-dash-muted hover:text-dash-fg"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
       {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
       {/* 2026-07-16(6차): 지구본이 카드 하단에서 살짝 잘린다는 피드백 - h-80(320px)
           에서 조금만 늘렸다. */}
       <div className="h-[360px]">
-        <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
-          <Globe3D points={countries} theme={theme} />
-        </Suspense>
+        {mapMode === "2d" ? (
+          <GoogleGeoMap points={countries} />
+        ) : (
+          <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
+            <Globe3D points={countries} theme={theme} />
+          </Suspense>
+        )}
       </div>
     </Card>
   );
