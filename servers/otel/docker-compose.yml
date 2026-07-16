@@ -25,6 +25,15 @@ services:
       - "4318:4318"
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 이벤트마다 로그가 나는 다변
+    # 서비스라 50m×3(항목 6에서 debug exporter를 4개 소스에서 뺐지만 그와 별개로
+    # 컨테이너 자체 로그도 회전이 필요). 컨테이너 재생성(--force-recreate) 시에만
+    # 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=siem-net"

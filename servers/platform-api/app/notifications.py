@@ -74,15 +74,22 @@ async def _matching_alert_configs(severity: int) -> List[Any]:
         )
 
 
-async def notify_incident(incident: Dict[str, Any]) -> None:
-    severity = incident.get("severity", 0)
+async def notify_text(severity: int, text: str) -> None:
+    """severity 이상을 구독하는 채널 전부에 임의 텍스트를 발송 - notify_incident()와
+    DLQ 깊이 알림(app/incident_alerts.py, 2026-07-16)이 공유하는 발송 경로.
+    인시던트 형태로 안 맞는 운영 알림(파이프라인 적체 등)도 같은 채널/쿨다운 없는
+    즉시발송 정책을 타게 하려고 텍스트만 받는 형태로 분리했다."""
     rows = await _matching_alert_configs(severity)
     if not rows:
         return
+    for row in rows:
+        await _post_webhook(row["channel_type"], row["webhook_url"], text)
 
+
+async def notify_incident(incident: Dict[str, Any]) -> None:
+    severity = incident.get("severity", 0)
     text = (
         f":rotating_light: 인시던트 - {incident.get('title')} "
         f"(correlation_key={incident.get('correlation_key_value')}, severity={severity})"
     )
-    for row in rows:
-        await _post_webhook(row["channel_type"], row["webhook_url"], text)
+    await notify_text(severity, text)

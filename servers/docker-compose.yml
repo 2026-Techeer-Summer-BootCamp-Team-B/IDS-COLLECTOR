@@ -5,7 +5,10 @@ networks:
 # REDIS_URL의 비밀번호는 servers/datastore/redis/.env(.env.example 복사본)의
 # REDIS_PASSWORD와 일치해야 한다 - 별도 docker-compose 프로젝트라 .env를 공유할
 # 수 없어서 값을 여기 그대로 옮겨 적었다. dev 기본값(CHANGE_ME_dev) 대신 실제
-# 비밀번호로 바꾸려면 두 곳(servers/datastore/redis/.env, 여기 3곳) 전부 같이 바꿀 것.
+# 비밀번호로 바꾸려면 두 곳(servers/datastore/redis/.env, 여기 3곳 - REDIS_URL은
+# normalizer/correlation-engine/platform-api 셋 다, POSTGRES_DSN은 correlation-engine/
+# platform-api 둘 - normalizer는 2026-07-15 exclusion_rules 기능 제거로 더 이상
+# Postgres에 연결하지 않는다) 전부 같이 바꿀 것.
 #
 # POSTGRES_DSN/CLICKHOUSE_PASSWORD는 ${} 참조다 - 이 프로젝트(servers/)의 .env에서
 # 값을 채운다(servers/.env.example 참고). Postgres는 servers/datastore/postgres/.env의
@@ -30,11 +33,18 @@ services:
       KAFKA_NORMALIZED_TOPIC: events.normalized
       KAFKA_DLQ_TOPIC: events.dlq
       REDIS_URL: redis://:CHANGE_ME_dev@redis:6379/0
-      POSTGRES_DSN: postgresql://ids_admin:${POSTGRES_PASSWORD}@postgres:5432/ids_platform
     ports:
       - "127.0.0.1:8200:8200" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - json-file 기본 드라이버는 회전이
+    # 없어 무기한 누적된다. Kafka 컨슈머라 이벤트당 로그가 나는 다변 서비스라 50m×3.
+    # 컨테이너 재생성(docker compose up -d --force-recreate) 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     # curl/wget이 python:3.11-slim 기본 이미지에 없어서 표준 라이브러리(urllib)로 대신한다.
     # urlopen은 HTTP 응답이 4xx/5xx면 예외를 던지므로 /health가 503을 반환하면(컨슈머
     # 태스크 죽음) 이 커맨드도 실패해서 그대로 unhealthy로 잡힌다.
@@ -62,6 +72,13 @@ services:
       - "127.0.0.1:8300:8300" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 다변 서비스라 50m×3. 컨테이너
+    # 재생성(--force-recreate) 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8300/health', timeout=3)"]
       interval: 10s
@@ -88,6 +105,13 @@ services:
       - "127.0.0.1:8400:8400" # 로컬 디버깅 편의용 직결 포트(호스트 루프백에만 바인딩, forwardAuth 미적용) - 실제 진입 경로는 Traefik(:80/api). 원격 호스트에서 직결하려면 SSH 터널 필요(예: ssh -L 8400:localhost:8400 <host>)
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8400/health', timeout=3)"]
       interval: 10s
@@ -131,6 +155,13 @@ services:
     restart: unless-stopped
     networks:
       - siem-net
+    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
+    # 시에만 적용됨.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=siem-net"

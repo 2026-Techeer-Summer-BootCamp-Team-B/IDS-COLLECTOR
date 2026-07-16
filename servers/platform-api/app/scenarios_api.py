@@ -92,7 +92,7 @@ async def list_scenarios():
 
     true_positive_count/false_positive_count(-> precision)는 분석가가 PATCH
     /incidents/{id}/verdict로 남긴 정답 라벨 집계(datastore/postgres/init/
-    015-incident-verdict.sql) - 아직 하나도 verdict 처리 안 된 인시던트뿐인
+    018-incident-verdict.sql) - 아직 하나도 verdict 처리 안 된 인시던트뿐인
     시나리오는 둘 다 0으로 나오고 precision은 None(계산 불가)이 된다."""
     async with pool().acquire() as conn:
         rows = await conn.fetch(

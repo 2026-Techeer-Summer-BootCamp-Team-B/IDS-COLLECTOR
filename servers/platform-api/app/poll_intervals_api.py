@@ -1,5 +1,5 @@
 """폴링/자동 실행 주기 설정 API (/poll-intervals) - poll_intervals 테이블
-(datastore/postgres/init/013-poll-intervals.sql) CRUD.
+(datastore/postgres/init/014-poll-intervals.sql) CRUD.
 
 여기서 바꾼 값은 재배포/재시작 없이 다음 반복부터 바로 반영된다 - 각 폴링 루프가
 매 반복 시작 시 이 테이블 값을 다시 읽기 때문(platform-api app/incident_alerts.py,

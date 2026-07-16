@@ -455,7 +455,7 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
   셋이 만들어지기 전에 쓰인 채 갱신이 안 된 것. ~~아직 없는 건 ground-truth 라벨
   매칭(precision/recall) 하나뿐~~ **(2026-07-15 해결)**: `incidents.status`(처리
   단계)와 별개 축으로 `incidents.verdict`(`true_positive`/`false_positive`,
-  `datastore/postgres/init/015-incident-verdict.sql`)를 추가하고
+  `datastore/postgres/init/018-incident-verdict.sql`)를 추가하고
   `PATCH /incidents/{id}/verdict`로 분석가가 판정을 남기게 했다 - status의 선형
   전이와 달리 언제든 재설정 가능. `GET /scenarios`가 이 라벨을 시나리오별로 집계해서
   `true_positive_count`/`false_positive_count`/`precision`을 같이 내려주므로,

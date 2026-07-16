@@ -109,7 +109,7 @@ async def get_geo(
     위경도/국가명은 프론트가 이미 가진 조회 테이블로 조인하면 되므로 코드만 준다."""
     where, params = _time_filter(start, end)
     where = f"{where} AND geo_country_iso_code != '??'" if where else "WHERE geo_country_iso_code != '??'"
-    params["limit"] = min(limit, 100)
+    params["limit"] = max(1, min(limit, 100))
 
     result = await client().query(
         f"""
@@ -137,7 +137,7 @@ async def get_k8s_targets(
     where, params = _time_filter(start, end)
     empty_clause = "orchestrator_namespace != '' AND orchestrator_resource_name != ''"
     where = f"{where} AND {empty_clause}" if where else f"WHERE {empty_clause}"
-    params["limit"] = min(limit, 100)
+    params["limit"] = max(1, min(limit, 100))
 
     result = await client().query(
         f"""
@@ -170,7 +170,7 @@ async def get_top_ips(
     where, params = _time_filter(start, end)
     empty_clause = "source_ip != toIPv6OrDefault('')"
     where = f"{where} AND {empty_clause}" if where else f"WHERE {empty_clause}"
-    params["limit"] = min(limit, 100)
+    params["limit"] = max(1, min(limit, 100))
 
     result = await client().query(
         f"""

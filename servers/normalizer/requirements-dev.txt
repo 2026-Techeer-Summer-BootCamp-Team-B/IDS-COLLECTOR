@@ -1,0 +1,15 @@
+# 로컬 테스트 실행용. requirements.txt를 그대로 -r로 끌어오지 않는 이유는
+# correlation-engine과 동일 - 그 파일의 `./shared` 줄은 Docker 빌드 컨텍스트(servers/)
+# 전제 상대경로라 여기(servers/normalizer/)에서 그대로 실행하면 존재하지 않는 경로를
+# 가리킨다. normalize_*()/get_severity()는 app.config(pydantic_settings)와
+# ids_shared만 있으면 되고 aiokafka/redis/geoip2fast 등은 import조차 안 되므로
+# (app/normalizer.py, app/severity.py의 import 확인) 테스트에는 불필요 - 무겁게
+# 다 끌어올 이유가 없다.
+#
+# 실행: pip install -r requirements-dev.txt && pytest
+pydantic==2.13.4
+pydantic-settings==2.14.2
+pyyaml==6.0.2
+-e ../shared
+
+pytest==8.3.4

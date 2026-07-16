@@ -1,14 +1,31 @@
-"""데이터 정책 API (/log-policies, /exclusion-rules) - 로그 보존/샘플링 + 제외 규칙.
+"""데이터 정책 API (/log-policies) - 로그 보존 기간.
 
-dashboard/src/data/logPolicy.js의 INITIAL_LOG_POLICIES/INITIAL_EXCLUSION_RULES가
-지금까지 프론트 로컬 mock state로만 존재했던 걸 실제 테이블(datastore/postgres/init/
-013-data-policy.sql)로 옮긴 것. 아직 프론트(App.jsx)는 이 API를 안 쓰고 mock 그대로다 -
-연동은 별도 작업.
+dashboard/src/data/logPolicy.js의 INITIAL_LOG_POLICIES가 지금까지 프론트 로컬 mock
+state로만 존재했던 걸 실제 테이블(datastore/postgres/init/013-data-policy.sql)로
+옮긴 것. 레이어 구분과 필드는 2026-07-16에 3등급 보존 체계로 재정의됐다
+(datastore/postgres/init/023-log-policies-retention-tiers.sql, docs/reports/
+retention-patch-20260716.md) - layer는 이제 소스별(WAS/Falco/K8s Audit)이 아니라
+기록/원본/파생 3개 고정값이고, hot_days/cold_days/sampling_rate는 단일
+retention_days로 통합됐다(sampling_rate는 저장만 되고 어디서도 집행 안 하던 죽은
+컨트롤이라 걷어냄 - docs/reports/repo-audit-20260715.md §3.1). 보존기간은
+app/log_retention.py가 실제로 집행한다(오래된 attack-logs-*/otel-logs-raw-* 인덱스
+통삭제 + audit_logs/incidents 정리).
 
-record_action(record_id=...)는 여기서 안 쓴다 - log_policies/exclusion_rules 둘 다
-PK가 UUID가 아니라 사람이 읽는 문자열(layer 이름, "EX-01" 등)이라 audit_logs.record_id
-컬럼(UUID) 타입에 안 맞는다. 테이블 종류가 몇 개뿐인 고정 목록이라 target_table만으로도
-행 식별에 충분하다고 보고 생략함."""
+⚠️ 이 스키마 변경으로 GET/PATCH /log-policies 응답 필드가 바뀌었다 - 대시보드
+AdminAuditView.jsx의 PolicyRow(hot_days/cold_days/sampling_rate 렌더링)는 아직
+새 스키마에 안 맞다(프론트 수정은 이번 작업 범위 밖 - docs/reports/
+retention-patch-20260716.md에 전달 사항 기록).
+
+record_action(record_id=...)는 여기서 안 쓴다 - log_policies의 PK가 UUID가 아니라
+사람이 읽는 문자열(layer 이름)이라 audit_logs.record_id 컬럼(UUID) 타입에 안 맞는다.
+테이블 종류가 몇 개뿐인 고정 목록이라 target_table만으로도 행 식별에 충분하다고
+보고 생략함.
+
+제외 규칙(exclusion_rules, 저가치 노이즈 자동 드롭) 기능은 2026-07-15 제거됨 -
+EX-01/EX-02가 룰 이름/신원 패턴만으로 너무 거칠게 매칭해서 correlation-engine의
+S1/S5/S10처럼 실제로 봐야 할 이벤트까지 같이 드롭하는 게 확인됐다(normalizer/app/
+main.py 모듈 docstring 참고). IDS에서는 로그 volume 절감보다 탐지 누락이 훨씬
+위험하다고 판단해 기능 자체를 뺐다."""
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,32 +40,26 @@ def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
-# --- 로그 보존/샘플링 정책 (계층 3개 고정 - 생성/삭제 없이 PATCH로 값만 바꿈) ---
+# --- 로그 보존 정책 (계층 3개 고정: 기록/원본/파생 - 생성/삭제 없이 PATCH로 값만 바꿈) ---
 
 router_log_policies = APIRouter(prefix="/log-policies", tags=["data-policy"])
 
 
 class LogPolicyOut(BaseModel):
     layer: str
-    hot_days: int
-    cold_days: int
-    sampling_rate: int
+    retention_days: int
     archive_enabled: bool
 
 
 class LogPolicyPatch(BaseModel):
-    hot_days: Optional[int] = None
-    cold_days: Optional[int] = None
-    sampling_rate: Optional[int] = None
+    retention_days: Optional[int] = None
     archive_enabled: Optional[bool] = None
 
 
 def _row_to_log_policy(row) -> LogPolicyOut:
     return LogPolicyOut(
         layer=row["layer"],
-        hot_days=row["hot_days"],
-        cold_days=row["cold_days"],
-        sampling_rate=row["sampling_rate"],
+        retention_days=row["retention_days"],
         archive_enabled=row["archive_enabled"],
     )
 
@@ -57,8 +68,7 @@ def _row_to_log_policy(row) -> LogPolicyOut:
 async def list_log_policies():
     async with pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT layer, hot_days, cold_days, sampling_rate, archive_enabled "
-            "FROM log_policies ORDER BY layer"
+            "SELECT layer, retention_days, archive_enabled FROM log_policies ORDER BY layer"
         )
     return [_row_to_log_policy(r) for r in rows]
 
@@ -75,7 +85,7 @@ async def update_log_policy(layer: str, body: LogPolicyPatch, request: Request):
             f"""
             UPDATE log_policies SET {set_clauses}, updated_at = now()
             WHERE layer = $1
-            RETURNING layer, hot_days, cold_days, sampling_rate, archive_enabled
+            RETURNING layer, retention_days, archive_enabled
             """,
             layer,
             *fields.values(),
@@ -86,64 +96,3 @@ async def update_log_policy(layer: str, body: LogPolicyPatch, request: Request):
         "LOG_POLICY_UPDATED", "log_policies", _client_ip(request), user_id=current_user_id(request)
     )
     return _row_to_log_policy(row)
-
-
-# --- 제외 규칙 (목록 + on/off 토글만 - 생성/삭제 API는 프론트에 해당 UI가 없어서 범위 밖) ---
-
-router_exclusion_rules = APIRouter(prefix="/exclusion-rules", tags=["data-policy"])
-
-
-class ExclusionRuleOut(BaseModel):
-    id: str
-    layer: str
-    pattern: str
-    reason: Optional[str]
-    estimated_reduction_pct: int
-    enabled: bool
-
-
-class EnabledUpdate(BaseModel):
-    enabled: bool
-
-
-def _row_to_exclusion_rule(row) -> ExclusionRuleOut:
-    return ExclusionRuleOut(
-        id=row["id"],
-        layer=row["layer"],
-        pattern=row["pattern"],
-        reason=row["reason"],
-        estimated_reduction_pct=row["estimated_reduction_pct"],
-        enabled=row["enabled"],
-    )
-
-
-@router_exclusion_rules.get("", response_model=List[ExclusionRuleOut])
-async def list_exclusion_rules():
-    async with pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, layer, pattern, reason, estimated_reduction_pct, enabled
-            FROM exclusion_rules ORDER BY id
-            """
-        )
-    return [_row_to_exclusion_rule(r) for r in rows]
-
-
-@router_exclusion_rules.patch("/{rule_id}/enabled", response_model=ExclusionRuleOut)
-async def set_exclusion_rule_enabled(rule_id: str, body: EnabledUpdate, request: Request):
-    async with pool().acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            UPDATE exclusion_rules SET enabled = $2, updated_at = now()
-            WHERE id = $1
-            RETURNING id, layer, pattern, reason, estimated_reduction_pct, enabled
-            """,
-            rule_id,
-            body.enabled,
-        )
-    if not row:
-        raise HTTPException(status_code=404, detail="exclusion rule not found")
-    await record_action(
-        "EXCLUSION_RULE_TOGGLED", "exclusion_rules", _client_ip(request), user_id=current_user_id(request)
-    )
-    return _row_to_exclusion_rule(row)

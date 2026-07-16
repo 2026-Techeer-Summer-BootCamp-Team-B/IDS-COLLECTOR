@@ -1,0 +1,21 @@
+# 로컬 테스트 실행용. requirements.txt를 그대로 -r로 끌어오지 않는 이유: 그 파일의
+# `./shared` 줄은 Docker 빌드 컨텍스트(servers/, Dockerfile이 COPY shared ./shared로
+# 같은 디렉터리에 복사한 뒤 pip install)를 전제로 한 상대경로라 여기(servers/
+# correlation-engine/)에서 그대로 실행하면 존재하지 않는 경로를 가리킨다. 그래서
+# 런타임 의존성을 그대로 나열하고 shared 패키지는 이 파일 기준 상대경로(../shared =
+# servers/shared)로 editable 설치한다.
+#
+# 실행: pip install -r requirements-dev.txt && pytest
+fastapi==0.139.0
+uvicorn[standard]==0.50.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+aiokafka==0.12.0
+redis==5.2.1
+pyyaml==6.0.2
+asyncpg==0.30.0
+-e ../shared
+
+pytest==8.3.4
+pytest-asyncio==0.24.0
+fakeredis==2.26.2

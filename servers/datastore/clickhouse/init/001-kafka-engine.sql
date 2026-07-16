@@ -16,6 +16,17 @@ SETTINGS
 -- 컬럼형 통계/분석 엔진 대상 테이블 (Append-Only). "최근 1시간 가장 공격 많이 한 IP
 -- Top 10" 같은 집계를 0.1초 안에 뽑아내는 게 목적이라, 여기서부터는 raw JSON 문자열이
 -- 아니라 실제 타입이 박힌 컬럼으로 저장한다.
+-- PARTITION BY toDate(timestamp) + TTL 14일 (2026-07-16, docs/reports/
+-- repo-audit-20260715.md §3.2 - 이전엔 파티셔닝도 TTL도 없어 무기한 누적됐다).
+-- 3등급 보존 체계에서 "파생"(derived) 데이터에 해당 - retention_days는 Postgres
+-- log_policies."파생" 행과 값을 맞춰서 관리한다(이 테이블은 폴링이 아니라
+-- ClickHouse 자체 TTL 머지 프로세스가 만료 파티션을 지운다 - app/log_retention.py는
+-- Postgres/OpenSearch만 다룬다).
+--
+-- ⚠️ 이미 배포된 서버는 이 CREATE TABLE IF NOT EXISTS가 재실행돼도 기존 테이블에
+-- PARTITION BY/TTL이 소급 적용되지 않는다(ClickHouse는 테이블 생성 후 PARTITION BY
+-- 변경을 지원하지 않음) - 수동 DROP+재생성 절차가 필요하다(docs/reports/
+-- retention-patch-20260716.md 배포 절차 참고).
 CREATE TABLE IF NOT EXISTS security_events_analytics
 (
     timestamp                  DateTime,
@@ -32,7 +43,9 @@ CREATE TABLE IF NOT EXISTS security_events_analytics
     orchestrator_resource_name String
 )
 ENGINE = MergeTree
-ORDER BY (timestamp, event_module);
+PARTITION BY toDate(timestamp)
+ORDER BY (timestamp, event_module)
+TTL timestamp + INTERVAL 14 DAY;
 
 -- events.normalized JSON(NormalizedEvent, by_alias 직렬화라 키가 "source.ip"처럼
 -- 점 표기 그대로인 flat JSON - 중첩 객체 아님)에서 JSONExtract로 타입 있는 컬럼을
