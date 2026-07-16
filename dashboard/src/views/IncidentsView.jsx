@@ -12,7 +12,7 @@ import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
 import { REAL_SEVERITY_LEVELS, getRealSeverityMeta } from "../data/realSeverity";
-import { apiPatch, apiPost, apiDelete, ApiError } from "../lib/authApi";
+import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 // incidents.severity(1~4, event.severity와 같은 실 스케일)를 badges.jsx의
@@ -97,21 +97,23 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
 // MiniKpi 그리드와는 분리된 별도 섹션으로 뺐다(2026-07-16). 이 컴포넌트 안의
 // bg-dash-bg 타일 패턴은 이 파일 아래쪽 "인시던트 상세" 패널의 상관 규칙/MITRE
 // 경로/상관 키 타일과 같은 스타일 - 이미 검증된 "정보 전용" 톤을 재사용.
+// 2026-07-16: 카드가 너무 크다는 피드백 - 패딩/폰트를 한 단계씩 줄이고
+// 라벨+값+부가정보를 한 줄에 압축했다(세로 2줄 -> 1.5줄 수준).
 function TopSignalsCard({ topScenario, topIp }) {
   return (
-    <div className="bg-dash-surface rounded-2xl p-4">
-      <p className="text-dash-muted text-xs mb-3">최근 7일 주요 시그널</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="bg-dash-bg rounded-xl p-3">
-          <p className="text-dash-muted text-[11px] mb-1">Top 상관 규칙</p>
-          <p className="text-dash-fg text-sm font-medium truncate">{topScenario?.name || "-"}</p>
-          {topScenario && <p className="text-dash-faint text-[11px] mt-0.5">{topScenario.hit_count}건 적중</p>}
-        </div>
-        <div className="bg-dash-bg rounded-xl p-3">
-          <p className="text-dash-muted text-[11px] mb-1">Top 공격 IP</p>
-          <p className="text-dash-fg text-sm font-medium truncate">{topIp?.name || "-"}</p>
-          {topIp && <p className="text-dash-faint text-[11px] mt-0.5">{topIp.count}건</p>}
-        </div>
+    <div className="bg-dash-surface rounded-xl px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
+        <span className="text-dash-faint text-[10px] uppercase tracking-wide shrink-0">최근 7일 시그널</span>
+        <span className="flex items-baseline gap-1.5 text-xs min-w-0">
+          <span className="text-dash-muted shrink-0">Top 상관 규칙</span>
+          <span className="text-dash-fg font-medium truncate">{topScenario?.name || "-"}</span>
+          {topScenario && <span className="text-dash-faint text-[11px] shrink-0">({topScenario.hit_count}건)</span>}
+        </span>
+        <span className="flex items-baseline gap-1.5 text-xs min-w-0">
+          <span className="text-dash-muted shrink-0">Top 공격 IP</span>
+          <span className="text-dash-fg font-medium truncate">{topIp?.name || "-"}</span>
+          {topIp && <span className="text-dash-faint text-[11px] shrink-0">({topIp.count}건)</span>}
+        </span>
       </div>
     </div>
   );
@@ -225,95 +227,6 @@ function StatusDonut({ incidents }) {
   );
 }
 
-// 차단 기록(감사 트레일용, 실제 트래픽은 안 막힘 - banned_ips_api.py 주석 참고)
-// 테이블. 수동으로 IP를 추가/해제할 수 있다.
-function BannedIpsTable({ bannedIps, status, error, onBan, onUnban }) {
-  const [ip, setIp] = useState("");
-  const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!ip.trim()) return;
-    setSubmitting(true);
-    try {
-      await onBan(ip.trim(), reason.trim() || undefined);
-      setIp("");
-      setReason("");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="bg-dash-surface rounded-2xl p-5">
-      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
-        <div>
-          <h3 className="text-dash-fg text-sm font-semibold">차단된 IP</h3>
-          <p className="text-dash-muted text-xs mt-0.5">GET /banned-ips · 감사 트레일 (실제 트래픽 차단은 아님)</p>
-        </div>
-        <form onSubmit={handleSubmit} className="flex flex-wrap gap-1.5">
-          <input
-            value={ip}
-            onChange={(e) => setIp(e.target.value)}
-            placeholder="IP / CIDR"
-            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
-          />
-          <input
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="사유 (선택)"
-            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
-          />
-          <button
-            type="submit"
-            disabled={submitting || !ip.trim()}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical hover:bg-dash-critical/25 disabled:opacity-50 whitespace-nowrap"
-          >
-            차단
-          </button>
-        </form>
-      </div>
-      {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
-      {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
-      {status === "ready" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-dash-muted text-xs uppercase tracking-wide">
-                <th className="text-left font-medium pb-2">IP / CIDR</th>
-                <th className="text-left font-medium pb-2">사유</th>
-                <th className="text-left font-medium pb-2">차단 시각</th>
-                <th className="text-left font-medium pb-2">조치</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bannedIps.map((b) => (
-                <tr key={b.id} className="border-t border-dash-surfaceAlt">
-                  <td className="py-2.5 pr-3 text-dash-fg font-mono">{b.ip_or_cidr}</td>
-                  <td className="py-2.5 pr-3 text-dash-muted text-xs">{b.reason || "-"}</td>
-                  <td className="py-2.5 pr-3 text-dash-faint text-xs whitespace-nowrap">
-                    {new Date(b.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
-                  </td>
-                  <td className="py-2.5">
-                    <button
-                      onClick={() => onUnban(b.id)}
-                      className="text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
-                    >
-                      해제
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {bannedIps.length === 0 && <p className="text-dash-muted text-xs py-3">현재 차단된 IP가 없습니다.</p>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // 2026-07-16: 좌측 리스트 폭(320px)에 비해 카드 내용(뱃지+제목+MITRE 태그행+
 // 상관키/시각 줄)이 너무 빽빽해서 리스트가 필요 이상으로 넓어 보인다는 피드백 -
 // MITRE 태그행/상관키 텍스트/중복되는 StatusDot을 빼고 심각도+상태+제목+시각만
@@ -382,7 +295,9 @@ function StorylineEntry({ entry, isLast }) {
 export default function IncidentsView({ pushToast }) {
   const { incidents, status, error, reload } = useIncidents({ limit: 200 });
   const { scenarios } = useScenarios();
-  const { bannedIps, status: bannedStatus, error: bannedError, reload: reloadBans } = useBannedIps();
+  // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
+  // 여기서는 "이미 차단됐는지" 판단(alreadyBanned)에만 bannedIps를 쓴다.
+  const { bannedIps, reload: reloadBans } = useBannedIps();
   // Incidents는 로그보다 드물게 발생하므로 7일을 "최근"으로 본다(다른 뷰의
   // 24h 위주 range와 다름 - 원래 mock의 "최근 7일" 문구를 그대로 이어받음).
   const { items: topIps } = useTopIps({ lookbackMs: 7 * 24 * 60 * 60 * 1000, limit: 1 });
@@ -440,25 +355,11 @@ export default function IncidentsView({ pushToast }) {
     }
   }
 
-  async function handleManualBan(ip, reason) {
-    try {
-      await apiPost("/banned-ips", { ip_or_cidr: ip, reason });
-      toast(`${ip} 차단 처리했습니다.`, "success");
-      reloadBans();
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : "IP 차단에 실패했습니다.", "error");
-    }
-  }
-
-  async function handleUnban(bannedIpId) {
-    try {
-      await apiDelete(`/banned-ips/${bannedIpId}`);
-      toast("차단을 해제했습니다.", "success");
-      reloadBans();
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : "차단 해제에 실패했습니다.", "error");
-    }
-  }
+  // 2026-07-16: 차단 IP 수동 추가/해제와 그 목록 테이블(BannedIpsTable)은
+  // Admin/Audit 페이지로 옮겼다 - "소스 IP 차단" 버튼(handleBanSourceIp, 위)만
+  // 조사 중인 인시던트에서 바로 차단하는 용도로 여기 남겨뒀다. bannedIps/
+  // reloadBans는 그 버튼의 "이미 차단됐는지" 배지 표시(alreadyBanned)에 여전히
+  // 필요해서 useBannedIps 훅 자체는 유지.
 
   const exportAdapter = useMemo(() => {
     if (!selected) return null;
@@ -504,14 +405,6 @@ export default function IncidentsView({ pushToast }) {
         <SeverityDonut incidents={incidents} />
         <StatusDonut incidents={incidents} />
       </div>
-
-      <BannedIpsTable
-        bannedIps={bannedIps}
-        status={bannedStatus}
-        error={bannedError}
-        onBan={handleManualBan}
-        onUnban={handleUnban}
-      />
 
       {/* 좌측 폭을 320px -> 240px로 줄였다(2026-07-16) - 카드 내용을 핵심만
           남기고 나니 320px는 과하게 넓었고, 그만큼 우측 상세 패널이 좁았다.

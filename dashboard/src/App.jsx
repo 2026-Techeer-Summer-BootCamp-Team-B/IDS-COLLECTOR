@@ -292,8 +292,13 @@ function AppShell() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
   }
 
+  // font-sans를 뺐다(2026-07-16) - Tailwind font-sans는 클래스 선택자라
+  // index.css의 `body { font-family: var(--dash-font) }`(태그 선택자)보다
+  // 우선순위가 높아서, 여기 있으면 글씨체 선택 기능(useFontFamily)이 아무리
+  // --dash-font를 바꿔도 항상 Tailwind 기본 산세리프로 덮어써져 화면에
+  // 반영이 안 됐다.
   return (
-    <div className="flex min-h-screen bg-dash-bg font-sans">
+    <div className="flex min-h-screen bg-dash-bg">
       <Sidebar
         active={active}
         onSelect={setActive}

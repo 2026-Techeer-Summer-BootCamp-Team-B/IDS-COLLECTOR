@@ -100,8 +100,13 @@ function PipelineHealthPanel() {
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
       <h3 className="text-dash-fg text-sm font-semibold mb-1">파이프라인 상태</h3>
+      {/* 2026-07-16: "Kafka 컨슈머 lag / DLQ 적재량 / clock skew"처럼 용어를
+          그대로 나열해서 뭘 보여주는 패널인지 감이 안 온다는 피드백 - 이 패널이
+          전달하려는 핵심 하나("로그가 밀리지 않고 실시간으로 잘 들어오고 있는가")를
+          먼저 쉬운 말로 설명하고, 원래 기술 용어는 괄호로 보조 설명만 남겼다. */}
       <p className="text-dash-muted text-xs mb-4">
-        Kafka 컨슈머 lag / DLQ 적재량 / 수신 지연(clock skew) — 파이프라인이 유입 속도를 따라가고 있는지 확인
+        로그가 밀리지 않고 실시간으로 잘 들어오고 있는지 보여줍니다 — 아래 숫자들이 낮을수록 정상, 계속 커지면
+        어딘가 막혀서 처리가 밀리고 있다는 뜻입니다
       </p>
 
       {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
@@ -110,7 +115,8 @@ function PipelineHealthPanel() {
       {status !== "loading" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px] mb-2">컨슈머 Lag</p>
+            <p className="text-dash-faint text-[11px]">대기 중인 로그 (컨슈머 Lag)</p>
+            <p className="text-dash-faint text-[10px] mb-2">아직 처리 못 하고 쌓여있는 로그 수 — 많을수록 처리가 밀리는 중</p>
             {consumerLag.length === 0 && <p className="text-dash-muted text-xs">데이터 없음</p>}
             <div className="space-y-2">
               {consumerLag.map((g) => {
@@ -128,7 +134,8 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px] mb-2">DLQ 적재량 (events.dlq)</p>
+            <p className="text-dash-faint text-[11px]">처리 실패한 로그 (DLQ)</p>
+            <p className="text-dash-faint text-[10px] mb-2">정상 처리가 안 돼서 따로 빼놓은 로그 수 — 0이 정상</p>
             {dlqDepth ? (
               <p
                 className="text-2xl font-semibold"
@@ -143,7 +150,8 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px] mb-2">수신 지연 (clock skew)</p>
+            <p className="text-dash-faint text-[11px]">로그 도착까지 걸린 시간</p>
+            <p className="text-dash-faint text-[10px] mb-2">로그가 발생한 순간부터 여기 수집되기까지 걸린 시간 — 짧을수록 실시간에 가까움</p>
             {clockSkew && clockSkew.sample_size > 0 ? (
               <div className="flex gap-4 text-xs">
                 <div>

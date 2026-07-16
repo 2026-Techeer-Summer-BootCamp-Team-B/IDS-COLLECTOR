@@ -19,7 +19,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <div className="min-h-screen bg-dash-bg flex items-center justify-center px-4 font-sans">
+    <div className="min-h-screen bg-dash-bg flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2 mb-8 justify-center">
           <div className="w-9 h-9 rounded-lg bg-dash-mint/20 flex items-center justify-center shrink-0 glow-box-mint">

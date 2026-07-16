@@ -841,13 +841,18 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
+  // 2026-07-16: max-h-80(320px)는 항목 5개 기준으로는 안 채워지고, highlighted
+  // 상태(limit=10)에서는 오히려 이 Card가 놓인 grid 행(왼쪽 Recent Logs와 같은
+  // 행, align-items 기본값 stretch)의 높이에 맞춰 카드가 계속 늘어나 보이는
+  // 문제가 있었다 - self-start로 그 stretch를 끄고, 목록 높이를 "정확히 5줄"
+  // 크기(h-48)로 고정해서 그 이상은 항상 내부 스크롤로만 보이게 했다.
   return (
     <Card
       title="Top Source IPs"
-      subtitle={highlighted ? `전체 ${sources.length}개 IP` : "선택 구간 기준"}
-      className={highlighted ? "glow-box-mint" : ""}
+      subtitle={highlighted ? `전체 ${sources.length}개 IP · 5개 이후 스크롤` : "선택 구간 기준"}
+      className={`self-start ${highlighted ? "glow-box-mint" : ""}`}
     >
-      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+      <div className="space-y-3 h-48 min-h-0 overflow-y-auto pr-1">
         {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
         {status === "error" && (
           <p className="text-dash-critical text-xs">{error || "데이터를 불러오지 못했습니다."}</p>
@@ -2261,7 +2266,7 @@ export function DashboardContent() {
 // Standalone version (own Sidebar + Topbar) — kept for running this file by itself.
 export default function LogDashboard() {
   return (
-    <div className="flex min-h-screen bg-dash-bg font-sans">
+    <div className="flex min-h-screen bg-dash-bg">
       <Sidebar />
       <div className="flex-1 flex flex-col">
         <Topbar />

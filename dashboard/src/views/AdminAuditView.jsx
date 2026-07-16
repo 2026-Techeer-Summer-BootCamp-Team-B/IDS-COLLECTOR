@@ -3,6 +3,7 @@ import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
 import { useTargets } from "../hooks/useTargets";
 import { useAllowList } from "../hooks/useAllowList";
+import { useBannedIps } from "../hooks/useBannedIps";
 import { useScenarios } from "../hooks/useScenarios";
 import { useAlertConfigs } from "../hooks/useAlertConfigs";
 import { useLogPolicies } from "../hooks/useLogPolicies";
@@ -292,6 +293,99 @@ function TargetsPanel({ targets, status, error, onCreate, onToggleActive, onDele
             </tbody>
           </table>
           {targets.length === 0 && <p className="text-dash-muted text-xs py-3">등록된 타깃이 없습니다.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 차단 기록(감사 트레일용, 실제 트래픽은 안 막힘 - banned_ips_api.py 주석 참고)
+// 테이블. 수동으로 IP를 추가/해제할 수 있다. 2026-07-16: Incidents 페이지에
+// 있던 걸 여기로 옮겼다 - "차단 IP 목록 관리"는 allow-list/targets/alert-configs
+// 같은 관리자용 설정이라 조사 화면(Incidents)보다 Admin/Audit이 더 어울린다는
+// 피드백. (인시던트 상세에서 바로 차단하는 "소스 IP 차단" 버튼은 조사 흐름에
+// 필요해서 IncidentsView에 그대로 남아있음 - 이 테이블은 그 전체 목록 관리용.)
+function BannedIpsTable({ bannedIps, status, error, onBan, onUnban }) {
+  const [ip, setIp] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!ip.trim()) return;
+    setSubmitting(true);
+    try {
+      await onBan(ip.trim(), reason.trim() || undefined);
+      setIp("");
+      setReason("");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+        <div>
+          <h3 className="text-dash-fg text-sm font-semibold">차단된 IP</h3>
+          <p className="text-dash-muted text-xs mt-0.5">GET /banned-ips · 감사 트레일 (실제 트래픽 차단은 아님)</p>
+        </div>
+        <form onSubmit={handleSubmit} className="flex flex-wrap gap-1.5">
+          <input
+            value={ip}
+            onChange={(e) => setIp(e.target.value)}
+            placeholder="IP / CIDR"
+            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
+          />
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="사유 (선택)"
+            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
+          />
+          <button
+            type="submit"
+            disabled={submitting || !ip.trim()}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical hover:bg-dash-critical/25 disabled:opacity-50 whitespace-nowrap"
+          >
+            차단
+          </button>
+        </form>
+      </div>
+      {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
+      {status === "ready" && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-dash-muted text-xs uppercase tracking-wide">
+                <th className="text-left font-medium pb-2">IP / CIDR</th>
+                <th className="text-left font-medium pb-2">사유</th>
+                <th className="text-left font-medium pb-2">차단 시각</th>
+                <th className="text-left font-medium pb-2">조치</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bannedIps.map((b) => (
+                <tr key={b.id} className="border-t border-dash-surfaceAlt">
+                  <td className="py-2.5 pr-3 text-dash-fg font-mono">{b.ip_or_cidr}</td>
+                  <td className="py-2.5 pr-3 text-dash-muted text-xs">{b.reason || "-"}</td>
+                  <td className="py-2.5 pr-3 text-dash-faint text-xs whitespace-nowrap">
+                    {new Date(b.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
+                  </td>
+                  <td className="py-2.5">
+                    <button
+                      onClick={() => onUnban(b.id)}
+                      className="text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
+                    >
+                      해제
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {bannedIps.length === 0 && <p className="text-dash-muted text-xs py-3">현재 차단된 IP가 없습니다.</p>}
         </div>
       )}
     </div>
@@ -653,6 +747,8 @@ export default function AdminAuditView({ pushToast }) {
     error: logPoliciesError,
     reload: reloadLogPolicies,
   } = useLogPolicies();
+  // 2026-07-16: 차단 IP 목록 관리(BannedIpsTable)를 Incidents에서 옮겨왔다.
+  const { bannedIps, status: bannedIpsStatus, error: bannedIpsError, reload: reloadBannedIps } = useBannedIps();
   const [activeTab, setActiveTab] = useState("policy");
 
   function toast(message, tone) {
@@ -754,6 +850,26 @@ export default function AdminAuditView({ pushToast }) {
     }
   }
 
+  async function handleBanIp(ip, reason) {
+    try {
+      await apiPost("/banned-ips", { ip_or_cidr: ip, reason });
+      toast(`${ip} 차단 처리했습니다.`, "success");
+      reloadBannedIps();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "IP 차단에 실패했습니다.", "error");
+    }
+  }
+
+  async function handleUnbanIp(bannedIpId) {
+    try {
+      await apiDelete(`/banned-ips/${bannedIpId}`);
+      toast("차단을 해제했습니다.", "success");
+      reloadBannedIps();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "차단 해제에 실패했습니다.", "error");
+    }
+  }
+
   async function handleCreateAllowListEntry(body) {
     try {
       await apiPost("/allow-list", body);
@@ -817,8 +933,11 @@ export default function AdminAuditView({ pushToast }) {
             </p>
             {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
             {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
+            {/* 룰이 많아지면 목록이 끝없이 길어지던 문제(2026-07-16) - 10개
+                높이로 고정하고 그 이상은 내부 스크롤로. IncidentsView 좌측
+                목록과 같은 패턴(max-h + overflow-y-auto). */}
             {scenariosStatus === "ready" && (
-              <div>
+              <div className="max-h-[560px] overflow-y-auto pr-2">
                 {rankedScenarios.map((r, i) => (
                   <RuleRow key={r.id} rule={r} rank={i + 1} onToggle={() => handleToggleScenario(r._raw)} />
                 ))}
@@ -831,6 +950,14 @@ export default function AdminAuditView({ pushToast }) {
 
       {activeTab === "targets" && (
         <div className="space-y-6">
+          <BannedIpsTable
+            bannedIps={bannedIps}
+            status={bannedIpsStatus}
+            error={bannedIpsError}
+            onBan={handleBanIp}
+            onUnban={handleUnbanIp}
+          />
+
           <AllowListPanel
             entries={allowList}
             status={allowListStatus}
