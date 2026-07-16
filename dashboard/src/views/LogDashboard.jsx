@@ -2225,7 +2225,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label={`Total Logs (${preset.label})`}
-            value={kpiStatus === "ready" ? `${kpi.current.total.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
             onClick={() => setKpiFilter("ALL")}
@@ -2236,7 +2236,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Errors (Major~Critical)"
-            value={kpiStatus === "ready" ? `${kpi.current.errors.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
             onClick={() => setKpiFilter("ERROR")}
@@ -2248,7 +2248,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Warnings (Minor)"
-            value={kpiStatus === "ready" ? `${kpi.current.warnings.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
             onClick={() => setKpiFilter("WARNING")}
@@ -2259,7 +2259,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Active Sources"
-            value={kpiStatus === "ready" ? `${kpi.current.sources}개` : "-"}
+            value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
             delta={
               kpiStatus === "ready" && kpi.sources_delta !== 0
                 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new`
@@ -2274,7 +2274,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="총 BLOCKED (WAF)"
-            value={kpiStatus === "ready" ? `${kpi.current.blocked.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.blocked ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.blocked != null ? `${Math.abs(kpi.delta_pct.blocked)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.blocked ?? 0) <= 0 : true}
             accent="critical"
@@ -2322,7 +2322,7 @@ export function DashboardContent() {
   const kpiTotalWidget = (
     <KpiCard
       label={`Total Logs (${preset.label})`}
-      value={kpiStatus === "ready" ? `${kpi.current.total.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
       onClick={() => setKpiFilter("ALL")}
@@ -2332,7 +2332,7 @@ export function DashboardContent() {
   const kpiErrorsWidget = (
     <KpiCard
       label="Errors (Major~Critical)"
-      value={kpiStatus === "ready" ? `${kpi.current.errors.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
       onClick={() => setKpiFilter("ERROR")}
@@ -2343,7 +2343,7 @@ export function DashboardContent() {
   const kpiWarningsWidget = (
     <KpiCard
       label="Warnings (Minor)"
-      value={kpiStatus === "ready" ? `${kpi.current.warnings.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
       onClick={() => setKpiFilter("WARNING")}
@@ -2353,7 +2353,7 @@ export function DashboardContent() {
   const kpiSourcesWidget = (
     <KpiCard
       label="Active Sources"
-      value={kpiStatus === "ready" ? `${kpi.current.sources}개` : "-"}
+      value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
       delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
       positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
       onClick={() => setKpiFilter("SOURCES")}
@@ -2366,7 +2366,7 @@ export function DashboardContent() {
   const kpiBlockedWidget = (
     <KpiCard
       label="총 BLOCKED (WAF)"
-      value={kpiStatus === "ready" ? `${kpi.current.blocked.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.blocked ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.blocked != null ? `${Math.abs(kpi.delta_pct.blocked)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.blocked ?? 0) <= 0 : true}
       accent="critical"
