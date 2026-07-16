@@ -194,27 +194,21 @@ function intensityColor(count, max, C) {
   return C.surfaceAlt;
 }
 
-// DONUT_PALETTE 톤(테라코타/앰버/스틸블루)은 중간~어두운 채도라 흰 글자가 다시
-// 잘 읽힌다 - 무채색 "공격 없음" 타일만 어두운 surface 계열이라 밝은 글자.
-function intensityTextColor(count, max, C) {
-  return max && count > 0 ? "#FFFFFF" : C.fg;
-}
-
 function truncateLabel(name, max = 16) {
   if (!name) return "-";
   return name.length > max ? `${name.slice(0, max - 1)}…` : name;
 }
 
-// 2026-07-16(2차): Treemap 버전이 "여전히 시각적으로 이상하다"는 피드백 -
-// recharts Treemap의 squarify 알고리즘이 파드 개수/건수 편차가 클 때 극단적으로
-// 가늘고 긴 셀을 만들어서 라벨이 다 안 보이거나 레이아웃이 어색해지는 문제가
-// 있었다. Treemap(면적 비교)을 완전히 버리고, "클러스터 구조"라는 이름 그대로
-// 실제 위계(Cluster → Namespace → Pod)를 나뭇가지 다이어그램으로 그리는 방식으로
-// 바꿨다 - recharts 없이 순수 SVG(원/알약 노드 + 곡선 연결선)라 레이아웃이
-// 항상 예측 가능하고 안정적이다. 색/강조는 그대로 intensityColor 재사용.
+// 2026-07-16(8차): "클러스터 구조는 그래프로 그냥 나타내줘"라는 피드백 - 이전
+// 버전(알약 모양 노드 + 범례 4줄 + 색 강도 설명)이 여러 차례(#174/#183/#197)
+// 손봐도 "이게 뭘 뜻하는지 모르겠다"는 얘기가 반복돼서, 아예 설명을 덜어내고
+// 정석적인 노드-엣지 네트워크 그래프(원 노드 + 직선 엣지)로 단순화했다 - 사용자가
+// 직접 고른 방향("단순 노드-엣지 네트워크 그래프"). Cluster/Namespace/Pod
+// 전부 원으로 통일하고, 계층은 크기로만 구분(Cluster > Namespace > Pod),
+// 공격 집중도는 그대로 intensityColor로 색만 인코딩한다.
 function ClusterTopologyDiagram({ data, C }) {
-  const NODE_GAP = 30; // 같은 네임스페이스 안 파드 노드 사이 세로 간격
-  const ROW_GAP = 18; // 네임스페이스 블록 사이 세로 간격
+  const NODE_GAP = 34; // 같은 네임스페이스 안 파드 노드 사이 세로 간격
+  const ROW_GAP = 20; // 네임스페이스 블록 사이 세로 간격
 
   const rows = data.map((ns) => {
     const podsHeight = Math.max(0, ns.pods.length - 1) * NODE_GAP;
@@ -235,58 +229,52 @@ function ClusterTopologyDiagram({ data, C }) {
   const maxPodCount = Math.max(1, ...data.flatMap((r) => r.pods.map((p) => p.count)));
 
   const X_ROOT = 34;
-  const X_NS = 200;
+  const X_NS = 210;
   const X_POD = 400;
   const width = 500;
+  const R_ROOT = 15;
+  const R_NS = 11;
+  const R_POD = 7;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="클러스터 네임스페이스/파드 구조">
-      <circle cx={X_ROOT} cy={rootY} r={14} fill={C.surfaceAlt} stroke={C.faint} strokeWidth={1.5} />
-      <text x={X_ROOT} y={rootY + 28} textAnchor="middle" fontSize={10} fill={C.muted}>
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="클러스터 네임스페이스/파드 네트워크 그래프">
+      <circle cx={X_ROOT} cy={rootY} r={R_ROOT} fill="none" stroke={C.muted} strokeWidth={1.5} />
+      <circle cx={X_ROOT} cy={rootY} r={3} fill={C.muted} />
+      <text x={X_ROOT} y={rootY + R_ROOT + 14} textAnchor="middle" fontSize={9} fill={C.muted}>
         Cluster
       </text>
 
       {positioned.map((ns) => {
         const nsFill = intensityColor(ns.total, maxNsTotal, C);
-        const nsText = intensityTextColor(ns.total, maxNsTotal, C);
         const podStartY = ns.centerY - ((ns.pods.length - 1) * NODE_GAP) / 2;
         return (
           <g key={ns.name}>
-            <path
-              d={`M ${X_ROOT + 14} ${rootY} C ${(X_ROOT + X_NS) / 2} ${rootY}, ${(X_ROOT + X_NS) / 2} ${ns.centerY}, ${X_NS - 50} ${ns.centerY}`}
-              fill="none"
-              stroke={C.surfaceAlt}
-              strokeWidth={1.5}
-            />
-            <rect x={X_NS - 50} y={ns.centerY - 13} width={100} height={26} rx={13} fill={nsFill} />
-            <text x={X_NS} y={ns.centerY + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill={nsText}>
+            {/* 엣지: Cluster -> Namespace */}
+            <line x1={X_ROOT + R_ROOT} y1={rootY} x2={X_NS - R_NS} y2={ns.centerY} stroke={C.surfaceAlt} strokeWidth={1.5} />
+            <circle cx={X_NS} cy={ns.centerY} r={R_NS} fill={nsFill} stroke={C.bg} strokeWidth={1.5} />
+            <text x={X_NS} y={ns.centerY - R_NS - 5} textAnchor="middle" fontSize={10} fontWeight={600} fill={C.fg}>
               {truncateLabel(ns.name, 14)}
             </text>
-            <text x={X_NS} y={ns.centerY - 20} textAnchor="middle" fontSize={9} fill={C.faint}>
+            <text x={X_NS} y={ns.centerY + R_NS + 12} textAnchor="middle" fontSize={8.5} fill={C.faint}>
               {ns.total}건
             </text>
 
             {ns.pods.map((pod, i) => {
               const podY = podStartY + i * NODE_GAP;
               const podFill = intensityColor(pod.count, maxPodCount, C);
-              const podText = intensityTextColor(pod.count, maxPodCount, C);
               return (
                 <g key={pod.name}>
-                  <path
-                    d={`M ${X_NS + 50} ${ns.centerY} C ${(X_NS + X_POD) / 2} ${ns.centerY}, ${(X_NS + X_POD) / 2} ${podY}, ${X_POD - 44} ${podY}`}
-                    fill="none"
-                    stroke={C.surfaceAlt}
-                    strokeWidth={1}
-                  />
-                  <rect x={X_POD - 44} y={podY - 10} width={88} height={20} rx={5} fill={podFill} />
-                  <text x={X_POD} y={podY + 4} textAnchor="middle" fontSize={9} fill={podText}>
-                    {truncateLabel(pod.name, 13)}
+                  {/* 엣지: Namespace -> Pod */}
+                  <line x1={X_NS + R_NS} y1={ns.centerY} x2={X_POD - R_POD} y2={podY} stroke={C.surfaceAlt} strokeWidth={1} />
+                  <circle cx={X_POD} cy={podY} r={R_POD} fill={podFill} stroke={C.bg} strokeWidth={1} />
+                  <text x={X_POD + R_POD + 6} y={podY + 3} fontSize={9} fill={C.muted}>
+                    {truncateLabel(pod.name, 15)}
                   </text>
                 </g>
               );
             })}
             {ns.moreCount > 0 && (
-              <text x={X_POD} y={ns.centerY + ((ns.pods.length - 1) * NODE_GAP) / 2 + 24} textAnchor="middle" fontSize={9} fill={C.faint}>
+              <text x={X_POD + R_POD + 6} y={ns.centerY + ((ns.pods.length - 1) * NODE_GAP) / 2 + 24} fontSize={9} fill={C.faint}>
                 +{ns.moreCount}개 더
               </text>
             )}
@@ -387,37 +375,12 @@ export default function InfrastructureView() {
           패널이 이제 이 줄을 단독으로 차지한다. */}
       <div className="bg-dash-surface rounded-2xl p-5">
         <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
-        <p className="text-dash-muted text-xs mb-3">
-          어느 K8s 네임스페이스/파드가 공격 대상이 됐는지 보여주는 계층도입니다 (네임스페이스 상위 5개, 파드 상위 3개)
+        {/* 2026-07-16(8차): "그래프로 그냥 나타내줘"라는 피드백 - 범례 줄을 다
+            걷어내고, 무엇을 보고 있는지는 서브타이틀 한 줄로만 남겼다. 나머지는
+            그래프 자체(원 크기 = 계층, 색 = 공격 집중도)로 읽히게 한다. */}
+        <p className="text-dash-muted text-xs mb-4">
+          Cluster → Namespace → Pod 네트워크 그래프 · 색이 진할수록 공격이 몰린 곳 (네임스페이스 상위 5개, 파드 상위 3개)
         </p>
-        {/* 2026-07-16(4차): "클러스터 구조가 뭘 나타낸건지 모르겠다"는 피드백이
-            재차 나와서, 서브타이틀 문장 하나로는 부족하다고 보고 범례를 별도
-            줄로 추가했다 - 3단계 위계(Cluster/Namespace/Pod)가 뭔지 + 노드 색이
-            진할수록 공격이 몰렸다는 뜻이라는 것을 아이콘/그라데이션으로 보여준다. */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-4 text-[10px] text-dash-muted">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-dash-surfaceAlt border border-dash-faint" />
-            Cluster (전체 K8s 클러스터 1개)
-          </span>
-          <span className="text-dash-faint">→</span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: intensityColor(1, 1, C) }} />
-            Namespace (앱 그룹)
-          </span>
-          <span className="text-dash-faint">→</span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: intensityColor(1, 1, C) }} />
-            Pod (실제 컨테이너)
-          </span>
-          <span className="ml-auto flex items-center gap-1.5">
-            <span className="text-dash-faint">공격 적음</span>
-            <span
-              className="w-10 h-2 rounded-full"
-              style={{ background: `linear-gradient(90deg, ${C.surfaceAlt}, ${C.critical})` }}
-            />
-            <span className="text-dash-faint">많음</span>
-          </span>
-        </div>
         {targetsStatus === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
         {targetsStatus === "error" && <p className="text-dash-critical text-xs py-2">{targetsError}</p>}
         {targetsStatus === "ready" && targets.length === 0 && (

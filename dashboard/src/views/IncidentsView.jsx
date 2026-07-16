@@ -254,10 +254,12 @@ function TopAttackTypesBarChart({ scenarios }) {
       <p className="text-dash-muted text-xs mb-3">
         어떤 상관 규칙(공격 패턴)이 인시던트를 가장 많이 만들었는지 · GET /scenarios 기준
       </p>
+      {/* 2026-07-16(8차): "높이를 조금 줄여도 될 거 같다"는 피드백 - 행당
+          높이를 44 -> 36, 최소 높이를 180 -> 160으로 줄였다. */}
       {data.length === 0 ? (
         <p className="text-dash-muted text-xs py-3">적중된 상관 규칙이 없습니다.</p>
       ) : (
-        <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44)}>
+        <ResponsiveContainer width="100%" height={Math.max(160, data.length * 36)}>
           <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
             <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
             <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
