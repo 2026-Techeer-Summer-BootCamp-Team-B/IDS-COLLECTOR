@@ -182,10 +182,10 @@ export default function WAFView() {
       </div>
 
       <div className="flex flex-wrap gap-4">
-        <KpiCard label={`Total Detections (${preset.label})`} value={totalRequests.toLocaleString()} />
-        <KpiCard label="Blocked" value={blockedCount} accent="critical" />
-        <KpiCard label="High/Critical Risk" value={highRiskCount} accent="critical" />
-        <KpiCard label="Top Attack Type" value={topAttackType ? topAttackType.count : "-"} delta={topAttackType?.label} positive />
+        <KpiCard label={`Total Detections (${preset.label})`} value={`${totalRequests.toLocaleString()}건`} />
+        <KpiCard label="Blocked" value={`${blockedCount}건`} accent="critical" />
+        <KpiCard label="High/Critical Risk" value={`${highRiskCount}건`} accent="critical" />
+        <KpiCard label="Top Attack Type" value={topAttackType ? `${topAttackType.count}건` : "-"} delta={topAttackType?.label} positive />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">

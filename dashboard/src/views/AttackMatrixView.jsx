@@ -90,6 +90,18 @@ export default function AttackMatrixView({ onNavigateToIncident } = {}) {
               <span className="w-2 h-2 rounded-sm bg-dash-surfaceAlt inline-block" /> 미탐지
             </span>
           </div>
+          {/* 2026-07-16: "총 개수가 이상하다"는 피드백 - 실제로는 버그가 아니라
+              두 가지가 안 알려져서 그랬다. (1) 전체 MITRE ATT&CK(수백 개)가 아니라
+              이 프로젝트가 실제로 탐지하는 컨테이너/K8s 관련 기법만 담은 30개
+              카탈로그(servers/shared/ids_shared/mitre_mapping.py CONTAINERS_MATRIX)
+              기준이다. (2) T1133/T1098처럼 전술 여러 개에 걸치는 기법은 아래
+              매트릭스에 열마다 반복해서 나오지만(그래야 어느 전술 단계에서도
+              보임), 총 개수·퍼센트는 "고유 기법 수" 기준이라 매트릭스에 보이는
+              칸 수를 세면 이 숫자보다 많게 느껴질 수 있다 - 버그 아님. */}
+          <p className="text-dash-faint text-[10px] mt-1 max-w-[220px] leading-relaxed">
+            전체 MITRE ATT&CK가 아니라 이 프로젝트가 탐지하는 컨테이너/K8s 관련 기법 {totalTechniques}개 기준
+            (고유 기법 수 — 여러 전술에 걸친 기법은 매트릭스에 중복 표시돼도 한 번만 셈)
+          </p>
         </div>
       </div>
 

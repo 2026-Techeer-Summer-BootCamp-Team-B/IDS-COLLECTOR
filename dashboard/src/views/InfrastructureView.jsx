@@ -339,7 +339,6 @@ export default function InfrastructureView() {
   const C = CHART_COLORS[theme];
   const { targets, status: targetsStatus, error: targetsError } = useK8sTargets({ limit: 20 });
   const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 10 });
-  const maxTarget = targets[0]?.count || 1;
 
   const byNamespace = useMemo(() => {
     const map = {};
@@ -382,55 +381,53 @@ export default function InfrastructureView() {
       <PipelineHealthPanel />
       <SourceHealthPanel />
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-dash-surface rounded-2xl p-5">
-          <h3 className="text-dash-fg text-sm font-semibold mb-1">Top 공격 대상 (Namespace / Resource)</h3>
-          <p className="text-dash-muted text-xs mb-4">전체 기간 · 공격 탐지 건수 기준 순위</p>
-          {targetsStatus === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
-          {targetsStatus === "error" && <p className="text-dash-critical text-xs py-2">{targetsError}</p>}
-          {targetsStatus === "ready" && targets.length === 0 && (
-            <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
-          )}
-          <div className="space-y-2.5">
-            {targets.slice(0, 8).map((t, i) => (
-              <div key={`${t.namespace}/${t.pod}`} className="flex items-center gap-3">
-                <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
-                <div className="flex-1">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-dash-fg">
-                      {t.namespace} <span className="text-dash-muted">/ {t.pod}</span>
-                    </span>
-                    <span className="text-dash-muted">{t.count}건</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${(t.count / maxTarget) * 100}%`,
-                        backgroundColor: intensityColor(t.count, maxTarget, C),
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
+      {/* 2026-07-16(3차): "Top 공격 대상" 패널 제거 - 바로 옆 "클러스터 구조"
+          다이어그램이 같은 데이터(K8s 타겟 namespace/pod별 건수)를 계층 구조로
+          이미 보여주고 있어서 막대 목록이 중복이라는 피드백. 클러스터 구조
+          패널이 이제 이 줄을 단독으로 차지한다. */}
+      <div className="bg-dash-surface rounded-2xl p-5">
+        <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
+        <p className="text-dash-muted text-xs mb-3">
+          어느 K8s 네임스페이스/파드가 공격 대상이 됐는지 보여주는 계층도입니다 (네임스페이스 상위 5개, 파드 상위 3개)
+        </p>
+        {/* 2026-07-16(4차): "클러스터 구조가 뭘 나타낸건지 모르겠다"는 피드백이
+            재차 나와서, 서브타이틀 문장 하나로는 부족하다고 보고 범례를 별도
+            줄로 추가했다 - 3단계 위계(Cluster/Namespace/Pod)가 뭔지 + 노드 색이
+            진할수록 공격이 몰렸다는 뜻이라는 것을 아이콘/그라데이션으로 보여준다. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-4 text-[10px] text-dash-muted">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-dash-surfaceAlt border border-dash-faint" />
+            Cluster (전체 K8s 클러스터 1개)
+          </span>
+          <span className="text-dash-faint">→</span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: intensityColor(1, 1, C) }} />
+            Namespace (앱 그룹)
+          </span>
+          <span className="text-dash-faint">→</span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: intensityColor(1, 1, C) }} />
+            Pod (실제 컨테이너)
+          </span>
+          <span className="ml-auto flex items-center gap-1.5">
+            <span className="text-dash-faint">공격 적음</span>
+            <span
+              className="w-10 h-2 rounded-full"
+              style={{ background: `linear-gradient(90deg, ${C.surfaceAlt}, ${C.critical})` }}
+            />
+            <span className="text-dash-faint">많음</span>
+          </span>
+        </div>
+        {targetsStatus === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
+        {targetsStatus === "error" && <p className="text-dash-critical text-xs py-2">{targetsError}</p>}
+        {targetsStatus === "ready" && targets.length === 0 && (
+          <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
+        )}
+        {targetsStatus === "ready" && targets.length > 0 && (
+          <div className="overflow-x-auto">
+            <ClusterTopologyDiagram data={clusterTopology} C={C} />
           </div>
-        </div>
-
-        <div className="bg-dash-surface rounded-2xl p-5">
-          <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
-          <p className="text-dash-muted text-xs mb-4">
-            Cluster → Namespace → Pod · 진할수록 공격이 몰린 곳 (네임스페이스 상위 5개, 파드 상위 3개)
-          </p>
-          {targetsStatus === "ready" && targets.length === 0 && (
-            <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
-          )}
-          {targetsStatus === "ready" && targets.length > 0 && (
-            <div className="overflow-x-auto">
-              <ClusterTopologyDiagram data={clusterTopology} C={C} />
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

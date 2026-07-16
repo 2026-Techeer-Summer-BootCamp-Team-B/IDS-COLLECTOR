@@ -1,6 +1,7 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme";
+import OnboardingSection from "./onboarding/OnboardingSection";
 
 // 2026-07-16: 처음 로그인하는 사용자가 "이 대시보드에 뭐가 있지?"부터 궁금할 것
 // 같다는 피드백 - App.jsx의 NAV_ITEMS/LAYER_NAV_ITEMS와 같은 5개 메인 페이지를
@@ -8,145 +9,10 @@ import { useTheme } from "../hooks/useTheme";
 // 파랑·네온 없음)이라 예전처럼 페이지별 accent 컬러는 안 쓰고 전부 흰색/회색 톤으로
 // 통일했다.
 //
-// video/image는 아직 실제 파일이 없어서 지금은 항상 플레이스홀더가 뜬다 -
-// dashboard/public/onboarding/ 아래에 같은 파일명으로 넣으면(예: overview.mp4)
-// 바로 그 자리에 재생된다. Vite는 public/ 밑을 그대로 빌드 결과물 루트로
-// 복사하므로 코드에서는 "/onboarding/xxx.mp4"처럼 절대경로로 참조하면 된다
-// (로컬 개발 서버·Vercel 배포 둘 다 동일하게 동작).
-const FEATURE_PAGES = [
-  {
-    key: "overview",
-    label: "Overview",
-    desc: "전체 로그 및 위협 현황을 실시간으로 한눈에 확인",
-    video: "/onboarding/overview.mp4",
-    image: "/onboarding/overview.png",
-  },
-  {
-    key: "incidents",
-    label: "Incidents",
-    desc: "상관분석을 통해 여러 이벤트를 하나의 공격 인시던트로 통합",
-    video: "/onboarding/incidents.mp4",
-    image: "/onboarding/incidents.png",
-  },
-  {
-    key: "attack",
-    label: "ATT&CK",
-    desc: "MITRE ATT&CK 기반 탐지 기법 및 커버리지 현황",
-    video: "/onboarding/attack.mp4",
-    image: "/onboarding/attack.png",
-  },
-  {
-    key: "infra",
-    label: "Infrastructure",
-    desc: "로그 파이프라인 상태와 공격이 집중되는 Kubernetes 클러스터 모니터링",
-    video: "/onboarding/infra.mp4",
-    image: "/onboarding/infra.png",
-  },
-  {
-    key: "admin",
-    label: "Admin / Audit",
-    desc: "탐지 정책, 알림 채널, 차단 IP 관리 및 관리자 감사 로그",
-    video: "/onboarding/admin.mp4",
-    image: "/onboarding/admin.png",
-  },
-];
-
-// 미디어 로드 실패는 카드별로 독립 추적(각 카드가 자기 state를 들고 있음) -
-// 영상이 없거나 깨졌으면 이미지로, 이미지도 없으면 플레이스홀더 블록으로 조용히
-// 대체한다(로고와 같은 onError 폴백 패턴). 이미지가 object-contain인 이유는
-// 대시보드 스크린샷은 폭이 넓은 경우가 많아서 object-cover로 자르면 양옆이
-// 잘려나가 "화면이 깨진 것처럼" 보인다는 피드백 때문 - 검정 레터박스를 감수하고
-// 원본 비율 그대로 다 보이게 했다.
-function OnboardingCard({ page }) {
-  const [videoFailed, setVideoFailed] = useState(false);
-  const [imageFailed, setImageFailed] = useState(false);
-  // 2026-07-16: 자동재생 영상을 사용자가 멈출 수 있어야 한다는 피드백 - video
-  // 엘리먼트를 ref로 직접 잡고 play()/pause()를 토글한다. isPlaying은 autoPlay
-  // 기본값(true)에서 시작해서 버튼을 누를 때만 바뀐다.
-  const videoRef = useRef(null);
-  const [isPlaying, setIsPlaying] = useState(true);
-
-  const showVideo = page.video && !videoFailed;
-  const showImage = !showVideo && page.image && !imageFailed;
-  const showPlaceholder = !showVideo && !showImage;
-
-  function togglePlay() {
-    const el = videoRef.current;
-    if (!el) return;
-    if (el.paused) {
-      el.play();
-      setIsPlaying(true);
-    } else {
-      el.pause();
-      setIsPlaying(false);
-    }
-  }
-
-  return (
-    <div>
-      {/* 2026-07-16: 설명 문구가 영상 "아래"에 있던 걸 "위"로 옮겨달라는 요청 -
-          텍스트 블록을 미디어 박스보다 먼저 렌더링한다. */}
-      <div className="pb-3">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-white/60 shrink-0" />
-          <p className="text-white text-sm font-semibold">{page.label}</p>
-        </div>
-        <p className="text-white/55 text-xs leading-relaxed">{page.desc}</p>
-      </div>
-
-      {/* 2026-07-16: 페이지 전체 폭을 1240px 스케일로 넓히면서 미디어 박스도
-          고정 h-96 대신 aspect-video(16:9)로 바꿔 넓어진 폭에 맞춰 자연스럽게
-          커지도록 했다(넓은 화면에서는 커지고, 좁은 화면에서는 알아서 줄어듦). */}
-      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/50 border border-white/10">
-        {showVideo && (
-          <video
-            ref={videoRef}
-            src={page.video}
-            className="w-full h-full object-cover"
-            autoPlay
-            muted
-            loop
-            playsInline
-            onError={() => setVideoFailed(true)}
-          />
-        )}
-        {showImage && (
-          <img
-            src={page.image}
-            alt={page.label}
-            className="w-full h-full object-contain bg-black"
-            onError={() => setImageFailed(true)}
-          />
-        )}
-        {showPlaceholder && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/70">
-            <span className="text-white/35 text-xs">{page.label} 화면 준비 중</span>
-          </div>
-        )}
-
-        {showVideo && (
-          <button
-            type="button"
-            onClick={togglePlay}
-            aria-label={isPlaying ? "영상 멈추기" : "영상 재생"}
-            className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
-          >
-            {isPlaying ? (
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <rect x="3" y="2" width="4" height="12" rx="1" />
-                <rect x="9" y="2" width="4" height="12" rx="1" />
-              </svg>
-            ) : (
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M4 2.5v11l10-5.5-10-5.5Z" />
-              </svg>
-            )}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+// 2026-07-16(2차): 온보딩 카드 5개 + 그 렌더러가 전부 이 파일 안에 있던 걸
+// components/onboarding/ 폴더로 분리했다("각 페이지마다 각 컴포넌트로" 요청) -
+// 이 파일은 이제 OnboardingSection 하나만 가져다 쓴다. 개별 카드 내용은
+// components/onboarding/OverviewOnboardingCard.jsx 등을 참고.
 
 // 상단 툴바의 마이크/카메라/화면공유/전체화면 아이콘 - 참고 스타일 프롬프트에
 // 있던 장식용 요소라 실제 동작은 없다(로그인 화면에 화상회의 컨트롤이 있을
@@ -364,14 +230,7 @@ export default function LoginScreen() {
           </form>
         </div>
 
-        <div className="bg-black/35 backdrop-blur-xl rounded-2xl border border-white/10 shadow-xl p-5">
-          <p className="text-white/45 text-[11px] uppercase tracking-wide mb-4 px-1">대시보드 둘러보기</p>
-          <div className="space-y-6 max-h-[80vh] overflow-y-auto pr-2">
-            {FEATURE_PAGES.map((page) => (
-              <OnboardingCard key={page.key} page={page} />
-            ))}
-          </div>
-        </div>
+        <OnboardingSection />
       </div>
     </div>
   );

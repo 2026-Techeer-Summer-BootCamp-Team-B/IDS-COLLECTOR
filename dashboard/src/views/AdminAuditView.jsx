@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
+import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
+import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
 import { useTargets } from "../hooks/useTargets";
@@ -142,6 +145,42 @@ function RuleRow({ rule, rank, onToggle }) {
       <span className="text-dash-fg text-sm font-semibold w-14 text-right shrink-0">{rule.hits}건</span>
       <RuleToggle enabled={rule.enabled} onToggle={() => onToggle?.(rule.id)} />
     </div>
+  );
+}
+
+// 룰이 많아지면 전체 목록에서 "뭐가 제일 많이 잡혔는지"가 한눈에 안 들어온다는
+// 피드백 - 전체 목록(스크롤)은 그대로 두고 그 위에 적중 건수 상위 5개만 뽑아
+// 가로 막대로 보여준다. 룰 이름이 길어서 Y축 라벨을 잘라 보여주고, 잘린 이름은
+// Tooltip에서 전체를 다시 보여준다.
+function RuleRankingBarChart({ data, C }) {
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44)}>
+      <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
+        <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
+        <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
+        <YAxis
+          type="category"
+          dataKey="name"
+          stroke={C.muted}
+          tickLine={false}
+          axisLine={false}
+          fontSize={11}
+          width={140}
+          tickFormatter={(v) => (v.length > 16 ? `${v.slice(0, 16)}…` : v)}
+        />
+        <Tooltip
+          contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+          cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+          formatter={(value) => [`${value}건`, "적중 건수"]}
+          labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+        />
+        <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+          {data.map((d, i) => (
+            <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -750,6 +789,8 @@ export default function AdminAuditView({ pushToast }) {
   // 2026-07-16: 차단 IP 목록 관리(BannedIpsTable)를 Incidents에서 옮겨왔다.
   const { bannedIps, status: bannedIpsStatus, error: bannedIpsError, reload: reloadBannedIps } = useBannedIps();
   const [activeTab, setActiveTab] = useState("policy");
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
 
   function toast(message, tone) {
     pushToast?.(message, tone);
@@ -897,6 +938,9 @@ export default function AdminAuditView({ pushToast }) {
     () => scenarios.map((s) => ({ id: s.id, name: s.name, description: describeScenario(s), hits: s.hit_count, enabled: s.enabled, _raw: s })),
     [scenarios]
   );
+  // 위 rankedScenarios가 이미 hit_count 내림차순이므로 앞 5개만 잘라내면 그대로
+  // TOP 5 - 막대그래프용으로 별도 정렬 로직 불필요.
+  const top5Scenarios = useMemo(() => rankedScenarios.slice(0, 5), [rankedScenarios]);
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -927,7 +971,22 @@ export default function AdminAuditView({ pushToast }) {
           </div>
 
           <div className="bg-dash-surface rounded-2xl p-5">
-            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹</h3>
+            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹 TOP 5</h3>
+            <p className="text-dash-muted text-xs mb-3">
+              적중 건수가 가장 많은 룰 5개 — 아래 전체 목록과 같은 GET /scenarios 데이터 기준
+            </p>
+            {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+            {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
+            {scenariosStatus === "ready" && top5Scenarios.length > 0 && (
+              <RuleRankingBarChart data={top5Scenarios} C={C} />
+            )}
+            {scenariosStatus === "ready" && top5Scenarios.length === 0 && (
+              <p className="text-dash-muted text-xs py-3">등록된 탐지 룰이 없습니다.</p>
+            )}
+          </div>
+
+          <div className="bg-dash-surface rounded-2xl p-5">
+            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰 전체 목록</h3>
             <p className="text-dash-muted text-xs mb-1">
               GET /scenarios · 실제 인시던트 적중 건수 기준 · 총 {scenarios.length}개 룰 · 스위치로 켜고 끌 수 있음
             </p>

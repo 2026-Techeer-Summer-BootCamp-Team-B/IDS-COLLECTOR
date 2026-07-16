@@ -155,10 +155,10 @@ export default function FalcoView() {
       </div>
 
       <div className="flex flex-wrap gap-4">
-        <KpiCard label={`Total Events (${preset.label})`} value={totalEvents.toLocaleString()} />
-        <KpiCard label="Notable (Major~Critical)" value={notableCount} accent="critical" />
-        <KpiCard label="Distinct Pods" value={distinctPods} />
-        <KpiCard label="Top Rule" value={topRule ? topRule.count : "-"} delta={topRule?.label} positive />
+        <KpiCard label={`Total Events (${preset.label})`} value={`${totalEvents.toLocaleString()}건`} />
+        <KpiCard label="Notable (Major~Critical)" value={`${notableCount}건`} accent="critical" />
+        <KpiCard label="Distinct Pods" value={`${distinctPods}개`} />
+        <KpiCard label="Top Rule" value={topRule ? `${topRule.count}건` : "-"} delta={topRule?.label} positive />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">

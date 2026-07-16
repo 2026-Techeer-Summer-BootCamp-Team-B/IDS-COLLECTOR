@@ -547,7 +547,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip contentStyle={tooltipStyle(C)} />
+                <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
                 <Area type="monotone" dataKey="total" stroke={totalColor} fill="url(#volumeFill)" strokeWidth={2} />
                 <Area type="monotone" dataKey="errorish" stroke={errorColor} fill="url(#errorFill)" strokeWidth={2} />
                 {spikePoint && (
@@ -767,7 +767,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1232,21 +1232,12 @@ function useCountUp(rawValue, duration = 500) {
 
   useEffect(() => {
     const numeric = typeof rawValue === "number" ? rawValue : parseFloat(String(rawValue).replace(/,/g, ""));
-    // 2026-07-16: "%" 말고 "ms"/"건" 같은 다른 단위 접미사가 붙은 값("42ms",
-    // "128건")도 여기 들어오는데, 예전엔 suffix를 "%"만 인식해서 애니메이션이
-    // 시작되는 순간 단위가 사라지는 버그가 있었다("42ms" -> 애니메이션 중/후
-    // "42"만 남음) - 꼬리의 숫자/콤마/마침표/공백이 아닌 문자열을 통째로
-    // 접미사로 떼어내고, 남은 부분이 순수 숫자(콤마/소수점 허용)인지만 검사하도록
-    // 일반화했다.
-    const trimmed = String(rawValue).trim();
-    const suffixMatch = trimmed.match(/[^\d,.\s]+$/);
-    const numericPart = suffixMatch ? trimmed.slice(0, -suffixMatch[0].length).trim() : trimmed;
-    const isPlainNumber = !Number.isNaN(numeric) && /^[\d,]+(\.\d+)?$/.test(numericPart);
+    const isPlainNumber = !Number.isNaN(numeric) && String(rawValue).trim() === String(rawValue).replace(/,/g, "").trim() || /^[\d,]+(\.\d+)?%?$/.test(String(rawValue).trim());
     if (Number.isNaN(numeric) || !isPlainNumber) {
       setDisplay(rawValue);
       return;
     }
-    const suffix = suffixMatch ? suffixMatch[0] : "";
+    const suffix = String(rawValue).trim().endsWith("%") ? "%" : "";
     const hasComma = String(rawValue).includes(",");
     const start = fromRef.current;
     const startTime = performance.now();
@@ -1329,7 +1320,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1414,7 +1405,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1501,7 +1492,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -2225,7 +2216,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label={`Total Logs (${preset.label})`}
-            value={kpiStatus === "ready" ? `${kpi.current.total.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? kpi.current.total : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
             onClick={() => setKpiFilter("ALL")}
@@ -2236,7 +2227,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Errors (Major~Critical)"
-            value={kpiStatus === "ready" ? `${kpi.current.errors.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? kpi.current.errors : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
             onClick={() => setKpiFilter("ERROR")}
@@ -2248,7 +2239,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Warnings (Minor)"
-            value={kpiStatus === "ready" ? `${kpi.current.warnings.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
             onClick={() => setKpiFilter("WARNING")}
@@ -2259,7 +2250,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Active Sources"
-            value={kpiStatus === "ready" ? `${kpi.current.sources}개` : "-"}
+            value={kpiStatus === "ready" ? kpi.current.sources : "-"}
             delta={
               kpiStatus === "ready" && kpi.sources_delta !== 0
                 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new`
@@ -2274,7 +2265,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="총 BLOCKED (WAF)"
-            value={kpiStatus === "ready" ? `${kpi.current.blocked.toLocaleString()}건` : "-"}
+            value={kpiStatus === "ready" ? kpi.current.blocked : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.blocked != null ? `${Math.abs(kpi.delta_pct.blocked)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.blocked ?? 0) <= 0 : true}
             accent="critical"
@@ -2322,7 +2313,7 @@ export function DashboardContent() {
   const kpiTotalWidget = (
     <KpiCard
       label={`Total Logs (${preset.label})`}
-      value={kpiStatus === "ready" ? `${kpi.current.total.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? kpi.current.total : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
       onClick={() => setKpiFilter("ALL")}
@@ -2332,7 +2323,7 @@ export function DashboardContent() {
   const kpiErrorsWidget = (
     <KpiCard
       label="Errors (Major~Critical)"
-      value={kpiStatus === "ready" ? `${kpi.current.errors.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? kpi.current.errors : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
       onClick={() => setKpiFilter("ERROR")}
@@ -2343,7 +2334,7 @@ export function DashboardContent() {
   const kpiWarningsWidget = (
     <KpiCard
       label="Warnings (Minor)"
-      value={kpiStatus === "ready" ? `${kpi.current.warnings.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
       onClick={() => setKpiFilter("WARNING")}
@@ -2353,7 +2344,7 @@ export function DashboardContent() {
   const kpiSourcesWidget = (
     <KpiCard
       label="Active Sources"
-      value={kpiStatus === "ready" ? `${kpi.current.sources}개` : "-"}
+      value={kpiStatus === "ready" ? kpi.current.sources : "-"}
       delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
       positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
       onClick={() => setKpiFilter("SOURCES")}
@@ -2366,7 +2357,7 @@ export function DashboardContent() {
   const kpiBlockedWidget = (
     <KpiCard
       label="총 BLOCKED (WAF)"
-      value={kpiStatus === "ready" ? `${kpi.current.blocked.toLocaleString()}건` : "-"}
+      value={kpiStatus === "ready" ? kpi.current.blocked : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.blocked != null ? `${Math.abs(kpi.delta_pct.blocked)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.blocked ?? 0) <= 0 : true}
       accent="critical"

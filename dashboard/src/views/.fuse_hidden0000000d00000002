@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { SeverityBadge, SourceBadge } from "../components/badges";
 import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
@@ -155,7 +155,7 @@ function SeverityDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -209,7 +209,7 @@ function StatusDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -224,66 +224,6 @@ function StatusDonut({ incidents }) {
             ))}
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-// 공격 유형(=적중된 상관 규칙)별 인시던트 통계 - 예전엔 TopSignalsCard가
-// "1위 규칙 이름 + 건수"만 텍스트 한 줄로 보여줘서 전체 분포 감이 안 왔다는
-// 피드백(2026-07-16) - 상위 5개 규칙을 막대그래프로 보여준다. AdminAuditView의
-// RuleRankingBarChart와 데이터 소스(GET /scenarios, hit_count)는 같지만, 그쪽은
-// "룰 관리자" 관점(토글 포함 전체 목록)이고 여기는 "이 인시던트들이 왜
-// 만들어졌는지" 관점이라 컴포넌트를 공유하지 않고 이 파일 안에 따로 둔다.
-function TopAttackTypesBarChart({ scenarios }) {
-  const { theme } = useTheme();
-  const C = CHART_COLORS[theme];
-  const data = useMemo(
-    () =>
-      [...scenarios]
-        .filter((s) => s.hit_count > 0)
-        .sort((a, b) => b.hit_count - a.hit_count)
-        .slice(0, 5)
-        .map((s) => ({ id: s.id, name: s.name, hits: s.hit_count })),
-    [scenarios]
-  );
-
-  return (
-    <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">공격 유형별 적중 통계 TOP 5</h3>
-      <p className="text-dash-muted text-xs mb-3">
-        어떤 상관 규칙(공격 패턴)이 인시던트를 가장 많이 만들었는지 · GET /scenarios 기준
-      </p>
-      {data.length === 0 ? (
-        <p className="text-dash-muted text-xs py-3">적중된 상관 규칙이 없습니다.</p>
-      ) : (
-        <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44)}>
-          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
-            <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
-            <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
-            <YAxis
-              type="category"
-              dataKey="name"
-              stroke={C.muted}
-              tickLine={false}
-              axisLine={false}
-              fontSize={11}
-              width={140}
-              tickFormatter={(v) => (v.length > 16 ? `${v.slice(0, 16)}…` : v)}
-            />
-            <Tooltip
-              contentStyle={tooltipStyle(C)}
-              cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-              formatter={(value) => [`${value}건`, "적중 건수"]}
-              labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
-            />
-            <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
-              {data.map((d, i) => (
-                <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
       )}
     </div>
   );
@@ -474,8 +414,6 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
         <SeverityDonut incidents={incidents} />
         <StatusDonut incidents={incidents} />
       </div>
-
-      <TopAttackTypesBarChart scenarios={scenarios} />
 
       {/* 좌측 폭을 320px -> 240px로 줄였다(2026-07-16) - 카드 내용을 핵심만
           남기고 나니 320px는 과하게 넓었고, 그만큼 우측 상세 패널이 좁았다.
