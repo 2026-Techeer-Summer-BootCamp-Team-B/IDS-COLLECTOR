@@ -940,212 +940,166 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   );
 }
 
-function truncateActivityLabel(name, max = 15) {
-  if (!name) return "-";
-  return name.length > max ? `${name.slice(0, max - 1)}…` : name;
-}
-
 // 모듈 표시 순서 고정(WAF -> WAS -> K8s Audit -> Falco) - "거시적 관점(외곽,
-// 인그레스)에서 미시적 관점(컨테이너/커널)으로" 들어가는 순서라는 요청 취지를
-// 그대로 반영. 실제 인과관계를 증명하는 순서는 아니고 그냥 표시 순서다.
+// 인그레스)에서 미시적 관점(컨테이너/커널)으로" 들어가는 순서. 아래 LAYER_INFO의
+// 건물 비유(출입 검문 -> CCTV -> 관리실 -> 방 안 정밀수색)와 같은 순서라
+// "땅 위에서 아래로 갈수록 더 깊이 들여다본다"는 서사가 그대로 유지된다.
 const ACTIVITY_MODULE_ORDER = ["waf", "was", "k8s_audit", "falco"];
 
-// 이벤트를 묶을 기준 키. source.ip가 있으면 그걸 쓰고(WAS/WAF/K8s Audit는
-// 대부분 있음), Falco의 exec/쉘 이벤트처럼 source.ip가 없는 경우엔(네트워크
-// syscall이 아니면 애초에 필드 자체가 없음) namespace/pod로 대체한다 - 둘 다
-// 없으면 모듈 이름으로 묶어서 최소한 화면에서 사라지지는 않게 한다.
-function bucketKeyForEvent(e) {
-  if (e.sourceIp) return { key: `ip:${e.sourceIp}`, label: e.sourceIp };
-  if (e.pod || e.namespace) {
-    const label = e.pod || e.namespace;
-    return { key: `pod:${e.namespace || "-"}/${e.pod || "-"}`, label };
-  }
-  return { key: `mod:${e.module}`, label: getModuleMeta(e.module).label };
-}
+// 2026-07-16(3차): IP/Pod 기준으로 뿌리가 갈라지는 구조 대신, "이 로그가 건물의
+// 어느 단계에서 찍히는 로그인지"를 그대로 시각화해달라는 요청 - 이전에 텍스트로
+// 정리했던 WAS/WAF/Falco/K8s Audit 건물 비유(출입문 보안검색대 -> 내부 CCTV ->
+// 관리실 통제기록 -> 방 안 정밀수색)를 땅속 4개 지층으로 그린다. 계층 순서/깊이는
+// ACTIVITY_MODULE_ORDER와 동일하게 맞춰서 두 곳이 따로 놀지 않게 했다.
+const LAYER_INFO = {
+  waf: { depth: "1단계", caption: "출입문 · 보안 검색대", desc: "요청이 앱에 닿기 전에 먼저 걸러내는 곳" },
+  was: { depth: "2단계", caption: "건물 내부 · CCTV", desc: "앱까지 들어온 요청이 실제로 찍히는 곳" },
+  k8s_audit: { depth: "3단계", caption: "관리실 · 통제 기록", desc: "클러스터 설정을 누가 바꿨는지 남는 곳" },
+  falco: { depth: "4단계", caption: "방 안 · 정밀 수색", desc: "컨테이너 안에서 실제로 실행된 동작을 보는 곳" },
+};
 
-// 2026-07-16: "WAF/WAS/K8s Audit/Falco를 묶어서 실시간 트리로 보여달라"는
-// 요청 - 정확한 사용자 세션 추적(요청 단위 trace ID)은 지금 파이프라인에
-// 없어서 구현 불가지만(정확도가 없는 걸 있는 척 만들면 보안 대시보드에서는
-// 오히려 위험하다), source IP(없으면 pod) 기준으로 최근 이벤트를 묶어
-// "실시간 활동 흐름"으로 보여주는 절충안으로 구현했다. 기존 useLiveAttackFeed
-// (LiveTicker가 쓰는 것과 같은 폴링, /events/recent 기반)를 그대로 재사용 -
-// 새 백엔드/소켓 없이 붙였다.
+// 2026-07-16: "WAF/WAS/K8s Audit/Falco를 묶어서 실시간으로 보여달라"는 요청 -
+// 정확한 사용자 세션 추적(요청 단위 trace ID)은 지금 파이프라인에 없어서
+// IP/Pod 단위 묶음은 구현 불가한 정확도를 있는 척 하는 셈이라(3차 피드백으로
+// 방향 전환) 대신 "이 로그가 어느 계층 로그인지"만 확실한 사실 기준으로 묶는다 -
+// event.module 4종 고정 분류라 왜곡 없이 보여줄 수 있다. 기존 useLiveAttackFeed
+// (LiveTicker와 같은 폴링, /events/recent 기반)를 그대로 재사용.
 export function LiveActivityTree() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { feed } = useLiveAttackFeed({ feedLimit: 80 });
 
-  const buckets = useMemo(() => {
-    const map = new Map();
-    feed.forEach((e) => {
-      const { key, label } = bucketKeyForEvent(e);
-      if (!map.has(key)) {
-        map.set(key, { key, label, modules: new Map(), maxSeverity: 0, lastTimestamp: e.timestamp });
-      }
-      const b = map.get(key);
-      b.maxSeverity = Math.max(b.maxSeverity, e.severity || 0);
-      if (e.timestamp > b.lastTimestamp) b.lastTimestamp = e.timestamp;
-
-      if (!b.modules.has(e.module)) {
-        b.modules.set(e.module, { module: e.module, count: 0, maxSeverity: 0, lastTimestamp: e.timestamp });
-      }
-      const m = b.modules.get(e.module);
-      m.count += 1;
-      m.maxSeverity = Math.max(m.maxSeverity, e.severity || 0);
-      if (e.timestamp > m.lastTimestamp) m.lastTimestamp = e.timestamp;
+  const layers = useMemo(() => {
+    return ACTIVITY_MODULE_ORDER.map((module) => {
+      const events = feed.filter((e) => e.module === module).sort((a, b) => b.timestamp - a.timestamp);
+      const maxSeverity = events.reduce((m, e) => Math.max(m, e.severity || 0), 0);
+      return {
+        module,
+        meta: getModuleMeta(module),
+        count: events.length,
+        maxSeverity,
+        recent: events.slice(0, 10),
+      };
     });
-
-    return Array.from(map.values())
-      .map((b) => ({
-        ...b,
-        modules: Array.from(b.modules.values()).sort(
-          (a, c) => ACTIVITY_MODULE_ORDER.indexOf(a.module) - ACTIVITY_MODULE_ORDER.indexOf(c.module)
-        ),
-      }))
-      .sort((a, b) => b.lastTimestamp - a.lastTimestamp)
-      .slice(0, 6);
   }, [feed]);
+
+  const hasAny = layers.some((l) => l.count > 0);
 
   return (
     <Card
       title="실시간 활동 흐름"
-      subtitle="최근 이벤트를 소스(IP 또는 Pod) 기준으로 묶어 표시 — 확정된 인시던트 연관과는 다름"
+      subtitle="WAF → WAS → K8s Audit → Falco, 건물 비유의 4단계 지하 구조 — 로그가 찍히면 해당 계층에 점으로 나타남"
     >
-      {buckets.length === 0 ? (
+      {!hasAny ? (
         <p className="text-dash-muted text-xs py-6 text-center">최근 활동이 없습니다.</p>
       ) : (
         <div className="overflow-x-auto">
-          <ActivityRootDiagram buckets={buckets} C={C} />
+          <ActivityLayerDiagram layers={layers} C={C} />
         </div>
       )}
     </Card>
   );
 }
 
-// 2026-07-16(2차): 왼쪽->오른쪽 트리 대신, 위쪽 지면에 꽃이 피어 있고 그
-// 아래(땅속)로 뿌리가 뻗어나가는 구성으로 바꿔달라는 요청 - Live 허브를
-// "꽃"으로, 소스(IP/Pod) 노드를 1차 뿌리, 모듈 노드를 그 끝에서 갈라지는
-// 잔뿌리로 표현한다. 데이터/그룹핑 로직(LiveActivityTree의 buckets)은 그대로,
-// 레이아웃만 가로->세로로 뒤집었다. 지면선(점선) 위는 꽃, 아래는 옅은 배경을
-// 깔아 "땅속" 느낌을 준다. 잔뿌리를 짝/홀 인덱스로 살짝 어긋나게(stagger)
-// 배치해서 기계적인 트리가 아니라 실제 뿌리처럼 자연스럽게 보이도록 했다.
-function ActivityRootDiagram({ buckets, C }) {
+// 각 계층은 가로로 긴 띠 하나 - 왼쪽엔 "몇 단계 / 무슨 로그 / 건물 비유 캡션",
+// 오른쪽엔 그 계층에서 실제로 찍힌 최근 이벤트를 점으로 나열한다(가장 왼쪽이
+// 최신, 오른쪽으로 갈수록 오래된 것 - 다른 시계열 위젯들과 같은 방향). 위험
+// 이벤트(severity>=REAL_ERROR_MIN_SEVERITY)만 activity-ripple-ring으로 펄스를
+// 준다. 깊이가 깊어질수록 띠 배경을 살짝 더 진하게 깔아서 "더 땅속으로
+// 들어간다"는 느낌을 준다.
+function ActivityLayerDiagram({ layers, C }) {
   const width = 560;
-  const groundY = 56; // 지면선 위치 - 이 위가 지상(꽃), 아래가 지하(뿌리)
-  const bucketY = groundY + 56; // 1차 뿌리(소스 노드) 깊이
-  const moduleBaseY = bucketY + 58; // 잔뿌리(모듈 노드) 기본 깊이
-  const MODULE_STAGGER = 24; // 잔뿌리를 짝/홀로 어긋나게 하는 깊이 차
-  const MARGIN_X = 52;
-  const MODULE_SPREAD = 26; // 같은 소스 안 잔뿌리끼리의 가로 간격
-
-  const hubX = width / 2;
-  const bucketXs = buckets.map((_, i) =>
-    buckets.length === 1 ? hubX : MARGIN_X + (i * (width - MARGIN_X * 2)) / (buckets.length - 1)
-  );
-  const height = moduleBaseY + MODULE_STAGGER + 44;
+  const groundY = 30; // 지표면
+  const LAYER_H = 64;
+  const LAYER_GAP = 8;
+  const LABEL_W = 128; // 왼쪽 라벨 영역 폭
+  const DOT_R = 6;
+  const DOT_GAP = 20;
+  const DOTS_X0 = LABEL_W + 22;
+  const MAX_DOTS = Math.min(10, Math.floor((width - DOTS_X0 - 14) / DOT_GAP));
+  const height = groundY + layers.length * (LAYER_H + LAYER_GAP) - LAYER_GAP + 10;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="실시간 활동 흐름 뿌리 구조">
-      {/* 지하 영역 배경 + 지면선 */}
-      <rect x={0} y={groundY} width={width} height={height - groundY} fill={C.surfaceAlt} opacity={0.35} />
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="실시간 활동 흐름 - 계층별 지하 구조">
+      {/* 지표면 + Live 표시 */}
       <line x1={0} y1={groundY} x2={width} y2={groundY} stroke={C.faint} strokeWidth={1} strokeDasharray="3 4" />
-
-      {/* 꽃(줄기 + 꽃잎) - Live 허브를 표현 */}
-      <line x1={hubX} y1={groundY} x2={hubX} y2={groundY - 28} stroke={C.mint} strokeWidth={2} strokeLinecap="round" />
-      {[0, 60, 120, 180, 240, 300].map((angle) => {
-        const rad = (angle * Math.PI) / 180;
-        const px = hubX + Math.cos(rad) * 9;
-        const py = groundY - 28 + Math.sin(rad) * 9;
-        return (
-          <ellipse
-            key={angle}
-            cx={px}
-            cy={py}
-            rx={7}
-            ry={4}
-            fill={C.mint}
-            opacity={0.8}
-            transform={`rotate(${angle} ${px} ${py})`}
-          />
-        );
-      })}
-      <circle cx={hubX} cy={groundY - 28} r={5} fill={C.live} className="animate-pulse" />
-      <text x={hubX} y={groundY - 40} textAnchor="middle" fontSize={10} fill={C.muted}>
-        Live
+      <text x={0} y={groundY - 9} fontSize={9} fill={C.faint}>
+        지표면
+      </text>
+      <circle cx={width - 40} cy={groundY - 12} r={4} fill={C.live} className="animate-pulse" />
+      <text x={width - 30} y={groundY - 9} fontSize={9} fill={C.muted}>
+        LIVE
       </text>
 
-      {buckets.map((b, i) => {
-        const bx = bucketXs[i];
-        const bucketMeta = getRealSeverityMeta(b.maxSeverity);
-        const modCount = b.modules.length;
+      {layers.map((layer, i) => {
+        const y0 = groundY + i * (LAYER_H + LAYER_GAP);
+        const info = LAYER_INFO[layer.module];
+        const dotsY = y0 + LAYER_H / 2 + 4;
+        const recent = layer.recent.slice(0, MAX_DOTS);
+        // 깊이가 깊어질수록(1단계->4단계) 배경 opacity를 조금씩 올려서 "더 깊이
+        // 들어갈수록 어둡다"는 지층 느낌을 준다.
+        const depthOpacity = 0.06 + i * 0.035;
 
         return (
-          <g key={b.key}>
-            {/* 지면(꽃) -> 1차 뿌리(소스) */}
-            <path
-              d={`M ${hubX} ${groundY} C ${hubX} ${(groundY + bucketY) / 2}, ${bx} ${(groundY + bucketY) / 2}, ${bx} ${bucketY - 13}`}
-              fill="none"
-              stroke={C.surfaceAlt}
-              strokeWidth={1.5}
-            />
-            <rect
-              x={bx - 42}
-              y={bucketY - 13}
-              width={84}
-              height={24}
-              rx={12}
-              fill={C.surface}
-              stroke={bucketMeta.color}
-              strokeWidth={1.5}
-            />
-            <text x={bx} y={bucketY + 3} textAnchor="middle" fontSize={9} fontWeight={600} fill={C.fg} fontFamily="monospace">
-              {truncateActivityLabel(b.label, 12)}
+          <g key={layer.module}>
+            <rect x={0} y={y0} width={width} height={LAYER_H} fill={layer.meta.color} opacity={depthOpacity} />
+            <rect x={0} y={y0} width={width} height={LAYER_H} fill="none" stroke={C.surfaceAlt} strokeWidth={1} />
+
+            {/* 왼쪽: 단계 / 모듈명 / 건물 비유 캡션 / 총 건수 */}
+            <text x={10} y={y0 + 17} fontSize={8.5} fontWeight={700} fill={C.faint} letterSpacing={0.5}>
+              {info.depth}
+            </text>
+            <text x={10} y={y0 + 31} fontSize={11} fontWeight={700} fill={layer.meta.color}>
+              {layer.meta.label}
+            </text>
+            <text x={10} y={y0 + 44} fontSize={8} fill={C.muted}>
+              {info.caption}
+            </text>
+            <text x={10} y={y0 + LAYER_H - 7} fontSize={8} fill={C.faint}>
+              {layer.count}건
             </text>
 
-            {b.modules.map((m, j) => {
-              const offset = (j - (modCount - 1) / 2) * MODULE_SPREAD;
-              const mx = bx + offset;
-              const my = moduleBaseY + (j % 2 === 0 ? 0 : MODULE_STAGGER);
-              const meta = getModuleMeta(m.module);
-              const sevMeta = getRealSeverityMeta(m.maxSeverity);
-              const isDanger = m.maxSeverity >= REAL_ERROR_MIN_SEVERITY;
-              return (
-                <g key={m.module}>
-                  {/* 1차 뿌리 -> 잔뿌리(모듈) */}
-                  <path
-                    d={`M ${bx} ${bucketY + 11} C ${bx} ${(bucketY + my) / 2}, ${mx} ${(bucketY + my) / 2}, ${mx} ${my - 9}`}
-                    fill="none"
-                    stroke={isDanger ? sevMeta.color : C.surfaceAlt}
-                    strokeWidth={isDanger ? 1.5 : 1}
-                  />
-                  {isDanger && (
+            <line x1={LABEL_W} y1={y0 + 6} x2={LABEL_W} y2={y0 + LAYER_H - 6} stroke={C.surfaceAlt} strokeWidth={1} />
+
+            {/* 오른쪽: 이 계층에 실제로 찍힌 최근 이벤트 - 왼쪽이 최신 */}
+            {recent.length === 0 ? (
+              <text x={DOTS_X0} y={dotsY - 4} fontSize={9} fill={C.faint}>
+                최근 활동 없음
+              </text>
+            ) : (
+              recent.map((e, j) => {
+                const ex = DOTS_X0 + j * DOT_GAP;
+                const eSevMeta = getRealSeverityMeta(e.severity);
+                const eDanger = (e.severity || 0) >= REAL_ERROR_MIN_SEVERITY;
+                const isNewest = j === 0;
+                return (
+                  <g key={`${layer.module}-${e.timestamp}-${j}`}>
+                    {eDanger && (
+                      <circle
+                        cx={ex}
+                        cy={dotsY - 4}
+                        r={DOT_R + 2}
+                        fill="none"
+                        stroke={eSevMeta.color}
+                        strokeWidth={1.5}
+                        className="activity-ripple-ring"
+                      />
+                    )}
                     <circle
-                      cx={mx}
-                      cy={my}
-                      r={9}
-                      fill="none"
-                      stroke={sevMeta.color}
-                      strokeWidth={1.5}
-                      className="activity-ripple-ring"
-                    />
-                  )}
-                  <circle
-                    cx={mx}
-                    cy={my}
-                    r={8}
-                    fill={meta.color}
-                    stroke={isDanger ? sevMeta.color : C.bg}
-                    strokeWidth={isDanger ? 2 : 1.5}
-                  />
-                  <text x={mx} y={my + 19} textAnchor="middle" fontSize={8} fontWeight={600} fill={C.fg}>
-                    {meta.label}
-                  </text>
-                  <text x={mx} y={my + 29} textAnchor="middle" fontSize={7.5} fill={C.faint}>
-                    {m.count}건
-                  </text>
-                </g>
-              );
-            })}
+                      cx={ex}
+                      cy={dotsY - 4}
+                      r={isNewest ? DOT_R + 1 : DOT_R}
+                      fill={eDanger ? eSevMeta.color : layer.meta.color}
+                      opacity={isNewest ? 1 : Math.max(0.25, 0.85 - j * 0.07)}
+                      stroke={C.bg}
+                      strokeWidth={1}
+                    >
+                      <title>{`${e.sourceIp || e.pod || e.namespace || "-"} · ${eSevMeta.label}`}</title>
+                    </circle>
+                  </g>
+                );
+              })
+            )}
           </g>
         );
       })}
