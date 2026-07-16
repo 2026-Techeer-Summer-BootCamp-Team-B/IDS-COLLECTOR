@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { ResponsiveContainer, Treemap } from "recharts";
 import WorldMap from "../components/WorldMap";
 import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
@@ -100,8 +101,13 @@ function PipelineHealthPanel() {
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
       <h3 className="text-dash-fg text-sm font-semibold mb-1">파이프라인 상태</h3>
+      {/* 2026-07-16: "Kafka 컨슈머 lag / DLQ 적재량 / clock skew"처럼 용어를
+          그대로 나열해서 뭘 보여주는 패널인지 감이 안 온다는 피드백 - 이 패널이
+          전달하려는 핵심 하나("로그가 밀리지 않고 실시간으로 잘 들어오고 있는가")를
+          먼저 쉬운 말로 설명하고, 원래 기술 용어는 괄호로 보조 설명만 남겼다. */}
       <p className="text-dash-muted text-xs mb-4">
-        Kafka 컨슈머 lag / DLQ 적재량 / 수신 지연(clock skew) — 파이프라인이 유입 속도를 따라가고 있는지 확인
+        로그가 밀리지 않고 실시간으로 잘 들어오고 있는지 보여줍니다 — 아래 숫자들이 낮을수록 정상, 계속 커지면
+        어딘가 막혀서 처리가 밀리고 있다는 뜻입니다
       </p>
 
       {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
@@ -110,7 +116,8 @@ function PipelineHealthPanel() {
       {status !== "loading" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px] mb-2">컨슈머 Lag</p>
+            <p className="text-dash-faint text-[11px]">대기 중인 로그 (컨슈머 Lag)</p>
+            <p className="text-dash-faint text-[10px] mb-2">아직 처리 못 하고 쌓여있는 로그 수 — 많을수록 처리가 밀리는 중</p>
             {consumerLag.length === 0 && <p className="text-dash-muted text-xs">데이터 없음</p>}
             <div className="space-y-2">
               {consumerLag.map((g) => {
@@ -128,7 +135,8 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px] mb-2">DLQ 적재량 (events.dlq)</p>
+            <p className="text-dash-faint text-[11px]">처리 실패한 로그 (DLQ)</p>
+            <p className="text-dash-faint text-[10px] mb-2">정상 처리가 안 돼서 따로 빼놓은 로그 수 — 0이 정상</p>
             {dlqDepth ? (
               <p
                 className="text-2xl font-semibold"
@@ -143,7 +151,8 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px] mb-2">수신 지연 (clock skew)</p>
+            <p className="text-dash-faint text-[11px]">로그 도착까지 걸린 시간</p>
+            <p className="text-dash-faint text-[10px] mb-2">로그가 발생한 순간부터 여기 수집되기까지 걸린 시간 — 짧을수록 실시간에 가까움</p>
             {clockSkew && clockSkew.sample_size > 0 ? (
               <div className="flex gap-4 text-xs">
                 <div>
@@ -190,6 +199,57 @@ function intensityColor(count, max, C) {
 // 잘 읽힌다 - 무채색 "공격 없음" 타일만 어두운 surface 계열이라 밝은 글자.
 function intensityTextColor(count, max, C) {
   return max && count > 0 ? "#FFFFFF" : C.fg;
+}
+
+// 2026-07-16: "클러스터 구조"가 네임스페이스 라벨 + 폰트 크기 pill을 그냥
+// flex-wrap으로 늘어놓기만 해서 밋밋하고 크기 비교도 안 된다는 피드백 -
+// 네임스페이스>파드 계층을 그대로 살리면서 "공격이 몰린 곳일수록 실제로
+// 넓게 보이는" Treemap으로 바꿨다. depth 1(네임스페이스)은 얇은 테두리
+// 컨테이너 + 좌상단 라벨만, depth 2(파드)가 실제 색칠된 셀 - intensityColor를
+// 그대로 재사용해서 위의 "Top 공격 대상" 막대와 톤이 어긋나지 않게 했다.
+function ClusterTreemapCell(props) {
+  const { x, y, width, height, depth, name, count, maxTarget, C } = props;
+
+  if (depth === 1) {
+    return (
+      <g>
+        <rect x={x} y={y} width={width} height={height} fill="none" stroke={C.surfaceAlt} strokeWidth={2} />
+        {width > 36 && height > 14 && (
+          <text x={x + 5} y={y + 13} fontSize={10} fontWeight={600} fill={C.faint}>
+            {name}
+          </text>
+        )}
+      </g>
+    );
+  }
+
+  const fill = intensityColor(count, maxTarget, C);
+  const textColor = intensityTextColor(count, maxTarget, C);
+  const showLabel = width > 46 && height > 18;
+  const showCount = width > 46 && height > 34;
+
+  return (
+    <g>
+      <rect x={x} y={y} width={width} height={height} fill={fill} stroke={C.bg} strokeWidth={1.5} rx={3} />
+      {showLabel && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 - (showCount ? 6 : 0)}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fontSize={10}
+          fill={textColor}
+        >
+          {name}
+        </text>
+      )}
+      {showCount && (
+        <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" fontSize={9} fill={textColor} opacity={0.85}>
+          {count}건
+        </text>
+      )}
+    </g>
+  );
 }
 
 // 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
@@ -245,8 +305,30 @@ export default function InfrastructureView() {
     return map;
   }, [targets]);
 
+  // "클러스터 구조" Treemap용 - 네임스페이스가 depth 1 노드, 그 안의 파드들이
+  // depth 2 리프. size=count라 공격이 몰린 파드일수록 실제로 더 넓은 박스로
+  // 그려진다.
+  const clusterTreemapData = useMemo(
+    () =>
+      Object.entries(byNamespace).map(([ns, pods]) => ({
+        name: ns,
+        children: pods.map((p) => ({ name: p.pod, size: p.count, count: p.count })),
+      })),
+    [byNamespace]
+  );
+
   return (
     <div className="space-y-6">
+      {/* 페이지 상단 설명 문구 (2026-07-16) - ATT&CK 페이지의 타이틀+서브타이틀
+          패턴을 그대로 가져왔다. Infrastructure는 섹션별 소제목은 이미 있었지만
+          "이 페이지 전체가 뭘 보여주는 곳인지"를 알려주는 헤더가 없었다. */}
+      <div>
+        <h2 className="text-dash-fg text-base font-semibold mb-1">인프라 현황</h2>
+        <p className="text-dash-muted text-xs">
+          로그 파이프라인 상태와 실제 공격이 집중된 K8s 클러스터 대상(네임스페이스/파드), 공격 발원지를 표시합니다
+        </p>
+      </div>
+
       <PipelineHealthPanel />
       <SourceHealthPanel />
 
@@ -287,32 +369,23 @@ export default function InfrastructureView() {
 
         <div className="bg-dash-surface rounded-2xl p-5">
           <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
-          <p className="text-dash-muted text-xs mb-4">네임스페이스 &gt; 리소스 · 색이 진할수록 공격 집중</p>
+          <p className="text-dash-muted text-xs mb-4">
+            네임스페이스 &gt; 리소스 · 박스가 클수록, 진할수록 공격이 몰린 곳
+          </p>
           {targetsStatus === "ready" && targets.length === 0 && (
             <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
           )}
-          <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
-            {Object.entries(byNamespace).map(([ns, pods]) => (
-              <div key={ns}>
-                <p className="text-dash-faint text-xs font-medium mb-1.5">{ns}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {pods.map((p) => (
-                    <span
-                      key={p.pod}
-                      className="text-[10px] px-2 py-1 rounded-md whitespace-nowrap"
-                      style={{
-                        backgroundColor: `${intensityColor(p.count, maxTarget, C)}cc`,
-                        color: intensityTextColor(p.count, maxTarget, C),
-                      }}
-                      title={`${p.count}건`}
-                    >
-                      {p.pod} ({p.count})
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          {targetsStatus === "ready" && targets.length > 0 && (
+            <ResponsiveContainer width="100%" height={288}>
+              <Treemap
+                data={clusterTreemapData}
+                dataKey="size"
+                stroke={C.bg}
+                isAnimationActive={false}
+                content={<ClusterTreemapCell maxTarget={maxTarget} C={C} />}
+              />
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 

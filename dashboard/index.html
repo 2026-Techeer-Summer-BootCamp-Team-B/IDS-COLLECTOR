@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IDS Log Dashboard</title>
+    <!-- 2026-07-16: 글씨체 선택 기능(src/hooks/useFontFamily.jsx)용 폰트 로딩.
+         Pretendard는 Google Fonts에 없어서 자체 배포 CDN(jsdelivr) CSS를 쓴다.
+         "시스템 기본"은 로딩 없이 OS 기본 폰트를 그대로 쓰므로 여기 없음. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" as="style" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
   </head>
   <body>
     <div id="root"></div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { SeverityBadge, SourceBadge, StatusDot } from "../components/badges";
+import { SeverityBadge, SourceBadge } from "../components/badges";
 import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
@@ -12,7 +12,7 @@ import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
 import { REAL_SEVERITY_LEVELS, getRealSeverityMeta } from "../data/realSeverity";
-import { apiPatch, apiPost, apiDelete, ApiError } from "../lib/authApi";
+import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 // incidents.severity(1~4, event.severity와 같은 실 스케일)를 badges.jsx의
@@ -22,18 +22,15 @@ function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
 }
 
-const STATUS_LABEL = { open: "Open", investigating: "조사중", closed: "종결" };
+// 2026-07-16: "전체 인시던트/Open/조사중/종결"처럼 한/영이 섞여있던 걸 실제
+// 인시던트 관리 툴(PagerDuty/Opsgenie류)에서 쓰는 영문 상태명으로 통일 -
+// STATUS_META(도넛 차트 라벨)와도 이제 같은 용어를 쓴다("Closed" -> "Resolved").
+const STATUS_LABEL = { open: "Open", investigating: "Investigating", closed: "Resolved" };
 const STATUS_META = {
   open: { label: "Open", color: "#FF1F4B" },
   investigating: { label: "Investigating", color: "#F5E400" },
-  closed: { label: "Closed", color: "#00FFA6" },
+  closed: { label: "Resolved", color: "#00FFA6" },
 };
-// StatusDot은 IN_PROGRESS/그 외 두 상태만 구분(진행중/조사완료) — open과
-// investigating을 모두 "진행중"으로 묶는다.
-function statusDotStatus(status) {
-  return status === "closed" ? "RESOLVED" : "IN_PROGRESS";
-}
-
 function tooltipStyle(C) {
   return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
 }
@@ -58,9 +55,11 @@ function MiniKpi({ label, value, sub, color, onClick, active = false }) {
   );
 }
 
-// 상태(open/investigating/closed) 필터 버튼 4개 + Top 상관 규칙/Top 공격 IP
-// 정보성 카드 2개. GET /incidents로 받은 목록 하나에서 전부 파생.
-function IncidentKpiRow({ incidents, statusFilter, onFilterChange, topScenario, topIp }) {
+// 상태(open/investigating/closed) 필터 버튼 4개. GET /incidents로 받은 목록
+// 하나에서 전부 파생. Top 상관 규칙/Top 공격 IP는 클릭해도 필터링되지 않는
+// 순수 정보 카드라 이 버튼 그리드와 섞으면 "이것도 눌리나?" 하는 오해를 주고
+// 톤도 안 맞았다(2026-07-16) - TopSignalsCard로 완전히 분리했다.
+function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const openCount = incidents.filter((i) => i.status === "open").length;
@@ -69,7 +68,7 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange, topScenario, 
 
   return (
     <div className="flex flex-wrap gap-4">
-      <MiniKpi label="전체 인시던트" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
+      <MiniKpi label="Total" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
       <MiniKpi
         label="Open"
         value={openCount}
@@ -78,25 +77,44 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange, topScenario, 
         active={statusFilter === "open"}
       />
       <MiniKpi
-        label="조사중"
+        label="Investigating"
         value={investigatingCount}
         onClick={() => onFilterChange("investigating")}
         active={statusFilter === "investigating"}
       />
       <MiniKpi
-        label="종결"
+        label="Resolved"
         value={closedCount}
         color={C.mint}
         onClick={() => onFilterChange("closed")}
         active={statusFilter === "closed"}
       />
-      <MiniKpi
-        label="Top 상관 규칙"
-        value={topScenario?.name || "-"}
-        sub={topScenario ? `${topScenario.hit_count}건 적중` : ""}
-        color={C.pink}
-      />
-      <MiniKpi label="Top 공격 IP" value={topIp?.name || "-"} sub={topIp ? `${topIp.count}건` : ""} color={C.critical} />
+    </div>
+  );
+}
+
+// Top 상관 규칙/Top 공격 IP - 필터 버튼이 아니라 순수 정보 카드라 클릭 가능한
+// MiniKpi 그리드와는 분리된 별도 섹션으로 뺐다(2026-07-16). 이 컴포넌트 안의
+// bg-dash-bg 타일 패턴은 이 파일 아래쪽 "인시던트 상세" 패널의 상관 규칙/MITRE
+// 경로/상관 키 타일과 같은 스타일 - 이미 검증된 "정보 전용" 톤을 재사용.
+// 2026-07-16: 카드가 너무 크다는 피드백 - 패딩/폰트를 한 단계씩 줄이고
+// 라벨+값+부가정보를 한 줄에 압축했다(세로 2줄 -> 1.5줄 수준).
+function TopSignalsCard({ topScenario, topIp }) {
+  return (
+    <div className="bg-dash-surface rounded-xl px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
+        <span className="text-dash-faint text-[10px] uppercase tracking-wide shrink-0">최근 7일 시그널</span>
+        <span className="flex items-baseline gap-1.5 text-xs min-w-0">
+          <span className="text-dash-muted shrink-0">Top 상관 규칙</span>
+          <span className="text-dash-fg font-medium truncate">{topScenario?.name || "-"}</span>
+          {topScenario && <span className="text-dash-faint text-[11px] shrink-0">({topScenario.hit_count}건)</span>}
+        </span>
+        <span className="flex items-baseline gap-1.5 text-xs min-w-0">
+          <span className="text-dash-muted shrink-0">Top 공격 IP</span>
+          <span className="text-dash-fg font-medium truncate">{topIp?.name || "-"}</span>
+          {topIp && <span className="text-dash-faint text-[11px] shrink-0">({topIp.count}건)</span>}
+        </span>
+      </div>
     </div>
   );
 }
@@ -209,121 +227,35 @@ function StatusDonut({ incidents }) {
   );
 }
 
-// 차단 기록(감사 트레일용, 실제 트래픽은 안 막힘 - banned_ips_api.py 주석 참고)
-// 테이블. 수동으로 IP를 추가/해제할 수 있다.
-function BannedIpsTable({ bannedIps, status, error, onBan, onUnban }) {
-  const [ip, setIp] = useState("");
-  const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!ip.trim()) return;
-    setSubmitting(true);
-    try {
-      await onBan(ip.trim(), reason.trim() || undefined);
-      setIp("");
-      setReason("");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="bg-dash-surface rounded-2xl p-5">
-      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
-        <div>
-          <h3 className="text-dash-fg text-sm font-semibold">차단된 IP</h3>
-          <p className="text-dash-muted text-xs mt-0.5">GET /banned-ips · 감사 트레일 (실제 트래픽 차단은 아님)</p>
-        </div>
-        <form onSubmit={handleSubmit} className="flex flex-wrap gap-1.5">
-          <input
-            value={ip}
-            onChange={(e) => setIp(e.target.value)}
-            placeholder="IP / CIDR"
-            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
-          />
-          <input
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="사유 (선택)"
-            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
-          />
-          <button
-            type="submit"
-            disabled={submitting || !ip.trim()}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical hover:bg-dash-critical/25 disabled:opacity-50 whitespace-nowrap"
-          >
-            차단
-          </button>
-        </form>
-      </div>
-      {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
-      {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
-      {status === "ready" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-dash-muted text-xs uppercase tracking-wide">
-                <th className="text-left font-medium pb-2">IP / CIDR</th>
-                <th className="text-left font-medium pb-2">사유</th>
-                <th className="text-left font-medium pb-2">차단 시각</th>
-                <th className="text-left font-medium pb-2">조치</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bannedIps.map((b) => (
-                <tr key={b.id} className="border-t border-dash-surfaceAlt">
-                  <td className="py-2.5 pr-3 text-dash-fg font-mono">{b.ip_or_cidr}</td>
-                  <td className="py-2.5 pr-3 text-dash-muted text-xs">{b.reason || "-"}</td>
-                  <td className="py-2.5 pr-3 text-dash-faint text-xs whitespace-nowrap">
-                    {new Date(b.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
-                  </td>
-                  <td className="py-2.5">
-                    <button
-                      onClick={() => onUnban(b.id)}
-                      className="text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
-                    >
-                      해제
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {bannedIps.length === 0 && <p className="text-dash-muted text-xs py-3">현재 차단된 IP가 없습니다.</p>}
-        </div>
-      )}
-    </div>
-  );
-}
-
+// 2026-07-16: 좌측 리스트 폭(320px)에 비해 카드 내용(뱃지+제목+MITRE 태그행+
+// 상관키/시각 줄)이 너무 빽빽해서 리스트가 필요 이상으로 넓어 보인다는 피드백 -
+// MITRE 태그행/상관키 텍스트/중복되는 StatusDot을 빼고 심각도+상태+제목+시각만
+// 남겨 한 카드를 3줄로 줄였다. 상세 정보(MITRE 경로, 상관 키 등)는 클릭하면
+// 오른쪽 상세 패널에 이미 다 나오므로 목록에서는 없어도 된다.
 function IncidentCard({ incident, active, onClick }) {
   const { theme } = useTheme();
   const meta = getRealSeverityMeta(incident.severity);
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left rounded-xl p-3 border-l-4 transition-colors ${
+      className={`w-full text-left rounded-lg px-2.5 py-2 border-l-4 transition-colors ${
         active ? "bg-dash-surfaceAlt" : "bg-dash-surface hover:bg-dash-surfaceAlt/60"
       }`}
       style={{ borderLeftColor: forTheme(meta.color, theme) }}
     >
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center gap-2">
-          <SeverityBadge level={severityBadgeKey(incident.severity)} />
-          <span className="text-dash-faint text-xs">{STATUS_LABEL[incident.status]}</span>
-        </div>
-        <StatusDot status={statusDotStatus(incident.status)} />
+      <div className="flex items-center gap-1.5 mb-1">
+        <SeverityBadge level={severityBadgeKey(incident.severity)} />
+        <span className="text-dash-faint text-[10px]">{STATUS_LABEL[incident.status]}</span>
       </div>
-      <p className="text-dash-fg text-sm font-medium mb-1.5">{incident.title}</p>
-      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-        {incident.mitre_tactics.slice(0, 3).map((t) => (
-          <SourceBadge key={t} source={t} />
-        ))}
-      </div>
-      <p className="text-dash-muted text-xs">
-        {incident.correlation_key_type}={incident.correlation_key_value} · {new Date(incident.updated_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
+      <p className="text-dash-fg text-xs font-medium truncate">{incident.title}</p>
+      <p className="text-dash-faint text-[10px] mt-0.5">
+        {new Date(incident.updated_at).toLocaleString("ko-KR", {
+          timeZone: DISPLAY_TIMEZONE,
+          month: "numeric",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })}
       </p>
     </button>
   );
@@ -363,7 +295,9 @@ function StorylineEntry({ entry, isLast }) {
 export default function IncidentsView({ pushToast }) {
   const { incidents, status, error, reload } = useIncidents({ limit: 200 });
   const { scenarios } = useScenarios();
-  const { bannedIps, status: bannedStatus, error: bannedError, reload: reloadBans } = useBannedIps();
+  // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
+  // 여기서는 "이미 차단됐는지" 판단(alreadyBanned)에만 bannedIps를 쓴다.
+  const { bannedIps, reload: reloadBans } = useBannedIps();
   // Incidents는 로그보다 드물게 발생하므로 7일을 "최근"으로 본다(다른 뷰의
   // 24h 위주 range와 다름 - 원래 mock의 "최근 7일" 문구를 그대로 이어받음).
   const { items: topIps } = useTopIps({ lookbackMs: 7 * 24 * 60 * 60 * 1000, limit: 1 });
@@ -421,25 +355,11 @@ export default function IncidentsView({ pushToast }) {
     }
   }
 
-  async function handleManualBan(ip, reason) {
-    try {
-      await apiPost("/banned-ips", { ip_or_cidr: ip, reason });
-      toast(`${ip} 차단 처리했습니다.`, "success");
-      reloadBans();
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : "IP 차단에 실패했습니다.", "error");
-    }
-  }
-
-  async function handleUnban(bannedIpId) {
-    try {
-      await apiDelete(`/banned-ips/${bannedIpId}`);
-      toast("차단을 해제했습니다.", "success");
-      reloadBans();
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : "차단 해제에 실패했습니다.", "error");
-    }
-  }
+  // 2026-07-16: 차단 IP 수동 추가/해제와 그 목록 테이블(BannedIpsTable)은
+  // Admin/Audit 페이지로 옮겼다 - "소스 IP 차단" 버튼(handleBanSourceIp, 위)만
+  // 조사 중인 인시던트에서 바로 차단하는 용도로 여기 남겨뒀다. bannedIps/
+  // reloadBans는 그 버튼의 "이미 차단됐는지" 배지 표시(alreadyBanned)에 여전히
+  // 필요해서 useBannedIps 훅 자체는 유지.
 
   const exportAdapter = useMemo(() => {
     if (!selected) return null;
@@ -466,35 +386,36 @@ export default function IncidentsView({ pushToast }) {
 
   return (
     <div className="space-y-6">
+      {/* 페이지 상단 설명 문구 (2026-07-16) - ATT&CK 페이지의 타이틀+서브타이틀
+          패턴을 그대로 가져왔다. */}
+      <div>
+        <h2 className="text-dash-fg text-base font-semibold mb-1">인시던트</h2>
+        <p className="text-dash-muted text-xs">
+          여러 로그(WAS / Falco / K8s Audit)가 상관 규칙에 의해 하나의 사건으로 묶인 인시던트 목록입니다
+        </p>
+      </div>
+
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
 
-      <IncidentKpiRow
-        incidents={incidents}
-        statusFilter={statusFilter}
-        onFilterChange={setStatusFilter}
-        topScenario={topScenario}
-        topIp={topIps[0]}
-      />
+      <IncidentKpiRow incidents={incidents} statusFilter={statusFilter} onFilterChange={setStatusFilter} />
+
+      <TopSignalsCard topScenario={topScenario} topIp={topIps[0]} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <SeverityDonut incidents={incidents} />
         <StatusDonut incidents={incidents} />
       </div>
 
-      <BannedIpsTable
-        bannedIps={bannedIps}
-        status={bannedStatus}
-        error={bannedError}
-        onBan={handleManualBan}
-        onUnban={handleUnban}
-      />
-
-      <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
+      {/* 좌측 폭을 320px -> 240px로 줄였다(2026-07-16) - 카드 내용을 핵심만
+          남기고 나니 320px는 과하게 넓었고, 그만큼 우측 상세 패널이 좁았다.
+          상세 정보는 어차피 카드를 눌러야 오른쪽에 나오므로 목록은 "훑어보는
+          용도"로만 좁게 유지. */}
+      <div className="grid grid-cols-1 xl:grid-cols-[240px_1fr] gap-6">
         {/* 인시던트가 계속 쌓이면 이 리스트가 끝없이 늘어나서 페이지 전체가
             하염없이 길어지던 문제 - 높이를 고정하고 리스트 안에서만 스크롤되게
             바꿨다(InfrastructureView의 "클러스터 구조" 패널과 같은 패턴).
             pr-2로 스크롤바가 카드 텍스트를 가리지 않게 여백을 둔다. */}
-        <div className="space-y-3 max-h-[640px] overflow-y-auto pr-2">
+        <div className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
           {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
           {status === "ready" && filteredIncidents.length === 0 && (
             <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>
