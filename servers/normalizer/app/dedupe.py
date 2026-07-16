@@ -28,10 +28,29 @@ def compute_dedupe_key(
 
 
 async def is_duplicate(dedupe_key: str) -> bool:
-    """True면 이미 처리된 이벤트 (SETNX 실패 = 이미 키가 존재)."""
-    acquired = await _redis.set(
-        f"dedupe:{dedupe_key}", "1", nx=True, ex=settings.dedupe_ttl_seconds
-    )
+    """True면 이미 처리된 이벤트 (SETNX 실패 = 이미 키가 존재).
+
+    Redis 자체가 순단이면 False(중복 아님)로 fail-open한다 - 이벤트 유실(fail-closed)보다
+    중복 통과가 안전하다는 판단(감사 O4, docs/reports/repo-audit-20260715.md):
+      - at-least-once 계약과 정합 - dedupe는 원래 "중복을 흡수하는" 보조 계층이지
+        전달 자체를 막는 게이트가 아니다.
+      - OpenSearch attack-logs-*는 _id=event.id(dedupe 키)라 재색인돼도 문서가
+        덮어써질 뿐 중복 생성되지 않는다 - 자연 멱등.
+      - correlation-engine의 인시던트 upsert도 시나리오+상관키+상태로 병합하고
+        (app/incidents.py upsert_incident), threshold 시나리오는 쿨다운까지 있어
+        중복 이벤트가 중복 인시던트로 이어지지 않는다 - 하류에 또 다른 흡수
+        계층이 있다.
+    Redis가 완전히 죽은 상태가 길어지면(예외가 계속 나면) 이 함수 자체는 항상
+    False만 반환해 재시도 없이 통과하므로, main.py의 3회 재시도+DLQ 경로(다른
+    실패 유형용)와는 별개로 여기서 막히지 않는다 - dedupe 실효성만 일시적으로
+    떨어질 뿐 파이프라인은 멈추지 않는다."""
+    try:
+        acquired = await _redis.set(
+            f"dedupe:{dedupe_key}", "1", nx=True, ex=settings.dedupe_ttl_seconds
+        )
+    except Exception as e:
+        print(f"[normalizer] WARNING: dedupe Redis 조회 실패, fail-open(중복 아님으로 처리) - {e}")
+        return False
     return acquired is None
 
 
