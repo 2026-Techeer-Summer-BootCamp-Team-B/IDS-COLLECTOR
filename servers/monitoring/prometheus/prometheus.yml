@@ -1,0 +1,76 @@
+# SISM Observability 스택 전용 Prometheus 설정.
+# 데이터 보존 기간(30일)은 여기가 아니라 docker-compose.yml의
+# --storage.tsdb.retention.time 플래그로 지정한다.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: "sism-observability"
+
+# ---- Alertmanager 연동 (Alertmanager 활성화 시 주석 해제) ----
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["alertmanager:9093"]
+
+# ---- 알림/기록 규칙 파일 (Alertmanager 활성화 시 주석 해제) ----
+# rule_files:
+#   - "/etc/prometheus/rules/*.yml"
+
+scrape_configs:
+  # ================== Phase 1 ==================
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          instance: "gcp-vm-host"
+
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: "kafka-exporter"
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  # ================== 향후 확장 (활성화 전까지 주석 유지) ==================
+  # docker-compose.yml에서 해당 exporter 블록을 먼저 활성화한 뒤 아래도 주석 해제할 것.
+
+  # - job_name: "postgres-exporter"
+  #   static_configs:
+  #     - targets: ["postgres-exporter:9187"]
+
+  # - job_name: "opensearch-exporter"
+  #   static_configs:
+  #     - targets: ["opensearch-exporter:9114"]
+
+  # - job_name: "clickhouse-exporter"
+  #   static_configs:
+  #     - targets: ["clickhouse-exporter:9116"]
+
+  # Blackbox는 대상 목록(targets)을 __param_target으로 넘기고 실제 스크레이프는
+  # blackbox-exporter:9115/probe로 리다이렉트하는 표준 relabel 패턴을 쓴다.
+  # 아래 target URL은 예시이며, 실제 헬스체크 경로로 반드시 교체해서 사용할 것
+  # (예: platform-api는 8000이 아니라 8400에서 서비스 중 - servers/platform-api/Dockerfile 참고,
+  # 그리고 /metrics 엔드포인트가 아직 구현되어 있지 않아 blackbox http_2xx 프로브 용도로만 쓸 수 있음).
+  # - job_name: "blackbox-http"
+  #   metrics_path: /probe
+  #   params:
+  #     module: [http_2xx]
+  #   static_configs:
+  #     - targets:
+  #         - http://platform-api:8400/health
+  #         - http://opensearch:9200/_cluster/health
+  #   relabel_configs:
+  #     - source_labels: [__address__]
+  #       target_label: __param_target
+  #     - source_labels: [__param_target]
+  #       target_label: instance
+  #     - target_label: __address__
+  #       replacement: blackbox-exporter:9115
