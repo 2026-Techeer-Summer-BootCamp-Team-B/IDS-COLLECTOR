@@ -54,7 +54,7 @@ Target 서버
      events.was / events.waf / events.falco / events.audit  (매칭 안 되면 events.unknown)
      (partitions=1, replication=1, retention 24h, cleanup.policy=delete)
   -> servers/normalizer: dedupe(Redis) -> parse(소스별 4종) -> normalize(ECS 점 표기)
-     -> enrich(GeoIP(geoip2fast, 국가만) + was/waf 동적 orchestrator 매핑, 값이 없을 때만 정적 폴백) -> emit
+     -> enrich(GeoIP(GeoLite2-City, 국가/도시/위경도) + was/waf 동적 orchestrator 매핑, 값이 없을 때만 정적 폴백) -> emit
   -> Kafka 토픽 events.normalized
        ├─ servers/correlation-engine: 시나리오 룰(sequence/threshold) 평가 -> 발화 시
        │    PostgreSQL incidents/incident_events upsert (그게 끝, push 없음)
@@ -148,7 +148,7 @@ Target 서버
 | `GET /stats/volume?hours=24&buckets=25&module=` | Log Volume 차트용 - `@timestamp` date_histogram, 버킷별 `{ts, total, errors}` (errors = severity>=3). `module`은 선택 - 주면 WAS/Falco/K8s Audit 상세 뷰처럼 해당 event.module로만 필터링 |
 | `GET /stats/levels?hours=24&module=` | Log Levels 차트용 - `event.severity`(1~4) terms agg -> `{total, levels:[{severity,count}]}`. `module`은 volume과 동일하게 선택적 필터 |
 | `GET /stats/timeseries?range=24h` | ClickHouse 기반 시계열(range 프리셋: 15m/1h/6h/24h/7d/30d) - 버킷별 `{bucket, total, by_severity:{1,2,3,4}}`, 빈 구간도 0으로 채워서 고정 간격으로 반환 |
-| `GET /stats/geo?start=&end=&limit=` | 국가별 탐지 건수(GeoIP, `geoip2fast` 오프라인 DB로 실제 국가 조회 - 도시 단위 매핑은 지원 안 해서 city_name은 항상 null) -> `[{country_iso_code,count}]` |
+| `GET /stats/geo?start=&end=&limit=` | 도시 단위 탐지 건수(GeoIP, MaxMind GeoLite2-City .mmdb 실측 조회 - 위경도/도시명 포함) -> `[{country_iso_code,city_name,lat,lon,count}]` |
 | `GET /stats/k8s-targets?start=&end=&limit=` | namespace/리소스별 탐지 건수(Infrastructure 표용) -> `[{namespace,resource_name,count}]` |
 | `GET /stats/consumer-lag` | Kafka 컨슈머 그룹별(normalizer-workers/correlation-engine/platform-api-event-stream) lag - 파이프라인 자체 헬스 |
 | `GET /stats/dlq-depth` | `events.dlq` 토픽 절대 적재량(컨슈머가 없어 lag 개념이 없음 - 깊이만) |
@@ -304,6 +304,13 @@ normalizer/correlation-engine/platform-api 3개 직결 포트(8200/8300/8400)는
 
 Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3.11-slim`.
 
+GeoIP(GeoLite2-City): `servers/normalizer/data/GeoLite2-City.mmdb`가 있어야 normalizer가
+뜬다(53MB 바이너리라 리포에 커밋 안 함, `servers/normalizer/.gitignore`). MaxMind
+계정으로 GeoLite2-City .mmdb를 내려받아 그 경로에 두면 된다(경로는 `GEOIP_DB_PATH`
+환경변수로 바꿀 수 있음, `servers/normalizer/app/config.py`). 이 제품은 MaxMind가
+만든 GeoLite2 데이터를 포함한다 - "This product includes GeoLite2 data created by
+MaxMind, available from https://www.maxmind.com".
+
 ## 트러블슈팅 노트
 
 - Traefik `web` 엔트리포인트(:80)의 `/api` 라우터는 `stripprefix` 미들웨어로
@@ -351,7 +358,7 @@ Python 서비스(normalizer/correlation-engine/platform-api)는 전부 `python:3
 - 소스별 파서 4종 (was/waf/falco/audit) - WAF는 WafAlert 센서 스펙 wire 필드 기준
 - ECS 점 표기 정규화 (`NormalizedEvent`, severity.yaml 기반 심각도)
 - k8s_audit는 `stage=="ResponseComplete"`만 채택 (나머지 스테이지는 드롭)
-- enrichment: GeoIP(`geoip2fast` 오프라인 국가 조회, 도시 매핑은 없음) + was/waf orchestrator 매핑(정상 경로는 nginx-was-logger Downward API/WAF 응답 헤더로 동적 채움, 값이 비어있을 때만 정적 폴백)
+- enrichment: GeoIP(MaxMind GeoLite2-City .mmdb 실측 조회 - 국가/도시/위경도. 사설 대역·DB 미매치·좌표 없음은 전부 제외) + was/waf orchestrator 매핑(정상 경로는 nginx-was-logger Downward API/WAF 응답 헤더로 동적 채움, 값이 비어있을 때만 정적 폴백)
 - 실패 시 parse 실패 -> `events.dlq`, emit 실패 -> offset 미커밋 재처리
 - `events.normalized`로 emit, OpenSearch는 더 이상 직접 안 만짐 (Data Prepper가 대체)
 

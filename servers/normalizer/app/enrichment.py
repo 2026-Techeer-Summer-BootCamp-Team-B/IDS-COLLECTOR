@@ -1,6 +1,9 @@
 """Enrichment (P3-6): GeoIP + was/waf orchestrator 폴백.
 
-GeoIP는 app/geoip.py의 더미를 그대로 쓴다 (MaxMind .mmdb 확보 후 그 파일만 교체하면 됨).
+GeoIP는 app/geoip.py가 MaxMind GeoLite2-City(.mmdb)를 실측 조회한다(2026-07-16, geoip2fast
+country-only 배포판에서 교체 - city/위경도가 필요해짐). Redis 캐시 조회가 있어 lookup()
+자체는 async - 이 함수도 그래서 async다(main.py에서 await enrich(...)).
+
 falco/audit는 자기 payload에서 orchestrator.*를 동적으로 이미 채우므로 여기서 건드리지
 않는다 - was/waf도 이제 normalizer.py의 normalize_was/normalize_waf가 각각
 nginx-was-logger의 Downward API 값(로그 자체에 실림)과 WAF backend가 Juice Shop
@@ -28,11 +31,13 @@ _FALLBACK_NAMESPACE = "default"
 _FALLBACK_RESOURCE_NAME = "unknown"
 
 
-def enrich(source: str, payload: Dict[str, Any], event: NormalizedEvent) -> None:
+async def enrich(source: str, payload: Dict[str, Any], event: NormalizedEvent) -> None:
     if event.source_ip:
-        geo = geoip_lookup(event.source_ip)
+        geo = await geoip_lookup(event.source_ip)
         event.geo_country_iso_code = geo["country_iso_code"]
         event.geo_city_name = geo["city_name"]
+        event.geo_lat = geo["lat"]
+        event.geo_lon = geo["lon"]
 
     if source in ("was", "waf") and not event.orchestrator_resource_name:
         event.orchestrator_namespace = _FALLBACK_NAMESPACE

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { CHART_COLORS } from "../data/theme";
 import { WORLD_COUNTRIES } from "../data/worldCountries";
@@ -89,6 +89,7 @@ function latLonToVec3(lat, lon, radius) {
 
 export default function Globe3D({ points = [], theme = "dark" }) {
   const containerRef = useRef(null);
+  const [hover, setHover] = useState(null); // { point, x, y }
 
   useEffect(() => {
     const container = containerRef.current;
@@ -141,7 +142,7 @@ export default function Globe3D({ points = [], theme = "dark" }) {
       );
       sprite.position.copy(pos);
       sprite.scale.set(scale, scale, 1);
-      sprite.userData = { baseScale: scale, phase: Math.random() * Math.PI * 2 };
+      sprite.userData = { baseScale: scale, phase: Math.random() * Math.PI * 2, point: p };
       globeGroup.add(sprite);
       return sprite;
     });
@@ -193,6 +194,34 @@ export default function Globe3D({ points = [], theme = "dark" }) {
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
 
+    // 마커 hover 툴팁 ("국가 · 도시 · N건") - 드래그 중에는 레이캐스트를 생략해서
+    // 회전 중 깜빡이는 걸 막는다.
+    const raycaster = new THREE.Raycaster();
+    raycaster.params.Sprite = { threshold: 0.02 };
+    const pointerNdc = new THREE.Vector2();
+
+    function onHoverMove(e) {
+      if (dragging) {
+        setHover(null);
+        return;
+      }
+      const rect = container.getBoundingClientRect();
+      pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointerNdc, camera);
+      const hit = raycaster.intersectObjects(markerSprites)[0];
+      if (hit) {
+        setHover({ point: hit.object.userData.point, x: e.clientX - rect.left, y: e.clientY - rect.top });
+      } else {
+        setHover(null);
+      }
+    }
+    function onHoverLeave() {
+      setHover(null);
+    }
+    renderer.domElement.addEventListener("pointermove", onHoverMove);
+    renderer.domElement.addEventListener("pointerleave", onHoverLeave);
+
     let raf;
     function animate(t) {
       raf = requestAnimationFrame(animate);
@@ -213,6 +242,9 @@ export default function Globe3D({ points = [], theme = "dark" }) {
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointermove", onHoverMove);
+      renderer.domElement.removeEventListener("pointerleave", onHoverLeave);
+      setHover(null);
       scene.traverse((obj) => {
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material) {
@@ -227,5 +259,24 @@ export default function Globe3D({ points = [], theme = "dark" }) {
     };
   }, [points, theme]);
 
-  return <div ref={containerRef} className="w-full h-full" />;
+  return (
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="w-full h-full" />
+      {hover && (
+        <div
+          className="pointer-events-none absolute z-10 rounded-md px-2.5 py-1.5 text-xs font-medium shadow-lg whitespace-nowrap"
+          style={{
+            left: hover.x + 14,
+            top: hover.y + 14,
+            background: "#0B0F1AF2",
+            color: "#F2F5FF",
+            border: "1px solid #2A3350",
+          }}
+        >
+          {hover.point.country}
+          {hover.point.city ? ` · ${hover.point.city}` : ""} · {hover.point.count}건
+        </div>
+      )}
+    </div>
+  );
 }

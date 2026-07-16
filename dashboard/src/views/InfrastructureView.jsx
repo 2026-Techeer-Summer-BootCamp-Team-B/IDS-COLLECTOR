@@ -288,19 +288,33 @@ function ClusterTopologyDiagram({ data, C }) {
 // 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
 // 건수 비교는 어려워서(원 크기만으로는) 순위형 막대 목록을 옆에 같이 둔다.
 // "Top 공격 대상" 패널과 같은 손그림 막대 스타일 + intensityColor로 톤을 맞춤.
+//
+// countries prop은 도시 단위(2026-07-16, GeoLite2-City 도입 이후 useGeoStats가
+// city 좌표를 그대로 내려줌) - 같은 나라의 여러 도시를 국가 하나로 합산해서
+// 순위를 매긴다(그대로 쓰면 같은 country_iso_code가 여러 행에 걸쳐 나와 React key
+// 충돌도 난다).
 function CountryAttackBarChart({ countries, status, error, C }) {
-  const max = countries[0]?.count || 1;
+  const byCountry = useMemo(() => {
+    const totals = new Map();
+    countries.forEach((c) => {
+      const prev = totals.get(c.countryCode);
+      if (prev) prev.count += c.count;
+      else totals.set(c.countryCode, { countryCode: c.countryCode, country: c.country, count: c.count });
+    });
+    return [...totals.values()].sort((a, b) => b.count - a.count);
+  }, [countries]);
+  const max = byCountry[0]?.count || 1;
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
       <h3 className="text-dash-fg text-sm font-semibold mb-1">국가별 공격 순위</h3>
       <p className="text-dash-muted text-xs mb-4">전체 기간 · 탐지 건수 기준</p>
       {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs py-2">{error}</p>}
-      {status === "ready" && countries.length === 0 && (
+      {status === "ready" && byCountry.length === 0 && (
         <p className="text-dash-muted text-xs py-2">GeoIP 데이터가 아직 없습니다.</p>
       )}
       <div className="space-y-2.5">
-        {countries.slice(0, 8).map((c, i) => (
+        {byCountry.slice(0, 8).map((c, i) => (
           <div key={c.countryCode} className="flex items-center gap-3">
             <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
             <div className="flex-1">
@@ -326,7 +340,7 @@ export default function InfrastructureView() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { targets, status: targetsStatus, error: targetsError } = useK8sTargets({ limit: 20 });
-  const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 10 });
+  const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 50 });
 
   const byNamespace = useMemo(() => {
     const map = {};
@@ -397,7 +411,7 @@ export default function InfrastructureView() {
         <div className="bg-dash-surface rounded-2xl p-5">
           <div className="mb-4">
             <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
-            <p className="text-dash-muted text-xs mt-0.5">전체 기간 · 국가별 탐지 건수 (원 크기 = 건수)</p>
+            <p className="text-dash-muted text-xs mt-0.5">전체 기간 · 도시 단위 탐지 건수 (원 크기 = 건수)</p>
           </div>
           {geoStatus === "error" && <p className="text-dash-critical text-xs mb-2">{geoError}</p>}
           <div className="h-80">

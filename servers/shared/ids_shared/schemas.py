@@ -134,6 +134,8 @@ class NormalizedEvent(BaseModel):
         default=None, alias="source.geo.country_iso_code"
     )
     geo_city_name: Optional[str] = Field(default=None, alias="source.geo.city_name")
+    geo_lat: Optional[float] = Field(default=None, alias="source.geo.location.lat")
+    geo_lon: Optional[float] = Field(default=None, alias="source.geo.location.lon")
 
     class Config:
         populate_by_name = True

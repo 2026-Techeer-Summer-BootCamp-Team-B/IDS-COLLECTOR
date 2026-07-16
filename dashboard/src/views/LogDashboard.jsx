@@ -1318,16 +1318,17 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
 // 보여주는 쪽을 택함 — 랜딩 화면의 "화려한" 대표 비주얼 역할. 자세히 보려면
 // Infrastructure 탭으로.
 //
-// 주의: enrichment.py의 GeoIP lookup이 아직 모든 IP를 "KR/Seoul"로 고정
-// 반환하는 더미라, MaxMind DB가 붙기 전까진 지구본에 한반도 쪽 점만 두드러질
-// 수 있다 — 팀원 확인 필요(useGeoStats.js 주석 참고).
+// countries는 도시 단위 포인트라(2026-07-16, GeoLite2-City 도입) 같은 나라가 여러
+// 개 있을 수 있다 - 부제의 "N개국"은 countries.length가 아니라 countryCode
+// distinct count로 센다.
 function GeoSummaryCard() {
   const { theme } = useTheme();
-  const { countries, status, error } = useGeoStats({ limit: 10 });
+  const { countries, status, error } = useGeoStats({ limit: 50 });
   const total = countries.reduce((s, c) => s + c.count, 0);
+  const countryCount = new Set(countries.map((c) => c.countryCode)).size;
 
   return (
-    <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`전체 기간 · ${countries.length}개국 · 총 ${total}건 · 드래그로 회전`}>
+    <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`전체 기간 · ${countryCount}개국 · 총 ${total}건 · 드래그로 회전`}>
       {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
       {/* 2026-07-16(6차): 지구본이 카드 하단에서 살짝 잘린다는 피드백 - h-80(320px)
           에서 조금만 늘렸다. */}

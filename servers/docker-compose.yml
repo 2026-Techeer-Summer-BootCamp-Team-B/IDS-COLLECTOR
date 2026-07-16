@@ -39,6 +39,11 @@ services:
       KAFKA_NORMALIZED_TOPIC: events.normalized
       KAFKA_DLQ_TOPIC: events.dlq
       REDIS_URL: redis://:CHANGE_ME_dev@redis:6379/0
+    volumes:
+      # GeoLite2-City .mmdb(53MB) - 이미지에 굽지 않고 read-only 마운트(app/config.py
+      # geoip_db_path 기본값과 경로 일치). 로컬에 파일이 없으면 컨테이너가 시작 시점에
+      # geoip2.database.Reader()에서 바로 죽는다 - README GeoIP 섹션 참고해서 미리 받아둘 것.
+      - ./normalizer/data/GeoLite2-City.mmdb:/app/data/GeoLite2-City.mmdb:ro
     ports:
       - "127.0.0.1:8200:8200" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
     networks:
