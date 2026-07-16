@@ -5,16 +5,22 @@ state로만 존재했던 걸 실제 테이블(datastore/postgres/init/013-data-p
 옮긴 것. 레이어 구분과 필드는 2026-07-16에 3등급 보존 체계로 재정의됐다
 (datastore/postgres/init/023-log-policies-retention-tiers.sql, docs/reports/
 retention-patch-20260716.md) - layer는 이제 소스별(WAS/Falco/K8s Audit)이 아니라
-기록/원본/파생 3개 고정값이고, hot_days/cold_days/sampling_rate는 단일
+record/raw/derived 3개 고정 영문 키이고, hot_days/cold_days/sampling_rate는 단일
 retention_days로 통합됐다(sampling_rate는 저장만 되고 어디서도 집행 안 하던 죽은
 컨트롤이라 걷어냄 - docs/reports/repo-audit-20260715.md §3.1). 보존기간은
 app/log_retention.py가 실제로 집행한다(오래된 attack-logs-*/otel-logs-raw-* 인덱스
 통삭제 + audit_logs/incidents 정리).
 
+layer가 영문인 이유(2026-07-16, docs/reports/high-patch-20260716.md 항목 7): DB에는
+처음 한글(기록/원본/파생)로 시드했는데, PATCH /log-policies/{layer} 경로 파라미터에
+한글이 들어가면 URL 인코딩·curl 테스트·프론트 상수 관리가 성가셔서 곧바로 영문
+키로 바꿨다. 한글 라벨이 필요한 화면을 위해 _DISPLAY_NAMES로 별도 매핑해
+응답의 display_name 필드로 얹는다 - DB 자체에는 한글을 안 둔다.
+
 ⚠️ 이 스키마 변경으로 GET/PATCH /log-policies 응답 필드가 바뀌었다 - 대시보드
-AdminAuditView.jsx의 PolicyRow(hot_days/cold_days/sampling_rate 렌더링)는 아직
-새 스키마에 안 맞다(프론트 수정은 이번 작업 범위 밖 - docs/reports/
-retention-patch-20260716.md에 전달 사항 기록).
+AdminAuditView.jsx의 PolicyRow(hot_days/cold_days/sampling_rate 렌더링, layer
+한글 비교)는 아직 새 스키마에 안 맞다(프론트 수정은 이번 작업 범위 밖 - docs/reports/
+high-patch-20260716.md에 전달 사항 기록).
 
 record_action(record_id=...)는 여기서 안 쓴다 - log_policies의 PK가 UUID가 아니라
 사람이 읽는 문자열(layer 이름)이라 audit_logs.record_id 컬럼(UUID) 타입에 안 맞는다.
@@ -40,13 +46,23 @@ def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
-# --- 로그 보존 정책 (계층 3개 고정: 기록/원본/파생 - 생성/삭제 없이 PATCH로 값만 바꿈) ---
+# --- 로그 보존 정책 (계층 3개 고정: record/raw/derived - 생성/삭제 없이 PATCH로 값만 바꿈) ---
 
 router_log_policies = APIRouter(prefix="/log-policies", tags=["data-policy"])
+
+# layer(영문 키) -> 사람이 읽는 한글 라벨. DB에는 영문만 두고(위 모듈 docstring
+# 참고) 화면 표시용 문자열만 코드 상수로 관리 - 새 레이어가 추가되면 여기도 같이
+# 추가해야 한다(3개 고정 목록이라 잊어버릴 가능성 낮음).
+_DISPLAY_NAMES = {
+    "record": "기록",
+    "raw": "원본",
+    "derived": "파생",
+}
 
 
 class LogPolicyOut(BaseModel):
     layer: str
+    display_name: str
     retention_days: int
     archive_enabled: bool
 
@@ -59,6 +75,7 @@ class LogPolicyPatch(BaseModel):
 def _row_to_log_policy(row) -> LogPolicyOut:
     return LogPolicyOut(
         layer=row["layer"],
+        display_name=_DISPLAY_NAMES.get(row["layer"], row["layer"]),
         retention_days=row["retention_days"],
         archive_enabled=row["archive_enabled"],
     )

@@ -29,8 +29,7 @@ services:
       - ./init:/docker-entrypoint-initdb.d:ro
     networks:
       - siem-net
-    # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - 컨테이너 재생성(--force-recreate)
-    # 시에만 적용됨.
+    # 로그 로테이션 - 컨테이너 재생성(--force-recreate)시에만 적용됨.
     logging:
       driver: json-file
       options:
