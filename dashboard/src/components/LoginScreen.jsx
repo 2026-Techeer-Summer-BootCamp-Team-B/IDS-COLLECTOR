@@ -84,8 +84,20 @@ function OnboardingCard({ page }) {
 
   return (
     <div>
-      {/* h-64(256px) -> h-96(384px, 1.5배)로 확대(2026-07-16) */}
-      <div className="relative h-96 rounded-xl overflow-hidden bg-black/50 border border-white/10">
+      {/* 2026-07-16: 설명 문구가 영상 "아래"에 있던 걸 "위"로 옮겨달라는 요청 -
+          텍스트 블록을 미디어 박스보다 먼저 렌더링한다. */}
+      <div className="pb-3">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-white/60 shrink-0" />
+          <p className="text-white text-sm font-semibold">{page.label}</p>
+        </div>
+        <p className="text-white/55 text-xs leading-relaxed">{page.desc}</p>
+      </div>
+
+      {/* 2026-07-16: 페이지 전체 폭을 1240px 스케일로 넓히면서 미디어 박스도
+          고정 h-96 대신 aspect-video(16:9)로 바꿔 넓어진 폭에 맞춰 자연스럽게
+          커지도록 했다(넓은 화면에서는 커지고, 좁은 화면에서는 알아서 줄어듦). */}
+      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/50 border border-white/10">
         {showVideo && (
           <video
             ref={videoRef}
@@ -132,14 +144,6 @@ function OnboardingCard({ page }) {
           </button>
         )}
       </div>
-
-      <div className="pt-3">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-white/60 shrink-0" />
-          <p className="text-white text-sm font-semibold">{page.label}</p>
-        </div>
-        <p className="text-white/55 text-xs leading-relaxed">{page.desc}</p>
-      </div>
     </div>
   );
 }
@@ -175,7 +179,13 @@ export default function LoginScreen() {
   }
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center px-4 py-8 overflow-hidden bg-black">
+    // 2026-07-16: "화면이 짤린다"는 문제의 원인 - 바깥 컨테이너에 overflow-hidden이
+    // 걸려 있어서, 안쪽 콘텐츠(온보딩 카드들)가 한 화면 높이보다 커지면 페이지
+    // 자체가 스크롤되지 못하고 그냥 잘려나갔다. overflow-hidden을 제거하고
+    // min-h-screen만 유지 -> 콘텐츠가 넘치면 브라우저가 알아서 세로 스크롤을
+    // 만든다. 대각선 배경 조각들은 absolute inset-0라 스크롤과 무관하게 항상
+    // 뷰포트를 채운다.
+    <div className="min-h-screen relative flex items-center justify-center px-4 py-8 bg-black">
       {/* 2026-07-16: 요청받은 스타일("모던 모노크롬 글래스모피즘, 좌 화이트/우
           매트블랙 대각선 분할, 파랑·네온 없음")대로 배경을 다시 짰다. clip-path로
           정확한 대각선 두 조각을 만들고, 어두운 쪽에만 미세한 격자 패턴을 얹어
@@ -290,11 +300,13 @@ export default function LoginScreen() {
           스크롤로 훑어본다"는 요청대로 구조를 다시 짰다 - 로그인 카드가 위에
           먼저 오고(페이지 자체는 스크롤 안 해도 항상 보임), 그 아래 소개 카드가
           내부 스크롤 영역(온보딩 카드 5개, 각각 전보다 훨씬 큰 h-64)을 갖는다. */}
-      {/* 2026-07-16: 온보딩 영상이 1.5배 커진 만큼 로그인 카드는 상대적으로
-          작게 - 패딩/폰트/입력창 높이를 한 단계씩 줄였다(px-7 py-7 -> px-6
-          py-5, 로고 56px -> 44px, 제목 text-lg -> text-base 등). */}
-      <div className="relative w-full max-w-xl space-y-5">
-        <div className="bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
+      {/* 2026-07-16: "로그인 입력창은 작아도 되니 대시보드(온보딩) 크기를
+          1240x800 스케일로 크게 키워달라"는 요청 - 바깥 컬럼 폭을
+          max-w-xl(576px) -> max-w-[1240px]로 크게 넓히고, 로그인 카드만
+          별도로 max-w-sm(384px)로 좁혀서 중앙에 작게 띄운다. 온보딩 섹션은
+          넓어진 폭 전체를 그대로 쓴다. */}
+      <div className="relative w-full max-w-[1240px] space-y-5">
+        <div className="max-w-sm mx-auto bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
           <div className="flex items-center gap-2.5 mb-4">
             {!logoFailed ? (
               <img
@@ -354,7 +366,7 @@ export default function LoginScreen() {
 
         <div className="bg-black/35 backdrop-blur-xl rounded-2xl border border-white/10 shadow-xl p-5">
           <p className="text-white/45 text-[11px] uppercase tracking-wide mb-4 px-1">대시보드 둘러보기</p>
-          <div className="space-y-6 max-h-[640px] overflow-y-auto pr-2">
+          <div className="space-y-6 max-h-[80vh] overflow-y-auto pr-2">
             {FEATURE_PAGES.map((page) => (
               <OnboardingCard key={page.key} page={page} />
             ))}
