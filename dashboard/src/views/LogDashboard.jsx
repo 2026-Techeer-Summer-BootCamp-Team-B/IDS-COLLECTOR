@@ -958,6 +958,13 @@ const LAYER_INFO = {
   falco: { depth: "4단계", caption: "방 안 · 정밀 수색", desc: "컨테이너 안에서 실제로 실행된 동작을 보는 곳" },
 };
 
+// 2026-07-16(4차): "지금 찍힌 로그인지 헷갈린다"는 피드백 - 예전엔 폴링 버퍼에
+//있는 최근 이벤트를 시간 무관하게 최대 10개까지 항상 채워 보여줘서, 5분 전
+// 이벤트도 방금 온 것처럼 보였다. 최근 1분 이내(WINDOW_MS) 이벤트만 점으로
+// 남기고, 그 창을 벗어나면 점도 같이 사라지게 바꿨다 - 조용하면 계층이
+// 비어있고, 로그가 들어오면 그때부터 점이 하나씩 늘어난다.
+const ACTIVITY_WINDOW_MS = 60_000;
+
 // 2026-07-16: "WAF/WAS/K8s Audit/Falco를 묶어서 실시간으로 보여달라"는 요청 -
 // 정확한 사용자 세션 추적(요청 단위 trace ID)은 지금 파이프라인에 없어서
 // IP/Pod 단위 묶음은 구현 불가한 정확도를 있는 척 하는 셈이라(3차 피드백으로
@@ -968,10 +975,20 @@ export function LiveActivityTree() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { feed } = useLiveAttackFeed({ feedLimit: 80 });
+  // 새 이벤트가 안 들어와도 시간은 계속 흐르므로(1분이 지나면 점이 빠져야 함),
+  // 2초마다 강제로 리렌더해서 "지금으로부터 1분 이내" 기준을 다시 계산한다.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 2000);
+    return () => clearInterval(t);
+  }, []);
 
   const layers = useMemo(() => {
+    const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
     return ACTIVITY_MODULE_ORDER.map((module) => {
-      const events = feed.filter((e) => e.module === module).sort((a, b) => b.timestamp - a.timestamp);
+      const events = feed
+        .filter((e) => e.module === module && e.timestamp.getTime() >= cutoff)
+        .sort((a, b) => b.timestamp - a.timestamp);
       const maxSeverity = events.reduce((m, e) => Math.max(m, e.severity || 0), 0);
       return {
         module,
@@ -981,6 +998,7 @@ export function LiveActivityTree() {
         recent: events.slice(0, 10),
       };
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feed]);
 
   const hasAny = layers.some((l) => l.count > 0);
@@ -988,10 +1006,10 @@ export function LiveActivityTree() {
   return (
     <Card
       title="실시간 활동 흐름"
-      subtitle="WAF → WAS → K8s Audit → Falco, 건물 비유의 4단계 지하 구조 — 로그가 찍히면 해당 계층에 점으로 나타남"
+      subtitle="WAF → WAS → K8s Audit → Falco, 건물 비유의 4단계 지하 구조 — 최근 1분 이내 로그만 점으로 표시"
     >
       {!hasAny ? (
-        <p className="text-dash-muted text-xs py-6 text-center">최근 활동이 없습니다.</p>
+        <p className="text-dash-muted text-xs py-6 text-center">최근 1분간 활동이 없습니다.</p>
       ) : (
         <div className="overflow-x-auto">
           <ActivityLayerDiagram layers={layers} C={C} />
@@ -1064,7 +1082,7 @@ function ActivityLayerDiagram({ layers, C }) {
             {/* 오른쪽: 이 계층에 실제로 찍힌 최근 이벤트 - 왼쪽이 최신 */}
             {recent.length === 0 ? (
               <text x={DOTS_X0} y={dotsY - 4} fontSize={9} fill={C.faint}>
-                최근 활동 없음
+                최근 1분간 활동 없음
               </text>
             ) : (
               recent.map((e, j) => {
@@ -2442,10 +2460,20 @@ export function DashboardContent() {
             {kpiBlockedWidget}
           </div>
 
-          {/* 2026-07-16: "WAF/WAS/K8s Audit/Falco를 실시간 트리로 보여달라"는
-              요청 - KPI 카드 바로 아래, 다른 요약 섹션들보다 위에 둬서 눈에
-              가장 먼저 띄도록 배치했다. */}
-          <LiveActivityTree />
+          {/* 2026-07-16(5차): "실시간 활동 흐름 왼쪽을 Log Volume이랑 같은
+              크기로 맞추고 오른쪽엔 GeoIP를 두자"는 요청 - 로그 개요 행과 같은
+              xl:grid-cols-3(2+1) 비율을 그대로 재사용해서 두 행의 왼쪽 폭이
+              시각적으로 일치하게 맞췄다. GeoSummaryCard(3D 지구본)는 원래
+              페이지 맨 아래 단독 행이었는데 여기로 옮겨왔다. */}
+          <div>
+            <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">실시간 활동</p>
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2">
+                <LiveActivityTree />
+              </div>
+              {geoWidget}
+            </div>
+          </div>
 
           <div>
             <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">로그 개요</p>
@@ -2479,8 +2507,6 @@ export function DashboardContent() {
               {errorRateWidget}
             </div>
           </div>
-
-          {geoWidget}
         </>
       )}
     </div>
