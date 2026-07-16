@@ -17,7 +17,12 @@
   settings.session_ttl_seconds)돼 재시작에도 살아남는다. 주의: platform-api:8400
   직결 포트(로컬 디버깅용, servers/docker-compose.yml에서 호스트 127.0.0.1에만
   바인딩됨)는 Traefik을 안 거치므로 이 인증이 전혀 적용되지 않는다 - GCP VM 등
-  원격 호스트에서 이 포트로 붙으려면 SSH 터널이 필요하다(예: ssh -L 8400:localhost:8400 <host>)
+  원격 호스트에서 이 포트로 붙으려면 SSH 터널이 필요하다(예: ssh -L 8400:localhost:8400 <host>).
+  단, siem-net 컨테이너 네트워크 안에서 platform-api:8400에 직접 붙는 경로는
+  루프백 바인딩과 무관하게 항상 열려 있어서(감사 S13, 2026-07-16) 게이트웨이
+  시크릿 미들웨어(아래 enforce_gateway_secret, app/auth.py의 verify_gateway_secret())를
+  추가로 뒀다 - Traefik이 라우팅한 요청에만 주입되는 X-Internal-Gateway-Secret이
+  없으면 /health·/auth/verify를 제외한 전 요청을 403으로 거부한다.
 - 알림 채널 (P5-3): app/notifications.py - app/incident_alerts.py가 notified_at IS NULL인
   인시던트를 폴링해서 발송(트리거)
 - AI 트렌드 리포트 (P5-4): app/ai_report.py - Gemini API 미설정이면 통계만 반환
@@ -71,7 +76,7 @@ import asyncio
 import contextlib
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -82,7 +87,7 @@ from app.analytics_api import router as analytics_router
 from app.allow_list_api import router as allow_list_router
 from app.attck_api import router as attck_router
 from app.audit_logs_api import router as audit_logs_router
-from app.auth import router as auth_router
+from app.auth import router as auth_router, verify_gateway_secret
 from app.banned_ips_api import router as banned_ips_router
 from app.config import settings
 from app.data_policy_api import router_log_policies
@@ -109,6 +114,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 게이트웨이 시크릿 강제(감사 S13, 2026-07-16) - 모듈 docstring 및
+# app/auth.py의 verify_gateway_secret() 참고. siem-net 안에서 Traefik을
+# 거치지 않고 이 컨테이너에 직접 붙는 요청을 걸러낸다.
+#
+# 예외 2개:
+#   - OPTIONS: 브라우저 CORS preflight는 커스텀 헤더를 안 실어 보내므로 여기서
+#     막으면 실제 요청이 나가기도 전에 죽는다(app/auth.py verify()의 동일 처리 참고).
+#   - "/health": 이 컨테이너 자신의 Docker healthcheck(servers/docker-compose.yml)가
+#     localhost로 직접 찌르는 경로라 Traefik을 거치지 않는다 - 여기서 막으면
+#     healthcheck가 영구 실패해서 컨테이너가 계속 unhealthy로 잡힌다.
+#   - "/auth/verify": Traefik forwardAuth의 내부 호출(Traefik이 자체 HTTP
+#     클라이언트로 직접 호출) 자체가 라우터/미들웨어 체인을 안 거쳐서 게이트웨이
+#     시크릿을 실어줄 방법이 없다 - verify()는 X-Auth-*를 입력으로 신뢰하는
+#     게 아니라 세션 토큰으로 직접 판단하므로 이 검증 대상이 아니다.
+_GATEWAY_SECRET_EXEMPT_PATHS = {"/health", "/auth/verify"}
+
+
+@app.middleware("http")
+async def enforce_gateway_secret(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path in _GATEWAY_SECRET_EXEMPT_PATHS:
+        return await call_next(request)
+    if not verify_gateway_secret(request):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "missing or invalid internal gateway secret"},
+        )
+    return await call_next(request)
+
 
 app.include_router(incidents_router)
 app.include_router(auth_router)

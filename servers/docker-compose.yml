@@ -15,6 +15,12 @@ networks:
 # POSTGRES_PASSWORD와, ClickHouse는 servers/datastore/clickhouse/.env의
 # CLICKHOUSE_PASSWORD와 반드시 같은 값이어야 한다 - 이것도 별도 프로젝트라 .env
 # 공유가 안 돼서 servers/.env에 따로 값을 둔다.
+#
+# INTERNAL_GATEWAY_SECRET(감사 S13, 2026-07-16)도 ${} 참조 - platform-api 서비스의
+# 환경변수와 아래 labels의 headers 미들웨어 둘 다 이 프로젝트(servers/)의 .env
+# 값을 같이 참조하므로(둘 다 이 파일 안에 있어서) 별도 프로젝트 간 동기화 문제가
+# 없다. 이 값이 없거나 두 참조가 어긋나면 platform-api가 Traefik을 거친 정상
+# 요청까지 403으로 거부하니 주의.
 services:
   normalizer:
     # 빌드 컨텍스트를 servers/ 루트로 잡는다 - normalizer/correlation-engine이 공유하는
@@ -101,6 +107,7 @@ services:
       REDIS_URL: redis://:CHANGE_ME_dev@redis:6379/0
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      INTERNAL_GATEWAY_SECRET: ${INTERNAL_GATEWAY_SECRET}
     ports:
       - "127.0.0.1:8400:8400" # 로컬 디버깅 편의용 직결 포트(호스트 루프백에만 바인딩, forwardAuth 미적용) - 실제 진입 경로는 Traefik(:80/api). 원격 호스트에서 직결하려면 SSH 터널 필요(예: ssh -L 8400:localhost:8400 <host>)
     networks:
@@ -123,6 +130,14 @@ services:
       - "traefik.docker.network=siem-net"
       - "traefik.http.services.platform-api.loadbalancer.server.port=8400"
 
+      # 게이트웨이 시크릿(감사 S13, 2026-07-16) - platform-api로 가는 4개 라우터
+      # (아래 public/protected × :80/:443) 전부에 이 미들웨어를 맨 앞에 물려서,
+      # Traefik을 거친 요청에는 항상 X-Internal-Gateway-Secret이 실리게 한다.
+      # siem-net 안에서 이 헤더 없이 platform-api:8400에 직접 붙는 요청은
+      # app/main.py의 미들웨어가 403으로 거부한다(app/auth.py의
+      # verify_gateway_secret() 참고).
+      - "traefik.http.middlewares.platform-api-gateway-secret.headers.customrequestheaders.X-Internal-Gateway-Secret=${INTERNAL_GATEWAY_SECRET}"
+
       # /api/auth/* (login/logout/session)은 인증 자체를 다루는 엔드포인트라 forwardAuth
       # 없이 통과 - 이 라우터가 더 구체적인 rule이라 platform-api 라우터보다 우선순위가
       # 높아야 하므로 priority를 명시적으로 더 크게 준다(Traefik 기본 룰 길이 기반 우선순위에
@@ -130,7 +145,7 @@ services:
       - "traefik.http.routers.platform-api-public.entrypoints=web"
       - "traefik.http.routers.platform-api-public.rule=PathPrefix(`/api/auth`) || Path(`/api/health`)"
       - "traefik.http.routers.platform-api-public.priority=20"
-      - "traefik.http.routers.platform-api-public.middlewares=platform-api-stripprefix"
+      - "traefik.http.routers.platform-api-public.middlewares=platform-api-gateway-secret,platform-api-stripprefix"
       - "traefik.http.routers.platform-api-public.service=platform-api"
 
       # 나머지 /api/* 전부 - forwardAuth로 인증을 강제(P5-2, 앱 레벨 Depends는 다 뺐음).
@@ -139,7 +154,7 @@ services:
       - "traefik.http.routers.platform-api.entrypoints=web"
       - "traefik.http.routers.platform-api.rule=PathPrefix(`/api`)"
       - "traefik.http.routers.platform-api.priority=10"
-      - "traefik.http.routers.platform-api.middlewares=platform-api-stripprefix,platform-api-auth"
+      - "traefik.http.routers.platform-api.middlewares=platform-api-gateway-secret,platform-api-stripprefix,platform-api-auth"
 
       - "traefik.http.middlewares.platform-api-stripprefix.stripprefix.prefixes=/api"
       - "traefik.http.middlewares.platform-api-auth.forwardauth.address=http://platform-api:8400/auth/verify"
@@ -150,18 +165,19 @@ services:
       # 걸린 라우터를 추가로 얹는다. Host()가 있어야 Traefik이 어떤 도메인으로
       # 인증서를 받을지 알 수 있다 - 아직 실제 도메인이 없어서 sslip.io(IP를
       # 그대로 서브도메인처럼 씀)를 쓴다. 실제 도메인을 사면 이 Host() 값만
-      # 새 도메인으로 바꾸면 됨.
+      # 새 도메인으로 바꾸면 됨. (게이트웨이 시크릿 미들웨어도 :80과 동일하게 물림 -
+      # 안 물리면 Vercel 프론트의 정상 HTTPS 트래픽이 403으로 막힌다.)
       - "traefik.http.routers.platform-api-public-secure.entrypoints=websecure"
       - "traefik.http.routers.platform-api-public-secure.rule=Host(`35-216-79-173.sslip.io`) && (PathPrefix(`/api/auth`) || Path(`/api/health`))"
       - "traefik.http.routers.platform-api-public-secure.priority=20"
-      - "traefik.http.routers.platform-api-public-secure.middlewares=platform-api-stripprefix"
+      - "traefik.http.routers.platform-api-public-secure.middlewares=platform-api-gateway-secret,platform-api-stripprefix"
       - "traefik.http.routers.platform-api-public-secure.service=platform-api"
       - "traefik.http.routers.platform-api-public-secure.tls.certresolver=letsencrypt"
 
       - "traefik.http.routers.platform-api-secure.entrypoints=websecure"
       - "traefik.http.routers.platform-api-secure.rule=Host(`35-216-79-173.sslip.io`) && PathPrefix(`/api`)"
       - "traefik.http.routers.platform-api-secure.priority=10"
-      - "traefik.http.routers.platform-api-secure.middlewares=platform-api-stripprefix,platform-api-auth"
+      - "traefik.http.routers.platform-api-secure.middlewares=platform-api-gateway-secret,platform-api-stripprefix,platform-api-auth"
       - "traefik.http.routers.platform-api-secure.tls.certresolver=letsencrypt"
 
   dashboard:

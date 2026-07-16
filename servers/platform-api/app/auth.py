@@ -176,3 +176,34 @@ def current_user_id(request: Request) -> Optional[UUID]:
     인증 자체는 이미 Traefik forwardAuth가 끝낸 뒤라 여기선 검증 없이 신뢰한다."""
     raw = request.headers.get("x-auth-user-id")
     return UUID(raw) if raw else None
+
+
+_GATEWAY_SECRET_HEADER = "x-internal-gateway-secret"
+
+
+def verify_gateway_secret(request: Request) -> bool:
+    """이 요청이 정말 Traefik을 거쳐왔는지 검증한다(감사 S13, 2026-07-16).
+
+    current_user_id()가 X-Auth-User-Id를 "검증 없이 신뢰"할 수 있는 건 forwardAuth가
+    이미 세션/역할 검사를 끝낸 뒤라는 전제 때문인데, platform-api:8400은 siem-net
+    안의 다른 모든 컨테이너에서 직접 접근 가능하다(호스트 루프백 바인딩은 호스트
+    바깥 접근만 막을 뿐 컨테이너 네트워크 안에서는 무관) - Traefik을 거치지 않고
+    직접 붙으면 forwardAuth 자체가 아예 안 불리므로, X-Auth-* 헤더를 위조하지
+    않아도(애초에 어떤 앱 코드도 쓰기 요청에 role을 재확인하지 않으므로) 쓰기가
+    그냥 성공하고, current_user_id()로 감사 로그의 행위자도 위조할 수 있었다.
+
+    servers/docker-compose.yml의 platform-api-gateway-secret 미들웨어(headers.
+    customrequestheaders)가 Traefik을 거친 요청에는 이 헤더를 항상 주입해두므로,
+    app/main.py의 전역 미들웨어가 모든 요청(주로 /health, /auth/verify 제외 -
+    아래 참고)에서 이 값을 확인해 없거나 틀리면 403으로 거부한다 - 이제 direct
+    bypass는 X-Auth-* 위조 여부와 무관하게 이 단계에서 막힌다.
+
+    /health는 컨테이너 자신의 Docker healthcheck가 localhost로(Traefik을 안 거치고)
+    직접 찌르므로 예외 처리 필수(app/main.py에서 처리). /auth/verify는 이 함수가
+    검증하는 대상이 아니다 - forwardAuth의 내부 호출(Traefik이 자체 HTTP 클라이언트로
+    http://platform-api:8400/auth/verify를 직접 호출) 자체가 라우터/미들웨어 체인을
+    안 거치므로 게이트웨이 시크릿을 실어줄 방법이 없고, verify()는 애초에 X-Auth-*를
+    입력으로 신뢰하는 게 아니라 세션 토큰으로 직접 판단해 X-Auth-*를 생성하는
+    쪽이라 이 검증이 막아야 할 대상이 아니다(app/main.py에서 함께 예외 처리)."""
+    provided = request.headers.get(_GATEWAY_SECRET_HEADER, "")
+    return secrets.compare_digest(provided, settings.internal_gateway_secret)
