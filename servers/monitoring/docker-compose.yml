@@ -120,6 +120,17 @@ services:
   # 전혀 안 나가는 문제가 있었다. containerd 소켓에 직접 붙여서 우회한다.
   # dockerd 데몬 설정을 바꿔 snapshotter를 끄는 방식은 호스트의 Docker
   # 데몬 재시작이 필요해 기존 전체 스택에 영향을 주므로 선택하지 않았다.
+  #
+  # [알려진 한계] 컨테이너별 네트워크 트래픽(container_network_*)은 이 경로로는
+  # 수집되지 않는다 - cAdvisor containerd 핸들러의 needNet()이 containerd의
+  # CRI "io.cri-containerd.kind=sandbox" 라벨이 붙은 컨테이너에만 네트워크
+  # 통계를 채우도록 하드코딩돼 있는데(google/cadvisor v0.47.2
+  # container/containerd/handler.go), 우리 컨테이너는 순수 Docker라 이 라벨이
+  # 없다. v0.60.5 기준 독립 containerd 팩토리 자체가 제거되어 상위 버전으로
+  # 올려도 해결되지 않는다 - dockerd의 containerd-snapshotter를 끄는 것 외에는
+  # (호스트 Docker 데몬 재시작 필요, 이 스택 범위 밖) 근본적인 해결책이 없다.
+  # 호스트 전체 네트워크 트래픽(컨테이너별 아님)은 node-exporter의
+  # node_network_receive/transmit_bytes_total로 대체 확인 가능.
   # ------------------------------------------------------------------
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.2
@@ -167,68 +178,97 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ------------------------------------------------------------------
+  # PostgreSQL Exporter - 읽기 전용 계정(monitoring_ro) 사용, README 참고
+  # ------------------------------------------------------------------
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_URI: "${POSTGRES_EXPORTER_HOST}:${POSTGRES_EXPORTER_PORT}/${POSTGRES_EXPORTER_DB}?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_EXPORTER_USER}
+      DATA_SOURCE_PASS: ${POSTGRES_EXPORTER_PASSWORD}
+    ports:
+      - "${HOST_INTERNAL_IP}:9187:9187" # 내부망 전용
+    networks:
+      - monitoring
+      - siem-net # postgres:5432에 도달하기 위함 (기존 네트워크, 참조만 함)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------------------------
+  # ClickHouse Exporter - 읽기 전용 계정(monitoring_ro) 사용, README 참고
+  # ------------------------------------------------------------------
+  clickhouse-exporter:
+    image: f1yegor/clickhouse-exporter:latest # 프로덕션에서는 digest 고정 권장
+    container_name: clickhouse-exporter
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_EXPORTER_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_EXPORTER_PASSWORD}
+      CLICKHOUSE_SERVER: ${CLICKHOUSE_EXPORTER_HOST}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_EXPORTER_PORT}
+    ports:
+      - "${HOST_INTERNAL_IP}:9116:9116" # 내부망 전용
+    networks:
+      - monitoring
+      - siem-net # clickhouse:8123에 도달하기 위함 (기존 네트워크, 참조만 함)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------------------------
+  # OpenSearch Exporter - elasticsearch_exporter로 호환 스크레이프.
+  # 기존 OpenSearch는 plugins.security.disabled=true라 인증정보 불필요.
+  # ------------------------------------------------------------------
+  opensearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+    container_name: opensearch-exporter
+    restart: unless-stopped
+    command:
+      - "--es.uri=${OPENSEARCH_EXPORTER_URI}"
+    ports:
+      - "${HOST_INTERNAL_IP}:9114:9114" # 내부망 전용
+    networks:
+      - monitoring
+      - siem-net # opensearch:9200에 도달하기 위함 (기존 네트워크, 참조만 함)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------------------------
+  # Blackbox Exporter - HTTP 엔드포인트 헬스체크 프로빙
+  # ------------------------------------------------------------------
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    ports:
+      - "${HOST_INTERNAL_IP}:9115:9115" # 내부망 전용
+    networks:
+      - monitoring
+      - siem-net # platform-api/opensearch 등 기존 서비스를 프로빙하려면 필요
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ==================================================================
   # 향후 확장 대상 (활성화 전까지 주석 유지)
   # 활성화 절차: 1) .env에 해당 값 채우기 2) 아래 블록 주석 해제
   # 3) prometheus.yml의 대응 scrape_configs 블록도 주석 해제 4) docker compose up -d
   # ==================================================================
-
-  # ---- PostgreSQL Exporter (읽기 전용 계정 필수 - .env.example 참고) ----
-  # postgres-exporter:
-  #   image: prometheuscommunity/postgres-exporter:v0.15.0
-  #   container_name: postgres-exporter
-  #   restart: unless-stopped
-  #   environment:
-  #     DATA_SOURCE_URI: "${POSTGRES_EXPORTER_HOST}:${POSTGRES_EXPORTER_PORT}/${POSTGRES_EXPORTER_DB}?sslmode=disable"
-  #     DATA_SOURCE_USER: ${POSTGRES_EXPORTER_USER}
-  #     DATA_SOURCE_PASS: ${POSTGRES_EXPORTER_PASSWORD}
-  #   ports:
-  #     - "${HOST_INTERNAL_IP}:9187:9187"
-  #   networks:
-  #     - monitoring
-  #     - siem-net
-
-  # ---- ClickHouse Exporter (읽기 전용 계정 필수 - .env.example 참고) ----
-  # clickhouse-exporter:
-  #   image: f1yegor/clickhouse-exporter:latest # 프로덕션에서는 digest 고정 권장
-  #   container_name: clickhouse-exporter
-  #   restart: unless-stopped
-  #   environment:
-  #     CLICKHOUSE_USER: ${CLICKHOUSE_EXPORTER_USER}
-  #     CLICKHOUSE_PASSWORD: ${CLICKHOUSE_EXPORTER_PASSWORD}
-  #     CLICKHOUSE_SERVER: ${CLICKHOUSE_EXPORTER_HOST}
-  #     CLICKHOUSE_PORT: ${CLICKHOUSE_EXPORTER_PORT}
-  #   ports:
-  #     - "${HOST_INTERNAL_IP}:9116:9116"
-  #   networks:
-  #     - monitoring
-  #     - siem-net
-
-  # ---- OpenSearch Exporter (elasticsearch_exporter로 호환 스크레이프) ----
-  # opensearch-exporter:
-  #   image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
-  #   container_name: opensearch-exporter
-  #   restart: unless-stopped
-  #   command:
-  #     - "--es.uri=${OPENSEARCH_EXPORTER_URI}"
-  #   ports:
-  #     - "${HOST_INTERNAL_IP}:9114:9114"
-  #   networks:
-  #     - monitoring
-  #     - siem-net
-
-  # ---- Blackbox Exporter (HTTP/TCP 엔드포인트 프로빙) ----
-  # blackbox-exporter:
-  #   image: prom/blackbox-exporter:v0.25.0
-  #   container_name: blackbox-exporter
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
-  #   ports:
-  #     - "${HOST_INTERNAL_IP}:9115:9115"
-  #   networks:
-  #     - monitoring
-  #     - siem-net # platform-api/opensearch 등 기존 서비스를 프로빙하려면 필요
 
   # ---- Alertmanager ----
   # alertmanager:
