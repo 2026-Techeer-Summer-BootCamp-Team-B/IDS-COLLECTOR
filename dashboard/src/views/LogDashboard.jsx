@@ -1015,87 +1015,113 @@ export function LiveActivityTree() {
         <p className="text-dash-muted text-xs py-6 text-center">최근 활동이 없습니다.</p>
       ) : (
         <div className="overflow-x-auto">
-          <ActivityTreeDiagram buckets={buckets} C={C} />
+          <ActivityRootDiagram buckets={buckets} C={C} />
         </div>
       )}
     </Card>
   );
 }
 
-function ActivityTreeDiagram({ buckets, C }) {
-  const NODE_GAP = 32;
-  const ROW_GAP = 20;
-
-  const rows = buckets.map((b) => {
-    const modsHeight = Math.max(0, b.modules.length - 1) * NODE_GAP;
-    return { ...b, blockHeight: Math.max(30, modsHeight) };
-  });
-  const totalHeight = rows.reduce((sum, r) => sum + r.blockHeight, 0) + ROW_GAP * Math.max(0, rows.length - 1);
-  const height = Math.max(220, totalHeight + 24);
-  const hubY = height / 2;
-
-  let cursor = 12;
-  const positioned = rows.map((r) => {
-    const centerY = cursor + r.blockHeight / 2;
-    cursor += r.blockHeight + ROW_GAP;
-    return { ...r, centerY };
-  });
-
-  const X_HUB = 34;
-  const X_BUCKET = 180;
-  const X_MODULE = 330;
+// 2026-07-16(2차): 왼쪽->오른쪽 트리 대신, 위쪽 지면에 꽃이 피어 있고 그
+// 아래(땅속)로 뿌리가 뻗어나가는 구성으로 바꿔달라는 요청 - Live 허브를
+// "꽃"으로, 소스(IP/Pod) 노드를 1차 뿌리, 모듈 노드를 그 끝에서 갈라지는
+// 잔뿌리로 표현한다. 데이터/그룹핑 로직(LiveActivityTree의 buckets)은 그대로,
+// 레이아웃만 가로->세로로 뒤집었다. 지면선(점선) 위는 꽃, 아래는 옅은 배경을
+// 깔아 "땅속" 느낌을 준다. 잔뿌리를 짝/홀 인덱스로 살짝 어긋나게(stagger)
+// 배치해서 기계적인 트리가 아니라 실제 뿌리처럼 자연스럽게 보이도록 했다.
+function ActivityRootDiagram({ buckets, C }) {
   const width = 560;
+  const groundY = 56; // 지면선 위치 - 이 위가 지상(꽃), 아래가 지하(뿌리)
+  const bucketY = groundY + 56; // 1차 뿌리(소스 노드) 깊이
+  const moduleBaseY = bucketY + 58; // 잔뿌리(모듈 노드) 기본 깊이
+  const MODULE_STAGGER = 24; // 잔뿌리를 짝/홀로 어긋나게 하는 깊이 차
+  const MARGIN_X = 52;
+  const MODULE_SPREAD = 26; // 같은 소스 안 잔뿌리끼리의 가로 간격
+
+  const hubX = width / 2;
+  const bucketXs = buckets.map((_, i) =>
+    buckets.length === 1 ? hubX : MARGIN_X + (i * (width - MARGIN_X * 2)) / (buckets.length - 1)
+  );
+  const height = moduleBaseY + MODULE_STAGGER + 44;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="실시간 활동 흐름 트리">
-      <circle cx={X_HUB} cy={hubY} r={5} fill={C.live} className="animate-pulse" />
-      <circle cx={X_HUB} cy={hubY} r={14} fill="none" stroke={C.live} strokeWidth={1.5} opacity={0.5} />
-      <text x={X_HUB} y={hubY + 30} textAnchor="middle" fontSize={10} fill={C.muted}>
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="실시간 활동 흐름 뿌리 구조">
+      {/* 지하 영역 배경 + 지면선 */}
+      <rect x={0} y={groundY} width={width} height={height - groundY} fill={C.surfaceAlt} opacity={0.35} />
+      <line x1={0} y1={groundY} x2={width} y2={groundY} stroke={C.faint} strokeWidth={1} strokeDasharray="3 4" />
+
+      {/* 꽃(줄기 + 꽃잎) - Live 허브를 표현 */}
+      <line x1={hubX} y1={groundY} x2={hubX} y2={groundY - 28} stroke={C.mint} strokeWidth={2} strokeLinecap="round" />
+      {[0, 60, 120, 180, 240, 300].map((angle) => {
+        const rad = (angle * Math.PI) / 180;
+        const px = hubX + Math.cos(rad) * 9;
+        const py = groundY - 28 + Math.sin(rad) * 9;
+        return (
+          <ellipse
+            key={angle}
+            cx={px}
+            cy={py}
+            rx={7}
+            ry={4}
+            fill={C.mint}
+            opacity={0.8}
+            transform={`rotate(${angle} ${px} ${py})`}
+          />
+        );
+      })}
+      <circle cx={hubX} cy={groundY - 28} r={5} fill={C.live} className="animate-pulse" />
+      <text x={hubX} y={groundY - 40} textAnchor="middle" fontSize={10} fill={C.muted}>
         Live
       </text>
 
-      {positioned.map((b) => {
+      {buckets.map((b, i) => {
+        const bx = bucketXs[i];
         const bucketMeta = getRealSeverityMeta(b.maxSeverity);
-        const modStartY = b.centerY - ((b.modules.length - 1) * NODE_GAP) / 2;
+        const modCount = b.modules.length;
+
         return (
           <g key={b.key}>
+            {/* 지면(꽃) -> 1차 뿌리(소스) */}
             <path
-              d={`M ${X_HUB + 14} ${hubY} C ${(X_HUB + X_BUCKET) / 2} ${hubY}, ${(X_HUB + X_BUCKET) / 2} ${b.centerY}, ${X_BUCKET - 52} ${b.centerY}`}
+              d={`M ${hubX} ${groundY} C ${hubX} ${(groundY + bucketY) / 2}, ${bx} ${(groundY + bucketY) / 2}, ${bx} ${bucketY - 13}`}
               fill="none"
               stroke={C.surfaceAlt}
               strokeWidth={1.5}
             />
             <rect
-              x={X_BUCKET - 52}
-              y={b.centerY - 13}
-              width={104}
-              height={26}
-              rx={13}
-              fill={C.surfaceAlt}
+              x={bx - 42}
+              y={bucketY - 13}
+              width={84}
+              height={24}
+              rx={12}
+              fill={C.surface}
               stroke={bucketMeta.color}
               strokeWidth={1.5}
             />
-            <text x={X_BUCKET} y={b.centerY + 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={C.fg} fontFamily="monospace">
-              {truncateActivityLabel(b.label, 15)}
+            <text x={bx} y={bucketY + 3} textAnchor="middle" fontSize={9} fontWeight={600} fill={C.fg} fontFamily="monospace">
+              {truncateActivityLabel(b.label, 12)}
             </text>
 
-            {b.modules.map((m, i) => {
-              const modY = modStartY + i * NODE_GAP;
+            {b.modules.map((m, j) => {
+              const offset = (j - (modCount - 1) / 2) * MODULE_SPREAD;
+              const mx = bx + offset;
+              const my = moduleBaseY + (j % 2 === 0 ? 0 : MODULE_STAGGER);
               const meta = getModuleMeta(m.module);
               const sevMeta = getRealSeverityMeta(m.maxSeverity);
               const isDanger = m.maxSeverity >= REAL_ERROR_MIN_SEVERITY;
               return (
                 <g key={m.module}>
+                  {/* 1차 뿌리 -> 잔뿌리(모듈) */}
                   <path
-                    d={`M ${X_BUCKET + 52} ${b.centerY} C ${(X_BUCKET + X_MODULE) / 2} ${b.centerY}, ${(X_BUCKET + X_MODULE) / 2} ${modY}, ${X_MODULE - 40} ${modY}`}
+                    d={`M ${bx} ${bucketY + 11} C ${bx} ${(bucketY + my) / 2}, ${mx} ${(bucketY + my) / 2}, ${mx} ${my - 9}`}
                     fill="none"
                     stroke={isDanger ? sevMeta.color : C.surfaceAlt}
                     strokeWidth={isDanger ? 1.5 : 1}
                   />
                   {isDanger && (
                     <circle
-                      cx={X_MODULE}
-                      cy={modY}
+                      cx={mx}
+                      cy={my}
                       r={9}
                       fill="none"
                       stroke={sevMeta.color}
@@ -1104,18 +1130,18 @@ function ActivityTreeDiagram({ buckets, C }) {
                     />
                   )}
                   <circle
-                    cx={X_MODULE}
-                    cy={modY}
-                    r={9}
+                    cx={mx}
+                    cy={my}
+                    r={8}
                     fill={meta.color}
                     stroke={isDanger ? sevMeta.color : C.bg}
                     strokeWidth={isDanger ? 2 : 1.5}
                   />
-                  <text x={X_MODULE + 16} y={modY - 3} fontSize={9} fontWeight={600} fill={C.fg}>
+                  <text x={mx} y={my + 19} textAnchor="middle" fontSize={8} fontWeight={600} fill={C.fg}>
                     {meta.label}
                   </text>
-                  <text x={X_MODULE + 16} y={modY + 9} fontSize={8.5} fill={C.faint}>
-                    {m.count}건 · {sevMeta.label}
+                  <text x={mx} y={my + 29} textAnchor="middle" fontSize={7.5} fill={C.faint}>
+                    {m.count}건
                   </text>
                 </g>
               );
