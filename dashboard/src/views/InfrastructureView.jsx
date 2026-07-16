@@ -247,6 +247,16 @@ export default function InfrastructureView() {
 
   return (
     <div className="space-y-6">
+      {/* 페이지 상단 설명 문구 (2026-07-16) - ATT&CK 페이지의 타이틀+서브타이틀
+          패턴을 그대로 가져왔다. Infrastructure는 섹션별 소제목은 이미 있었지만
+          "이 페이지 전체가 뭘 보여주는 곳인지"를 알려주는 헤더가 없었다. */}
+      <div>
+        <h2 className="text-dash-fg text-base font-semibold mb-1">인프라 현황</h2>
+        <p className="text-dash-muted text-xs">
+          로그 파이프라인 상태와 실제 공격이 집중된 K8s 클러스터 대상(네임스페이스/파드), 공격 발원지를 표시합니다
+        </p>
+      </div>
+
       <PipelineHealthPanel />
       <SourceHealthPanel />
 

@@ -194,24 +194,12 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
         )}
       </div>
 
-      {/* 예전엔 이 토글이 검색바 우측 끝에 있었는데, 대시보드 상단 위젯 설정
-          행에도 똑같은 버튼이 하나 더 있어서 중복이었다 - 검색창 바로 아래
-          가운데로 옮기고 하나로 합쳤다. */}
-      <div className="flex justify-center">
-        <button
-          onClick={() => setExpanded((e) => !e)}
-          title={expanded ? "결과 패널 접기" : "결과 패널 펼치기"}
-          className={`inline-flex items-center gap-2 text-xs font-medium px-4 py-1.5 rounded-full transition-colors whitespace-nowrap ${
-            expanded
-              ? "bg-dash-mint/15 text-dash-mint"
-              : "bg-dash-surface text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
-          }`}
-        >
-          <span className="font-semibold">{results.length.toLocaleString()} hits</span>
-          검색 결과 {expanded ? "접기" : "펼치기"}
-          <span>{expanded ? "▴" : "▾"}</span>
-        </button>
-      </div>
+      {/* 검색 결과 펼치기 토글 버튼은 2026-07-16부터 여기서 안 그린다 - 대시보드
+          상단 위젯 설정 행(LogDashboard.jsx의 DashboardContent)으로 옮겨서 그
+          행과 한 줄에 나란히 놓는다(예전엔 이 행 + 위젯 설정 행이 따로 한 줄씩
+          차지해서 세로 공간을 낭비했음). expanded/setExpanded 상태는 그대로
+          부모(DashboardContent)가 소유하고 여기로 내려받으므로 그 버튼을 눌러도
+          아래 패널은 똑같이 열리고 닫힌다. */}
 
       {expanded && (
         <div className="bg-dash-surface rounded-2xl p-5">

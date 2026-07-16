@@ -90,13 +90,17 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange, topScenario, 
         onClick={() => onFilterChange("closed")}
         active={statusFilter === "closed"}
       />
+      {/* Top 상관 규칙/Top 공격 IP는 상태(Open=위험/종결=안전)를 나타내는 게
+          아니라 단순 정보 표시라 색을 따로 주지 않는다(2026-07-16) - 예전엔
+          pink/critical(빨강)을 썼는데, critical이 위의 "Open" 카드와 같은
+          색이라 오해를 부르고 pink는 다른 카드들과 톤이 안 맞아 눈에 튀었다.
+          color를 안 주면 MiniKpi 기본값(C.fg)으로 다른 무채색 카드들과 통일된다. */}
       <MiniKpi
         label="Top 상관 규칙"
         value={topScenario?.name || "-"}
         sub={topScenario ? `${topScenario.hit_count}건 적중` : ""}
-        color={C.pink}
       />
-      <MiniKpi label="Top 공격 IP" value={topIp?.name || "-"} sub={topIp ? `${topIp.count}건` : ""} color={C.critical} />
+      <MiniKpi label="Top 공격 IP" value={topIp?.name || "-"} sub={topIp ? `${topIp.count}건` : ""} />
     </div>
   );
 }
@@ -466,6 +470,15 @@ export default function IncidentsView({ pushToast }) {
 
   return (
     <div className="space-y-6">
+      {/* 페이지 상단 설명 문구 (2026-07-16) - ATT&CK 페이지의 타이틀+서브타이틀
+          패턴을 그대로 가져왔다. */}
+      <div>
+        <h2 className="text-dash-fg text-base font-semibold mb-1">인시던트</h2>
+        <p className="text-dash-muted text-xs">
+          여러 로그(WAS / Falco / K8s Audit)가 상관 규칙에 의해 하나의 사건으로 묶인 인시던트 목록입니다
+        </p>
+      </div>
+
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
 
       <IncidentKpiRow
