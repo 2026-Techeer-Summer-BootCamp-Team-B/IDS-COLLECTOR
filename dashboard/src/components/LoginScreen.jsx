@@ -83,7 +83,12 @@ function OnboardingCarousel() {
 
   return (
     <div>
-      <div className="relative h-44 mx-7 rounded-xl overflow-hidden bg-black/30 border border-white/10">
+      {/* 2026-07-16: 높이를 h-44(176px) -> h-[22rem](352px, 약 2배)로 키우고,
+          플레이스홀더 톤을 accent 색 10% 웨시(밝게 뜸)에서 검정 베이스 위에
+          accent를 아주 살짝만(6%) 얹는 방식으로 바꿨다 - 카드 전체가 어두운
+          유리 느낌인데 플레이스홀더만 밝은 색 박스처럼 튀어서 안 어울린다는
+          피드백. */}
+      <div className="relative h-[22rem] mx-7 rounded-xl overflow-hidden bg-black/40 border border-white/10">
         {showVideo && (
           <video
             key={`${page.key}-video`}
@@ -106,8 +111,9 @@ function OnboardingCarousel() {
           />
         )}
         {showPlaceholder && (
-          <div className={`absolute inset-0 flex items-center justify-center ${page.accent}/10`}>
-            <span className="text-white/40 text-[11px]">{page.label} 화면 준비 중</span>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+            <div className={`absolute inset-0 ${page.accent}/[0.06]`} />
+            <span className="relative text-white/35 text-xs">{page.label} 화면 준비 중</span>
           </div>
         )}
 
