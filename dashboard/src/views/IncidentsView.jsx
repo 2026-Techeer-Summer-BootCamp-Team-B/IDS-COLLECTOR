@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { SeverityBadge, SourceBadge, StatusDot } from "../components/badges";
+import { SeverityBadge, SourceBadge } from "../components/badges";
 import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
@@ -22,18 +22,15 @@ function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
 }
 
-const STATUS_LABEL = { open: "Open", investigating: "조사중", closed: "종결" };
+// 2026-07-16: "전체 인시던트/Open/조사중/종결"처럼 한/영이 섞여있던 걸 실제
+// 인시던트 관리 툴(PagerDuty/Opsgenie류)에서 쓰는 영문 상태명으로 통일 -
+// STATUS_META(도넛 차트 라벨)와도 이제 같은 용어를 쓴다("Closed" -> "Resolved").
+const STATUS_LABEL = { open: "Open", investigating: "Investigating", closed: "Resolved" };
 const STATUS_META = {
   open: { label: "Open", color: "#FF1F4B" },
   investigating: { label: "Investigating", color: "#F5E400" },
-  closed: { label: "Closed", color: "#00FFA6" },
+  closed: { label: "Resolved", color: "#00FFA6" },
 };
-// StatusDot은 IN_PROGRESS/그 외 두 상태만 구분(진행중/조사완료) — open과
-// investigating을 모두 "진행중"으로 묶는다.
-function statusDotStatus(status) {
-  return status === "closed" ? "RESOLVED" : "IN_PROGRESS";
-}
-
 function tooltipStyle(C) {
   return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
 }
@@ -58,9 +55,11 @@ function MiniKpi({ label, value, sub, color, onClick, active = false }) {
   );
 }
 
-// 상태(open/investigating/closed) 필터 버튼 4개 + Top 상관 규칙/Top 공격 IP
-// 정보성 카드 2개. GET /incidents로 받은 목록 하나에서 전부 파생.
-function IncidentKpiRow({ incidents, statusFilter, onFilterChange, topScenario, topIp }) {
+// 상태(open/investigating/closed) 필터 버튼 4개. GET /incidents로 받은 목록
+// 하나에서 전부 파생. Top 상관 규칙/Top 공격 IP는 클릭해도 필터링되지 않는
+// 순수 정보 카드라 이 버튼 그리드와 섞으면 "이것도 눌리나?" 하는 오해를 주고
+// 톤도 안 맞았다(2026-07-16) - TopSignalsCard로 완전히 분리했다.
+function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const openCount = incidents.filter((i) => i.status === "open").length;
@@ -69,7 +68,7 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange, topScenario, 
 
   return (
     <div className="flex flex-wrap gap-4">
-      <MiniKpi label="전체 인시던트" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
+      <MiniKpi label="Total" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
       <MiniKpi
         label="Open"
         value={openCount}
@@ -78,29 +77,42 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange, topScenario, 
         active={statusFilter === "open"}
       />
       <MiniKpi
-        label="조사중"
+        label="Investigating"
         value={investigatingCount}
         onClick={() => onFilterChange("investigating")}
         active={statusFilter === "investigating"}
       />
       <MiniKpi
-        label="종결"
+        label="Resolved"
         value={closedCount}
         color={C.mint}
         onClick={() => onFilterChange("closed")}
         active={statusFilter === "closed"}
       />
-      {/* Top 상관 규칙/Top 공격 IP는 상태(Open=위험/종결=안전)를 나타내는 게
-          아니라 단순 정보 표시라 색을 따로 주지 않는다(2026-07-16) - 예전엔
-          pink/critical(빨강)을 썼는데, critical이 위의 "Open" 카드와 같은
-          색이라 오해를 부르고 pink는 다른 카드들과 톤이 안 맞아 눈에 튀었다.
-          color를 안 주면 MiniKpi 기본값(C.fg)으로 다른 무채색 카드들과 통일된다. */}
-      <MiniKpi
-        label="Top 상관 규칙"
-        value={topScenario?.name || "-"}
-        sub={topScenario ? `${topScenario.hit_count}건 적중` : ""}
-      />
-      <MiniKpi label="Top 공격 IP" value={topIp?.name || "-"} sub={topIp ? `${topIp.count}건` : ""} />
+    </div>
+  );
+}
+
+// Top 상관 규칙/Top 공격 IP - 필터 버튼이 아니라 순수 정보 카드라 클릭 가능한
+// MiniKpi 그리드와는 분리된 별도 섹션으로 뺐다(2026-07-16). 이 컴포넌트 안의
+// bg-dash-bg 타일 패턴은 이 파일 아래쪽 "인시던트 상세" 패널의 상관 규칙/MITRE
+// 경로/상관 키 타일과 같은 스타일 - 이미 검증된 "정보 전용" 톤을 재사용.
+function TopSignalsCard({ topScenario, topIp }) {
+  return (
+    <div className="bg-dash-surface rounded-2xl p-4">
+      <p className="text-dash-muted text-xs mb-3">최근 7일 주요 시그널</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="bg-dash-bg rounded-xl p-3">
+          <p className="text-dash-muted text-[11px] mb-1">Top 상관 규칙</p>
+          <p className="text-dash-fg text-sm font-medium truncate">{topScenario?.name || "-"}</p>
+          {topScenario && <p className="text-dash-faint text-[11px] mt-0.5">{topScenario.hit_count}건 적중</p>}
+        </div>
+        <div className="bg-dash-bg rounded-xl p-3">
+          <p className="text-dash-muted text-[11px] mb-1">Top 공격 IP</p>
+          <p className="text-dash-fg text-sm font-medium truncate">{topIp?.name || "-"}</p>
+          {topIp && <p className="text-dash-faint text-[11px] mt-0.5">{topIp.count}건</p>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -302,32 +314,35 @@ function BannedIpsTable({ bannedIps, status, error, onBan, onUnban }) {
   );
 }
 
+// 2026-07-16: 좌측 리스트 폭(320px)에 비해 카드 내용(뱃지+제목+MITRE 태그행+
+// 상관키/시각 줄)이 너무 빽빽해서 리스트가 필요 이상으로 넓어 보인다는 피드백 -
+// MITRE 태그행/상관키 텍스트/중복되는 StatusDot을 빼고 심각도+상태+제목+시각만
+// 남겨 한 카드를 3줄로 줄였다. 상세 정보(MITRE 경로, 상관 키 등)는 클릭하면
+// 오른쪽 상세 패널에 이미 다 나오므로 목록에서는 없어도 된다.
 function IncidentCard({ incident, active, onClick }) {
   const { theme } = useTheme();
   const meta = getRealSeverityMeta(incident.severity);
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left rounded-xl p-3 border-l-4 transition-colors ${
+      className={`w-full text-left rounded-lg px-2.5 py-2 border-l-4 transition-colors ${
         active ? "bg-dash-surfaceAlt" : "bg-dash-surface hover:bg-dash-surfaceAlt/60"
       }`}
       style={{ borderLeftColor: forTheme(meta.color, theme) }}
     >
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center gap-2">
-          <SeverityBadge level={severityBadgeKey(incident.severity)} />
-          <span className="text-dash-faint text-xs">{STATUS_LABEL[incident.status]}</span>
-        </div>
-        <StatusDot status={statusDotStatus(incident.status)} />
+      <div className="flex items-center gap-1.5 mb-1">
+        <SeverityBadge level={severityBadgeKey(incident.severity)} />
+        <span className="text-dash-faint text-[10px]">{STATUS_LABEL[incident.status]}</span>
       </div>
-      <p className="text-dash-fg text-sm font-medium mb-1.5">{incident.title}</p>
-      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-        {incident.mitre_tactics.slice(0, 3).map((t) => (
-          <SourceBadge key={t} source={t} />
-        ))}
-      </div>
-      <p className="text-dash-muted text-xs">
-        {incident.correlation_key_type}={incident.correlation_key_value} · {new Date(incident.updated_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
+      <p className="text-dash-fg text-xs font-medium truncate">{incident.title}</p>
+      <p className="text-dash-faint text-[10px] mt-0.5">
+        {new Date(incident.updated_at).toLocaleString("ko-KR", {
+          timeZone: DISPLAY_TIMEZONE,
+          month: "numeric",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })}
       </p>
     </button>
   );
@@ -481,13 +496,9 @@ export default function IncidentsView({ pushToast }) {
 
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
 
-      <IncidentKpiRow
-        incidents={incidents}
-        statusFilter={statusFilter}
-        onFilterChange={setStatusFilter}
-        topScenario={topScenario}
-        topIp={topIps[0]}
-      />
+      <IncidentKpiRow incidents={incidents} statusFilter={statusFilter} onFilterChange={setStatusFilter} />
+
+      <TopSignalsCard topScenario={topScenario} topIp={topIps[0]} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <SeverityDonut incidents={incidents} />
@@ -502,12 +513,16 @@ export default function IncidentsView({ pushToast }) {
         onUnban={handleUnban}
       />
 
-      <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
+      {/* 좌측 폭을 320px -> 240px로 줄였다(2026-07-16) - 카드 내용을 핵심만
+          남기고 나니 320px는 과하게 넓었고, 그만큼 우측 상세 패널이 좁았다.
+          상세 정보는 어차피 카드를 눌러야 오른쪽에 나오므로 목록은 "훑어보는
+          용도"로만 좁게 유지. */}
+      <div className="grid grid-cols-1 xl:grid-cols-[240px_1fr] gap-6">
         {/* 인시던트가 계속 쌓이면 이 리스트가 끝없이 늘어나서 페이지 전체가
             하염없이 길어지던 문제 - 높이를 고정하고 리스트 안에서만 스크롤되게
             바꿨다(InfrastructureView의 "클러스터 구조" 패널과 같은 패턴).
             pr-2로 스크롤바가 카드 텍스트를 가리지 않게 여백을 둔다. */}
-        <div className="space-y-3 max-h-[640px] overflow-y-auto pr-2">
+        <div className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
           {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
           {status === "ready" && filteredIncidents.length === 0 && (
             <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>

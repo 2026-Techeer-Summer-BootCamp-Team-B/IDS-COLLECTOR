@@ -7,6 +7,7 @@ import {
   Bar,
   LineChart,
   Line,
+  ComposedChart,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -341,13 +342,19 @@ function LogVolumeBreakdownBody({ rangeKey }) {
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
   const spikePoint = spike ? data[spike.index] : null;
 
-  const series = [
-    { key: "total", label: "전체" },
+  // was/waf/falco/k8s_audit 4개는 Infrastructure의 "모듈별 로그량 추이"와 같은
+  // 방식으로 그라디언트 채움 + 적층(stackId)해서 보여준다. total은 그 4개의
+  // 합이라 같이 쌓으면 높이가 두 배로 왜곡되므로 스택엔 안 넣고, 위에 얇은
+  // 오버레이 선(Line)으로만 그려서 급증 배지/기준선 역할을 유지한다
+  // (2026-07-16: Infrastructure 쪽 디자인이 더 낫다는 피드백으로 LineChart 5선
+  // → ComposedChart[stacked Area 4 + overlay Line 1]로 교체).
+  const stackSeries = [
     { key: "was", label: "WAS" },
     { key: "waf", label: "WAF" },
     { key: "falco", label: "Falco" },
     { key: "k8s_audit", label: "K8s Audit" },
   ];
+  const series = [{ key: "total", label: "전체" }, ...stackSeries];
 
   return (
     <Card
@@ -367,23 +374,41 @@ function LogVolumeBreakdownBody({ rangeKey }) {
       {status === "ready" && (
         <>
           <ResponsiveContainer width="100%" height="76%">
-            <LineChart data={data}>
+            <ComposedChart data={data}>
+              <defs>
+                {stackSeries.map((s) => (
+                  <linearGradient key={s.key} id={`logVolumeFill-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={colors[s.key]} stopOpacity={0.55} />
+                    <stop offset="100%" stopColor={colors[s.key]} stopOpacity={0.05} />
+                  </linearGradient>
+                ))}
+              </defs>
               <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
               <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
               <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
               <Tooltip contentStyle={tooltipStyle(C)} />
-              {series.map((s) => (
-                <Line
+              {stackSeries.map((s) => (
+                <Area
                   key={s.key}
                   type="monotone"
                   dataKey={s.key}
                   name={s.label}
+                  stackId="module"
                   stroke={colors[s.key]}
-                  strokeWidth={s.key === "total" ? 2.5 : 1.75}
-                  dot={false}
-                  isAnimationActive={false}
+                  fill={`url(#logVolumeFill-${s.key})`}
+                  strokeWidth={1.5}
                 />
               ))}
+              <Line
+                type="monotone"
+                dataKey="total"
+                name="전체"
+                stroke={colors.total}
+                strokeWidth={2.5}
+                strokeDasharray="4 3"
+                dot={false}
+                isAnimationActive={false}
+              />
               {spikePoint && (
                 <ReferenceDot
                   x={spikePoint.label}
@@ -395,7 +420,7 @@ function LogVolumeBreakdownBody({ rangeKey }) {
                   ifOverflow="extendDomain"
                 />
               )}
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
           <div className="flex flex-wrap items-center gap-3 text-xs text-dash-muted mt-2">
             {series.map((s) => (
@@ -2109,50 +2134,59 @@ export function DashboardContent() {
 
   return (
     <div className="space-y-6">
-      <SearchDiscoverView
-        rangeKey={rangeKey}
-        onRangeChange={setRangeKey}
-        expanded={searchExpanded}
-        setExpanded={setSearchExpanded}
-        onResultsCountChange={setSearchHits}
-      />
-
-      {/* 위젯 설정 메뉴 + (커스텀 대시보드 보는 중이면) 위젯 편집 버튼 + 검색 결과
-          펼치기 토글을 전부 한 행에 둔다(2026-07-16) - 예전엔 위젯 편집이
-          CustomDashboardView 안쪽 상단에 따로 있어서 그리드가 한 줄 아래로
-          밀렸었고, 검색 결과 펼치기도 SearchDiscoverView 안에서 별도 행을 차지해
-          세로 공간을 두 줄이나 먹었다. 셋 다 한 줄로 합쳐서 그 공백을 없앴다.
-          "N hits" 숫자는 버튼에서 뺐다 - 펼치면 패널 안에 어차피 다시 나오는
-          정보라 버튼 라벨에까지 중복으로 넣을 필요가 없었다. */}
-      <div className="flex items-center gap-3">
-        <WidgetSettingsMenu
-          dashboards={dashboards}
-          activeId={activeId}
-          setActiveId={setActiveId}
-          deleteDashboard={deleteDashboard}
-          onCreateNew={openNewBuilder}
-          onEditActive={openEditBuilder}
+      {/* SearchDiscoverView + 위젯설정 행을 space-y-3(12px)짜리 별도 묶음으로
+          감싸서, 바깥 space-y-6(24px) 리듬에서 이 둘만 빼왔다(2026-07-16) -
+          한 줄짜리 얇은 행인데 위아래로 24px씩 비어 보여서 공백이 과하다는
+          피드백. 이 묶음 자체는 바깥 space-y-6의 한 항목으로 취급되니 KPI
+          카드 행과의 간격은 그대로 24px 유지됨. */}
+      <div className="space-y-3">
+        <SearchDiscoverView
+          rangeKey={rangeKey}
+          onRangeChange={setRangeKey}
+          expanded={searchExpanded}
+          setExpanded={setSearchExpanded}
+          onResultsCountChange={setSearchHits}
         />
-        {activeDashboard && (
+
+        {/* 위젯 설정 메뉴 + (커스텀 대시보드 보는 중이면) 위젯 편집 버튼 + 검색
+            결과 펼치기 토글을 한 행에 둔다. 검색 결과 펼치기는 grid-cols-3의
+            가운데 칸에 justify-self-center로 둬서 왼쪽 버튼 그룹 폭과 무관하게
+            항상 행 중앙에 오도록 했다(2026-07-16, 예전엔 ml-auto로 우측 끝에
+            붙어있었음). "N hits" 숫자는 버튼에서 뺐다 - 펼치면 패널 안에 어차피
+            다시 나오는 정보라 버튼 라벨에까지 중복으로 넣을 필요가 없었다. */}
+        <div className="grid grid-cols-3 items-center gap-3">
+          <div className="flex items-center gap-3">
+            <WidgetSettingsMenu
+              dashboards={dashboards}
+              activeId={activeId}
+              setActiveId={setActiveId}
+              deleteDashboard={deleteDashboard}
+              onCreateNew={openNewBuilder}
+              onEditActive={openEditBuilder}
+            />
+            {activeDashboard && (
+              <button
+                onClick={() => openEditBuilder(activeDashboard.id)}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
+              >
+                위젯 편집
+              </button>
+            )}
+          </div>
           <button
-            onClick={() => openEditBuilder(activeDashboard.id)}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
+            onClick={() => setSearchExpanded((e) => !e)}
+            title={searchExpanded ? "검색 결과 패널 접기" : "검색 결과 패널 펼치기"}
+            className={`justify-self-center inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+              searchExpanded
+                ? "bg-dash-mint/15 text-dash-mint"
+                : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+            }`}
           >
-            위젯 편집
+            검색 결과 {searchExpanded ? "접기" : "펼치기"}
+            <span>{searchExpanded ? "▴" : "▾"}</span>
           </button>
-        )}
-        <button
-          onClick={() => setSearchExpanded((e) => !e)}
-          title={searchExpanded ? "검색 결과 패널 접기" : "검색 결과 패널 펼치기"}
-          className={`ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
-            searchExpanded
-              ? "bg-dash-mint/15 text-dash-mint"
-              : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
-          }`}
-        >
-          검색 결과 {searchExpanded ? "접기" : "펼치기"}
-          <span>{searchExpanded ? "▴" : "▾"}</span>
-        </button>
+          <div />
+        </div>
       </div>
 
       {kpiFilter !== "ALL" && (
