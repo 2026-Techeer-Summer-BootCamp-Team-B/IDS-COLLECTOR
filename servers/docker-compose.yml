@@ -145,6 +145,25 @@ services:
       - "traefik.http.middlewares.platform-api-auth.forwardauth.address=http://platform-api:8400/auth/verify"
       - "traefik.http.middlewares.platform-api-auth.forwardauth.authResponseHeaders=X-Auth-User-Id,X-Auth-Username,X-Auth-Role"
 
+      # 위 두 라우터의 TLS 버전(2026-07-16, Vercel 프론트 mixed-content 회피용) -
+      # 기존 :80 라우터는 손대지 않고 그대로 두고(하위호환), :443에 Host() 규칙이
+      # 걸린 라우터를 추가로 얹는다. Host()가 있어야 Traefik이 어떤 도메인으로
+      # 인증서를 받을지 알 수 있다 - 아직 실제 도메인이 없어서 sslip.io(IP를
+      # 그대로 서브도메인처럼 씀)를 쓴다. 실제 도메인을 사면 이 Host() 값만
+      # 새 도메인으로 바꾸면 됨.
+      - "traefik.http.routers.platform-api-public-secure.entrypoints=websecure"
+      - "traefik.http.routers.platform-api-public-secure.rule=Host(`35-216-79-173.sslip.io`) && (PathPrefix(`/api/auth`) || Path(`/api/health`))"
+      - "traefik.http.routers.platform-api-public-secure.priority=20"
+      - "traefik.http.routers.platform-api-public-secure.middlewares=platform-api-stripprefix"
+      - "traefik.http.routers.platform-api-public-secure.service=platform-api"
+      - "traefik.http.routers.platform-api-public-secure.tls.certresolver=letsencrypt"
+
+      - "traefik.http.routers.platform-api-secure.entrypoints=websecure"
+      - "traefik.http.routers.platform-api-secure.rule=Host(`35-216-79-173.sslip.io`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.platform-api-secure.priority=10"
+      - "traefik.http.routers.platform-api-secure.middlewares=platform-api-stripprefix,platform-api-auth"
+      - "traefik.http.routers.platform-api-secure.tls.certresolver=letsencrypt"
+
   dashboard:
     # 빌드 컨텍스트가 다른 서비스들과 다르게 dashboard/ 자신이다 - Node 빌드에
     # servers/의 공유 스키마가 전혀 필요 없기 때문(dashboard/Dockerfile 참고).
