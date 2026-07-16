@@ -110,12 +110,24 @@ services:
 
   # ------------------------------------------------------------------
   # cAdvisor - 컨테이너 메트릭
+  #
+  # 이 호스트의 Docker는 containerd snapshotter 모드로 동작 중이다
+  # (`docker info`의 Storage Driver가 "overlayfs", driver-type이
+  # "io.containerd.snapshotter.v1" - 2026-07-16 실측 확인). 이 모드에서는
+  # cAdvisor가 기본으로 기대하는 옛 경로(/var/lib/docker/image/overlayfs/
+  # layerdb/mounts/<id>/mount-id)가 존재하지 않아 "failed to identify the
+  # read-write layer ID" 에러와 함께 컨테이너별 메트릭(image/name 라벨)이
+  # 전혀 안 나가는 문제가 있었다. containerd 소켓에 직접 붙여서 우회한다.
+  # dockerd 데몬 설정을 바꿔 snapshotter를 끄는 방식은 호스트의 Docker
+  # 데몬 재시작이 필요해 기존 전체 스택에 영향을 주므로 선택하지 않았다.
   # ------------------------------------------------------------------
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.2
     container_name: cadvisor
     restart: unless-stopped
     privileged: true # 컨테이너 런타임/cgroup 전반에 접근하기 위해 필요(공식 권장 구성)
+    command:
+      - "--containerd-namespace=moby" # Docker가 쓰는 containerd 네임스페이스(기본값 k8s.io는 Docker 컨테이너를 못 찾음)
     devices:
       - /dev/kmsg
     volumes:
@@ -123,6 +135,7 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
       - /dev/disk/:/dev/disk:ro
     ports:
       - "${HOST_INTERNAL_IP}:8080:8080" # 내부망 전용
