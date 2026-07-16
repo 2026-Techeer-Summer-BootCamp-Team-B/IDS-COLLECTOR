@@ -22,7 +22,6 @@ export const WIDGET_CATALOG = [
   { type: "kpi-errors", label: "Errors", w: 3, h: 6 },
   { type: "kpi-warnings", label: "Warnings", w: 3, h: 6 },
   { type: "kpi-sources", label: "Active Sources", w: 3, h: 6 },
-  { type: "kpi-blocked", label: "총 BLOCKED (WAF)", w: 3, h: 6 },
   {
     type: "log-volume",
     label: "Log Volume",

@@ -45,6 +45,9 @@ import WorldMap from "../components/WorldMap";
 const Globe3D = lazy(() => import("../components/Globe3D"));
 import { useGeoStats } from "../hooks/useGeoStats";
 import { useK8sTargets } from "../hooks/useK8sTargets";
+import { useIncidents } from "../hooks/useIncidents";
+import { useIncidentsSocket } from "../hooks/useIncidentsSocket";
+import { useScenarios } from "../hooks/useScenarios";
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import "react-grid-layout/css/styles.css";
 import {
@@ -965,6 +968,20 @@ const LAYER_INFO = {
 // 비어있고, 로그가 들어오면 그때부터 점이 하나씩 늘어난다.
 const ACTIVITY_WINDOW_MS = 60_000;
 
+// ActivityLayerDiagram과 CorrelationFlowDiagram(둘 다 Overview "실시간 활동" 행에
+// 나란히 놓임)이 같은 세로 크기를 쓰도록 치수를 여기 한 군데에 모아뒀다 - 7차
+// 피드백("옆 위젯 높이를 활동 흐름이랑 맞춰줘")에서 나온 요구사항.
+const ACTIVITY_GROUND_Y = 30;
+const ACTIVITY_LAYER_H = 64;
+const ACTIVITY_LAYER_GAP = 8;
+const ACTIVITY_DIAGRAM_HEIGHT =
+  ACTIVITY_GROUND_Y + ACTIVITY_MODULE_ORDER.length * (ACTIVITY_LAYER_H + ACTIVITY_LAYER_GAP) - ACTIVITY_LAYER_GAP + 10;
+
+function truncateActivityLabel(label, max) {
+  if (!label) return "-";
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
+}
+
 // 2026-07-16: "WAF/WAS/K8s Audit/Falco를 묶어서 실시간으로 보여달라"는 요청 -
 // 정확한 사용자 세션 추적(요청 단위 trace ID)은 지금 파이프라인에 없어서
 // IP/Pod 단위 묶음은 구현 불가한 정확도를 있는 척 하는 셈이라(3차 피드백으로
@@ -1049,15 +1066,15 @@ export function LiveActivityTree() {
 // 들어간다"는 느낌을 준다.
 function ActivityLayerDiagram({ layers, C }) {
   const width = 560;
-  const groundY = 30; // 지표면
-  const LAYER_H = 64;
-  const LAYER_GAP = 8;
+  const groundY = ACTIVITY_GROUND_Y; // 지표면
+  const LAYER_H = ACTIVITY_LAYER_H;
+  const LAYER_GAP = ACTIVITY_LAYER_GAP;
   const LABEL_W = 128; // 왼쪽 라벨 영역 폭
   const DOT_R = 6;
   const DOT_GAP = 20;
   const DOTS_X0 = LABEL_W + 22;
   const MAX_DOTS = Math.min(10, Math.floor((width - DOTS_X0 - 14) / DOT_GAP));
-  const height = groundY + layers.length * (LAYER_H + LAYER_GAP) - LAYER_GAP + 10;
+  const height = ACTIVITY_DIAGRAM_HEIGHT;
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="실시간 활동 흐름 - 계층별 지하 구조">
@@ -1144,6 +1161,201 @@ function ActivityLayerDiagram({ layers, C }) {
           </g>
         );
       })}
+    </svg>
+  );
+}
+
+// 2026-07-16(7차): "모듈별 로그량 추이가 Log Volume이랑 똑같아 보인다"는
+// 피드백 - 둘 다 결국 시계열 누적 그래프라 실제로 겹치는 정보였다. 대신
+// "상관분석 로직이 실제로 뭘 엮었는지"(예: K8s Audit -> Falco)를 보여달라는
+// 요청 - GET /incidents(각 인시던트는 matched_scenario_rule_id로 상관 규칙 하나에
+// 연결)와 GET /scenarios(그 규칙의 required_modules = 상관 대상 모듈들, 이미
+// 등록 순서가 "이 조합이 성립하려면 필요한 모듈 순서")를 합쳐서, 인시던트별
+// 타임라인을 다시 조회하지 않고도(N+1 방지) 모듈 체인을 바로 얻는다.
+// ActivityLayerDiagram과 같은 60초 롤링창 + 2초 tick 재계산 패턴을 그대로
+// 따른다 - 새 인시던트가 뜨면 1분간 가지가 보이다가 사라진다.
+export function LiveCorrelationFlow() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const { incidents, reload } = useIncidents({ limit: 30 });
+  useIncidentsSocket(reload);
+  const { scenarios } = useScenarios();
+
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  const scenarioById = useMemo(() => {
+    const map = new Map();
+    scenarios.forEach((s) => map.set(s.id, s));
+    return map;
+  }, [scenarios]);
+
+  const flows = useMemo(() => {
+    const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+    return incidents
+      .filter((inc) => new Date(inc.created_at).getTime() >= cutoff)
+      .map((inc) => {
+        const scenario = inc.matched_scenario_rule_id ? scenarioById.get(inc.matched_scenario_rule_id) : null;
+        // 상관 규칙을 못 찾으면(삭제됐거나 아직 안 불러와졌으면) 최소한 뭐라도
+        // 보여주기 위해 인시던트 자체의 correlation_key_type을 1단짜리 체인으로
+        // 대체 표시 - "ip를 빼고"라는 요청대로 correlation_key_value(IP 값
+        // 자체)는 절대 쓰지 않는다.
+        const chain = scenario?.required_modules?.length ? scenario.required_modules : [inc.correlation_key_type];
+        return {
+          id: inc.id,
+          chain,
+          ruleName: scenario?.name || inc.title || "상관 탐지",
+          severity: inc.severity || 0,
+          createdAt: new Date(inc.created_at).getTime(),
+        };
+      })
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 6);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidents, scenarioById, tick]);
+
+  return (
+    <Card
+      title="상관 흐름"
+      subtitle="상관 규칙이 엮은 모듈 순서(예: K8s Audit → Falco) — 최근 1분 이내 발생한 인시던트만 표시"
+    >
+      <div className="overflow-x-auto">
+        <CorrelationFlowDiagram flows={flows} C={C} />
+      </div>
+    </Card>
+  );
+}
+
+// ActivityRootDiagram(IP/Pod별로 뿌리가 갈라지던 이전 버전)의 "꽃 + 지하로
+// 뻗는 가지" 골격을 그대로 재사용하되, 가지 하나하나가 이제 "소스(IP)"가
+// 아니라 "상관 규칙이 엮은 모듈 체인 하나"를 나타낸다 - 가지를 따라 내려가며
+// 모듈이 화살표로 이어지는 순서가 곧 상관 규칙이 감지한 흐름 순서다. 라벨은
+// 규칙 이름만 쓰고 IP는 어디에도 노출하지 않는다.
+function CorrelationFlowDiagram({ flows, C }) {
+  const width = 560;
+  const height = ACTIVITY_DIAGRAM_HEIGHT; // 실시간 활동 흐름과 높이 통일
+  const groundY = 46; // 지면선 - 이 위가 지상(꽃), 아래가 지하(가지)
+  const MARGIN_X = 54;
+  const chainStartY = groundY + 34;
+  const bottomMargin = 26;
+  const maxChainLen = Math.max(1, ...flows.map((f) => f.chain.length), 1);
+  const chainStepY = Math.max(40, Math.min(64, (height - chainStartY - bottomMargin) / maxChainLen));
+
+  const hubX = width / 2;
+  const branchXs = flows.map((_, i) =>
+    flows.length === 1 ? hubX : MARGIN_X + (i * (width - MARGIN_X * 2)) / (flows.length - 1)
+  );
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="상관 흐름 - 규칙이 엮은 모듈 체인">
+      {/* 지하 영역 배경 + 지면선 */}
+      <rect x={0} y={groundY} width={width} height={height - groundY} fill={C.surfaceAlt} opacity={0.35} />
+      <line x1={0} y1={groundY} x2={width} y2={groundY} stroke={C.faint} strokeWidth={1} strokeDasharray="3 4" />
+
+      {/* 꽃(줄기 + 꽃잎) - Live 허브, ActivityRootDiagram과 같은 모양 */}
+      <line x1={hubX} y1={groundY} x2={hubX} y2={groundY - 22} stroke={C.mint} strokeWidth={2} strokeLinecap="round" />
+      {[0, 60, 120, 180, 240, 300].map((angle) => {
+        const rad = (angle * Math.PI) / 180;
+        const px = hubX + Math.cos(rad) * 8;
+        const py = groundY - 22 + Math.sin(rad) * 8;
+        return (
+          <ellipse
+            key={angle}
+            cx={px}
+            cy={py}
+            rx={6}
+            ry={3.5}
+            fill={C.mint}
+            opacity={0.8}
+            transform={`rotate(${angle} ${px} ${py})`}
+          />
+        );
+      })}
+      <circle cx={hubX} cy={groundY - 22} r={4} fill={C.live} className="animate-pulse" />
+      <text x={hubX} y={groundY - 32} textAnchor="middle" fontSize={9} fill={C.muted}>
+        상관 탐지
+      </text>
+
+      {flows.length === 0 ? (
+        <text x={hubX} y={chainStartY + 30} textAnchor="middle" fontSize={10} fill={C.faint}>
+          최근 1분간 상관 탐지된 흐름이 없습니다.
+        </text>
+      ) : (
+        flows.map((flow, i) => {
+          const bx = branchXs[i];
+          const sevMeta = getRealSeverityMeta(flow.severity);
+          const isDanger = flow.severity >= REAL_ERROR_MIN_SEVERITY;
+
+          return (
+            <g key={flow.id}>
+              {/* 지면(꽃) -> 이 가지의 첫 모듈 노드 */}
+              <path
+                d={`M ${hubX} ${groundY} C ${hubX} ${(groundY + chainStartY) / 2}, ${bx} ${(groundY + chainStartY) / 2}, ${bx} ${chainStartY - 10}`}
+                fill="none"
+                stroke={isDanger ? sevMeta.color : C.surfaceAlt}
+                strokeWidth={isDanger ? 1.5 : 1}
+              />
+              {/* 가지 상단 - 규칙 이름(IP 대신) */}
+              <text x={bx} y={chainStartY - 16} textAnchor="middle" fontSize={7.5} fontWeight={600} fill={C.faint}>
+                {truncateActivityLabel(flow.ruleName, 14)}
+              </text>
+
+              {flow.chain.map((module, j) => {
+                const my = chainStartY + j * chainStepY;
+                const meta = getModuleMeta(module);
+                const isLastOfChain = j === flow.chain.length - 1;
+                const nodeDanger = isDanger && isLastOfChain;
+                return (
+                  <g key={`${flow.id}-${module}-${j}`}>
+                    {j > 0 && (
+                      <line
+                        x1={bx}
+                        y1={my - chainStepY + 10}
+                        x2={bx}
+                        y2={my - 10}
+                        stroke={C.surfaceAlt}
+                        strokeWidth={1.5}
+                        markerEnd="url(#correlationArrow)"
+                      />
+                    )}
+                    {nodeDanger && (
+                      <circle
+                        cx={bx}
+                        cy={my}
+                        r={9}
+                        fill="none"
+                        stroke={sevMeta.color}
+                        strokeWidth={1.5}
+                        className="activity-ripple-ring"
+                      />
+                    )}
+                    <circle
+                      cx={bx}
+                      cy={my}
+                      r={8}
+                      fill={meta.color}
+                      stroke={nodeDanger ? sevMeta.color : C.bg}
+                      strokeWidth={nodeDanger ? 2 : 1.5}
+                    />
+                    <text x={bx} y={my + 19} textAnchor="middle" fontSize={8} fontWeight={600} fill={C.fg}>
+                      {meta.label}
+                    </text>
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })
+      )}
+
+      <defs>
+        <marker id="correlationArrow" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill={C.faint} />
+        </marker>
+      </defs>
     </svg>
   );
 }
@@ -2267,16 +2479,6 @@ export function DashboardContent() {
             active={kpiFilter === "SOURCES"}
           />
         );
-      case "kpi-blocked":
-        return (
-          <KpiCard
-            label="총 BLOCKED (WAF)"
-            value={kpiStatus === "ready" ? `${(kpi.current.blocked ?? 0).toLocaleString()}건` : "-"}
-            delta={kpiStatus === "ready" && kpi.delta_pct.blocked != null ? `${Math.abs(kpi.delta_pct.blocked)}%` : undefined}
-            positive={kpiStatus === "ready" ? (kpi.delta_pct.blocked ?? 0) <= 0 : true}
-            accent="critical"
-          />
-        );
       case "log-volume":
         return <LogVolumeChart rangeKey={rangeKey} chartType={chartType || "area"} />;
       case "level-distribution":
@@ -2357,18 +2559,6 @@ export function DashboardContent() {
       active={kpiFilter === "SOURCES"}
     />
   );
-  // 2026-07-16: "총 BLOCKED가 뭘 뜻하는지" 피드백 - WAF가 실제로 차단
-  // (waf.blocked=true)까지 한 요청 수로 정의했다(탐지만 되고 통과된 건 제외).
-  // GET /stats/kpi가 새 blocked/delta_pct.blocked 필드를 내려준다.
-  const kpiBlockedWidget = (
-    <KpiCard
-      label="총 BLOCKED (WAF)"
-      value={kpiStatus === "ready" ? `${(kpi.current.blocked ?? 0).toLocaleString()}건` : "-"}
-      delta={kpiStatus === "ready" && kpi.delta_pct.blocked != null ? `${Math.abs(kpi.delta_pct.blocked)}%` : undefined}
-      positive={kpiStatus === "ready" ? (kpi.delta_pct.blocked ?? 0) <= 0 : true}
-      accent="critical"
-    />
-  );
   const logVolumeWidget = <LogVolumeChart rangeKey={rangeKey} />;
   const levelDistributionWidget = <RealLevelDistributionChart hours={hours} />;
   const donutSourceWidget = <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />;
@@ -2389,13 +2579,11 @@ export function DashboardContent() {
   );
   const errorRateWidget = <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />;
   const geoWidget = <GeoSummaryCard />;
-  // 2026-07-16(6차): "실시간 활동 흐름 옆에 뭘 놓으면 좋을지" - GeoIP가 원래
-  // 자리(맨 아래 단독 행)로 돌아가면서 비는 오른쪽 자리에, 같은 4개 모듈
-  // (WAF/WAS/K8s Audit/Falco)을 다른 각도(누적 시계열)로 보여주는 모듈별
-  // 로그량 추이를 배치 - Activity Flow의 "지금 이 순간"과 짝을 이루는
-  // "시간 흐름" 관점이라 자연스럽게 어울리고, 기본 Overview 레이아웃 다른
-  // 곳엔 아직 쓰이지 않던 위젯이라 중복도 없다.
-  const moduleVolumeWidget = <ModuleVolumeStackedChart fillHeight />;
+  // 2026-07-16(7차): 모듈별 로그량 추이는 Log Volume과 거의 같은 정보(둘 다
+  // 시계열 누적 그래프)라 대신 상관 흐름(LiveCorrelationFlow)을 배치 - 상관
+  // 규칙이 실제로 어떤 모듈 순서를 엮어 인시던트를 만들었는지(예: K8s Audit
+  // -> Falco) 보여준다.
+  const correlationFlowWidget = <LiveCorrelationFlow />;
 
   const activeDashboard = activeId !== "default" ? getDashboard(activeId) : null;
 
@@ -2489,21 +2677,20 @@ export function DashboardContent() {
             {kpiErrorsWidget}
             {kpiWarningsWidget}
             {kpiSourcesWidget}
-            {kpiBlockedWidget}
           </div>
 
           {/* 2026-07-16(5차): "실시간 활동 흐름 왼쪽을 Log Volume이랑 같은
               크기로 맞추자"는 요청 - 로그 개요 행과 같은 xl:grid-cols-3(2+1)
               비율을 재사용해서 두 행의 왼쪽 폭이 시각적으로 일치하게 맞췄다.
-              (6차: 오른쪽엔 GeoIP 대신 모듈별 로그량 추이를 두고, GeoIP는
-              원래 자리인 맨 아래 단독 행으로 되돌렸다.) */}
+              (6차: GeoIP는 원래 자리인 맨 아래 단독 행으로 되돌렸다. 7차: 그
+              오른쪽 자리에 모듈별 로그량 추이 대신 상관 흐름을 배치. ) */}
           <div>
             <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">실시간 활동</p>
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="xl:col-span-2">
                 <LiveActivityTree />
               </div>
-              {moduleVolumeWidget}
+              {correlationFlowWidget}
             </div>
           </div>
 
