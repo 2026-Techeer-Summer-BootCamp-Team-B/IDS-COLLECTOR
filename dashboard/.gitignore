@@ -2,4 +2,7 @@ node_modules
 dist
 dist_check*
 .env
+.env.production
+.env.production.local
+.env.*.local
 vite.config.js.timestamp-*.mjs
