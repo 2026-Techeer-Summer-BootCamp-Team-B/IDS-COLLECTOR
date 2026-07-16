@@ -202,6 +202,13 @@ services:
 
   # ------------------------------------------------------------------
   # ClickHouse Exporter - 읽기 전용 계정(monitoring_ro) 사용, README 참고
+  #
+  # f1yegor/clickhouse-exporter는 CLICKHOUSE_SERVER/CLICKHOUSE_PORT
+  # 환경변수를 지원하지 않는다(2026-07-16 소스 확인, clickhouse_exporter.go) -
+  # 대상 주소는 오직 -scrape_uri 커맨드라인 플래그로만 지정되고 기본값이
+  # http://localhost:8123/라서, env로만 넘기면 항상 자기 자신(localhost)에
+  # 접속을 시도하다 connection refused가 난다. CLICKHOUSE_USER/PASSWORD만
+  # 환경변수로 읽는다.
   # ------------------------------------------------------------------
   clickhouse-exporter:
     image: f1yegor/clickhouse-exporter:latest # 프로덕션에서는 digest 고정 권장
@@ -210,8 +217,8 @@ services:
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_EXPORTER_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_EXPORTER_PASSWORD}
-      CLICKHOUSE_SERVER: ${CLICKHOUSE_EXPORTER_HOST}
-      CLICKHOUSE_PORT: ${CLICKHOUSE_EXPORTER_PORT}
+    command:
+      - "-scrape_uri=http://${CLICKHOUSE_EXPORTER_HOST}:${CLICKHOUSE_EXPORTER_PORT}/"
     ports:
       - "${HOST_INTERNAL_IP}:9116:9116" # 내부망 전용
     networks:
