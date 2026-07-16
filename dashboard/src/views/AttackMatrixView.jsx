@@ -40,7 +40,7 @@ function TechniqueCell({ tech, active, onClick }) {
   );
 }
 
-export default function AttackMatrixView() {
+export default function AttackMatrixView({ onNavigateToIncident } = {}) {
   const { tactics, totalTechniques, detectedTechniques, status: coverageStatus, error: coverageError } =
     useAttackCoverage();
   const [selected, setSelected] = useState(null);
@@ -138,11 +138,20 @@ export default function AttackMatrixView() {
             )}
             {incidents.map((incident, i) => {
               const isOpen = expandedIdx === i;
+              const inProgress = statusDotStatus(incident.status) === "IN_PROGRESS";
               return (
                 <div key={incident.id} className="rounded-lg -mx-2 px-2">
-                  <button
+                  {/* 2026-07-16: 원래는 이 행 전체가 <button>(펼치기/접기)이었는데,
+                      "진행중" 상태에 조치 화면(Incidents)으로 이동하는 버튼을 추가
+                      하려면 버튼 안에 버튼을 넣는 꼴이 돼서(무효한 마크업 + 클릭이
+                      바깥 버튼에 먹힘) div+onClick으로 바꾸고, 새 버튼은
+                      e.stopPropagation()으로 바깥 클릭(펼치기/접기)과 분리했다. */}
+                  <div
                     onClick={() => setExpandedIdx(isOpen ? null : i)}
-                    className="w-full flex gap-3 text-xs py-1.5 text-left hover:bg-dash-surfaceAlt/50 rounded-lg"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === "Enter" && setExpandedIdx(isOpen ? null : i)}
+                    className="w-full flex gap-3 text-xs py-1.5 text-left hover:bg-dash-surfaceAlt/50 rounded-lg cursor-pointer"
                   >
                     <span className="text-dash-faint shrink-0 mt-0.5">{isOpen ? "▾" : "▸"}</span>
                     <span className="text-dash-faint whitespace-nowrap w-32 shrink-0">
@@ -157,10 +166,22 @@ export default function AttackMatrixView() {
                         {incident.correlation_key_type}={incident.correlation_key_value}
                       </p>
                     </div>
-                    <span className="shrink-0">
+                    <div className="shrink-0 flex flex-col items-end gap-1">
                       <StatusDot status={statusDotStatus(incident.status)} />
-                    </span>
-                  </button>
+                      {inProgress && onNavigateToIncident && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onNavigateToIncident(incident.id);
+                          }}
+                          className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-dash-critical/15 text-dash-critical hover:bg-dash-critical/25 transition-colors whitespace-nowrap"
+                        >
+                          조치하러 가기 →
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   {isOpen && (
                     <div className="ml-[4.75rem] mb-2 mt-1 bg-dash-bg rounded-xl p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-xs">
                       <div>

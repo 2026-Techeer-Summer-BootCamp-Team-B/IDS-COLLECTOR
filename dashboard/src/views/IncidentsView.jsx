@@ -292,7 +292,7 @@ function StorylineEntry({ entry, isLast }) {
  *
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
-export default function IncidentsView({ pushToast }) {
+export default function IncidentsView({ pushToast, pendingIncident }) {
   const { incidents, status, error, reload } = useIncidents({ limit: 200 });
   const { scenarios } = useScenarios();
   // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
@@ -310,6 +310,13 @@ export default function IncidentsView({ pushToast }) {
   useEffect(() => {
     if (!selectedId && incidents.length) setSelectedId(incidents[0].id);
   }, [incidents, selectedId]);
+
+  // ATT&CK 매트릭스의 "조치하러 가기" 버튼으로 들어온 경우 - App.jsx가
+  // pendingIncident.nonce를 매번 새 값으로 넘겨주므로(같은 인시던트를 다시
+  // 눌러도 감지됨), 여기서도 바로 그 인시던트를 선택 상태로 맞춘다.
+  useEffect(() => {
+    if (pendingIncident?.id) setSelectedId(pendingIncident.id);
+  }, [pendingIncident]);
 
   const filteredIncidents = useMemo(
     () => (statusFilter === "ALL" ? incidents : incidents.filter((i) => i.status === statusFilter)),

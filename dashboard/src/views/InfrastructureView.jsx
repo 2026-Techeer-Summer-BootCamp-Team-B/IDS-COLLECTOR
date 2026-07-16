@@ -1,5 +1,4 @@
 import React, { useMemo } from "react";
-import { ResponsiveContainer, Treemap } from "recharts";
 import WorldMap from "../components/WorldMap";
 import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
@@ -116,8 +115,8 @@ function PipelineHealthPanel() {
       {status !== "loading" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px]">대기 중인 로그 (컨슈머 Lag)</p>
-            <p className="text-dash-faint text-[10px] mb-2">아직 처리 못 하고 쌓여있는 로그 수 — 많을수록 처리가 밀리는 중</p>
+            <p className="text-dash-fg text-[11px] font-medium">대기 중인 로그 (컨슈머 Lag)</p>
+            <p className="text-dash-muted text-[10px] mb-2">아직 처리 못 하고 쌓여있는 로그 수</p>
             {consumerLag.length === 0 && <p className="text-dash-muted text-xs">데이터 없음</p>}
             <div className="space-y-2">
               {consumerLag.map((g) => {
@@ -135,8 +134,8 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px]">처리 실패한 로그 (DLQ)</p>
-            <p className="text-dash-faint text-[10px] mb-2">정상 처리가 안 돼서 따로 빼놓은 로그 수 — 0이 정상</p>
+            <p className="text-dash-fg text-[11px] font-medium">처리 실패한 로그 (DLQ)</p>
+            <p className="text-dash-muted text-[10px] mb-2">정상 처리가 안 돼서 따로 빼놓은 로그 수</p>
             {dlqDepth ? (
               <p
                 className="text-2xl font-semibold"
@@ -151,20 +150,20 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px]">로그 도착까지 걸린 시간</p>
-            <p className="text-dash-faint text-[10px] mb-2">로그가 발생한 순간부터 여기 수집되기까지 걸린 시간 — 짧을수록 실시간에 가까움</p>
+            <p className="text-dash-fg text-[11px] font-medium">로그 도착까지 걸린 시간</p>
+            <p className="text-dash-muted text-[10px] mb-2">로그가 발생한 순간부터 여기 수집되기까지 걸린 시간 (짧을수록 실시간에 가까움)</p>
             {clockSkew && clockSkew.sample_size > 0 ? (
               <div className="flex gap-4 text-xs">
                 <div>
-                  <p className="text-dash-faint mb-0.5">p50</p>
+                  <p className="text-dash-muted mb-0.5">p50</p>
                   <p className="text-dash-fg font-mono">{formatMs(clockSkew.p50_ms)}</p>
                 </div>
                 <div>
-                  <p className="text-dash-faint mb-0.5">p95</p>
+                  <p className="text-dash-muted mb-0.5">p95</p>
                   <p className="text-dash-fg font-mono">{formatMs(clockSkew.p95_ms)}</p>
                 </div>
                 <div>
-                  <p className="text-dash-faint mb-0.5">max</p>
+                  <p className="text-dash-muted mb-0.5">max</p>
                   <p className="text-dash-fg font-mono">{formatMs(clockSkew.max_ms)}</p>
                 </div>
               </div>
@@ -201,54 +200,100 @@ function intensityTextColor(count, max, C) {
   return max && count > 0 ? "#FFFFFF" : C.fg;
 }
 
-// 2026-07-16: "클러스터 구조"가 네임스페이스 라벨 + 폰트 크기 pill을 그냥
-// flex-wrap으로 늘어놓기만 해서 밋밋하고 크기 비교도 안 된다는 피드백 -
-// 네임스페이스>파드 계층을 그대로 살리면서 "공격이 몰린 곳일수록 실제로
-// 넓게 보이는" Treemap으로 바꿨다. depth 1(네임스페이스)은 얇은 테두리
-// 컨테이너 + 좌상단 라벨만, depth 2(파드)가 실제 색칠된 셀 - intensityColor를
-// 그대로 재사용해서 위의 "Top 공격 대상" 막대와 톤이 어긋나지 않게 했다.
-function ClusterTreemapCell(props) {
-  const { x, y, width, height, depth, name, count, maxTarget, C } = props;
+function truncateLabel(name, max = 16) {
+  if (!name) return "-";
+  return name.length > max ? `${name.slice(0, max - 1)}…` : name;
+}
 
-  if (depth === 1) {
-    return (
-      <g>
-        <rect x={x} y={y} width={width} height={height} fill="none" stroke={C.surfaceAlt} strokeWidth={2} />
-        {width > 36 && height > 14 && (
-          <text x={x + 5} y={y + 13} fontSize={10} fontWeight={600} fill={C.faint}>
-            {name}
-          </text>
-        )}
-      </g>
-    );
-  }
+// 2026-07-16(2차): Treemap 버전이 "여전히 시각적으로 이상하다"는 피드백 -
+// recharts Treemap의 squarify 알고리즘이 파드 개수/건수 편차가 클 때 극단적으로
+// 가늘고 긴 셀을 만들어서 라벨이 다 안 보이거나 레이아웃이 어색해지는 문제가
+// 있었다. Treemap(면적 비교)을 완전히 버리고, "클러스터 구조"라는 이름 그대로
+// 실제 위계(Cluster → Namespace → Pod)를 나뭇가지 다이어그램으로 그리는 방식으로
+// 바꿨다 - recharts 없이 순수 SVG(원/알약 노드 + 곡선 연결선)라 레이아웃이
+// 항상 예측 가능하고 안정적이다. 색/강조는 그대로 intensityColor 재사용.
+function ClusterTopologyDiagram({ data, C }) {
+  const NODE_GAP = 30; // 같은 네임스페이스 안 파드 노드 사이 세로 간격
+  const ROW_GAP = 18; // 네임스페이스 블록 사이 세로 간격
 
-  const fill = intensityColor(count, maxTarget, C);
-  const textColor = intensityTextColor(count, maxTarget, C);
-  const showLabel = width > 46 && height > 18;
-  const showCount = width > 46 && height > 34;
+  const rows = data.map((ns) => {
+    const podsHeight = Math.max(0, ns.pods.length - 1) * NODE_GAP;
+    return { ...ns, blockHeight: Math.max(28, podsHeight) };
+  });
+  const totalHeight = rows.reduce((sum, r) => sum + r.blockHeight, 0) + ROW_GAP * Math.max(0, rows.length - 1);
+  const height = Math.max(200, totalHeight + 24);
+  const rootY = height / 2;
+
+  let cursor = 12;
+  const positioned = rows.map((r) => {
+    const centerY = cursor + r.blockHeight / 2;
+    cursor += r.blockHeight + ROW_GAP;
+    return { ...r, centerY };
+  });
+
+  const maxNsTotal = Math.max(1, ...data.map((r) => r.total));
+  const maxPodCount = Math.max(1, ...data.flatMap((r) => r.pods.map((p) => p.count)));
+
+  const X_ROOT = 34;
+  const X_NS = 200;
+  const X_POD = 400;
+  const width = 500;
 
   return (
-    <g>
-      <rect x={x} y={y} width={width} height={height} fill={fill} stroke={C.bg} strokeWidth={1.5} rx={3} />
-      {showLabel && (
-        <text
-          x={x + width / 2}
-          y={y + height / 2 - (showCount ? 6 : 0)}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fontSize={10}
-          fill={textColor}
-        >
-          {name}
-        </text>
-      )}
-      {showCount && (
-        <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" fontSize={9} fill={textColor} opacity={0.85}>
-          {count}건
-        </text>
-      )}
-    </g>
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="클러스터 네임스페이스/파드 구조">
+      <circle cx={X_ROOT} cy={rootY} r={14} fill={C.surfaceAlt} stroke={C.faint} strokeWidth={1.5} />
+      <text x={X_ROOT} y={rootY + 28} textAnchor="middle" fontSize={10} fill={C.muted}>
+        Cluster
+      </text>
+
+      {positioned.map((ns) => {
+        const nsFill = intensityColor(ns.total, maxNsTotal, C);
+        const nsText = intensityTextColor(ns.total, maxNsTotal, C);
+        const podStartY = ns.centerY - ((ns.pods.length - 1) * NODE_GAP) / 2;
+        return (
+          <g key={ns.name}>
+            <path
+              d={`M ${X_ROOT + 14} ${rootY} C ${(X_ROOT + X_NS) / 2} ${rootY}, ${(X_ROOT + X_NS) / 2} ${ns.centerY}, ${X_NS - 50} ${ns.centerY}`}
+              fill="none"
+              stroke={C.surfaceAlt}
+              strokeWidth={1.5}
+            />
+            <rect x={X_NS - 50} y={ns.centerY - 13} width={100} height={26} rx={13} fill={nsFill} />
+            <text x={X_NS} y={ns.centerY + 4} textAnchor="middle" fontSize={10} fontWeight={600} fill={nsText}>
+              {truncateLabel(ns.name, 14)}
+            </text>
+            <text x={X_NS} y={ns.centerY - 20} textAnchor="middle" fontSize={9} fill={C.faint}>
+              {ns.total}건
+            </text>
+
+            {ns.pods.map((pod, i) => {
+              const podY = podStartY + i * NODE_GAP;
+              const podFill = intensityColor(pod.count, maxPodCount, C);
+              const podText = intensityTextColor(pod.count, maxPodCount, C);
+              return (
+                <g key={pod.name}>
+                  <path
+                    d={`M ${X_NS + 50} ${ns.centerY} C ${(X_NS + X_POD) / 2} ${ns.centerY}, ${(X_NS + X_POD) / 2} ${podY}, ${X_POD - 44} ${podY}`}
+                    fill="none"
+                    stroke={C.surfaceAlt}
+                    strokeWidth={1}
+                  />
+                  <rect x={X_POD - 44} y={podY - 10} width={88} height={20} rx={5} fill={podFill} />
+                  <text x={X_POD} y={podY + 4} textAnchor="middle" fontSize={9} fill={podText}>
+                    {truncateLabel(pod.name, 13)}
+                  </text>
+                </g>
+              );
+            })}
+            {ns.moreCount > 0 && (
+              <text x={X_POD} y={ns.centerY + ((ns.pods.length - 1) * NODE_GAP) / 2 + 24} textAnchor="middle" fontSize={9} fill={C.faint}>
+                +{ns.moreCount}개 더
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -305,17 +350,22 @@ export default function InfrastructureView() {
     return map;
   }, [targets]);
 
-  // "클러스터 구조" Treemap용 - 네임스페이스가 depth 1 노드, 그 안의 파드들이
-  // depth 2 리프. size=count라 공격이 몰린 파드일수록 실제로 더 넓은 박스로
-  // 그려진다.
-  const clusterTreemapData = useMemo(
-    () =>
-      Object.entries(byNamespace).map(([ns, pods]) => ({
+  // "클러스터 구조" 다이어그램용 - 네임스페이스별 총 건수 기준 상위 5개만
+  // 보여주고(너무 많으면 다이어그램이 다시 복잡해짐), 네임스페이스 안에서도
+  // 건수 상위 3개 파드만 노드로 그리고 나머지는 "+N개 더"로 요약한다.
+  const clusterTopology = useMemo(() => {
+    const rows = Object.entries(byNamespace).map(([ns, pods]) => {
+      const sorted = [...pods].sort((a, b) => b.count - a.count);
+      const shown = sorted.slice(0, 3);
+      return {
         name: ns,
-        children: pods.map((p) => ({ name: p.pod, size: p.count, count: p.count })),
-      })),
-    [byNamespace]
-  );
+        total: sorted.reduce((sum, p) => sum + p.count, 0),
+        pods: shown.map((p) => ({ name: p.pod, count: p.count })),
+        moreCount: Math.max(0, sorted.length - shown.length),
+      };
+    });
+    return rows.sort((a, b) => b.total - a.total).slice(0, 5);
+  }, [byNamespace]);
 
   return (
     <div className="space-y-6">
@@ -370,21 +420,15 @@ export default function InfrastructureView() {
         <div className="bg-dash-surface rounded-2xl p-5">
           <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
           <p className="text-dash-muted text-xs mb-4">
-            네임스페이스 &gt; 리소스 · 박스가 클수록, 진할수록 공격이 몰린 곳
+            Cluster → Namespace → Pod · 진할수록 공격이 몰린 곳 (네임스페이스 상위 5개, 파드 상위 3개)
           </p>
           {targetsStatus === "ready" && targets.length === 0 && (
             <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
           )}
           {targetsStatus === "ready" && targets.length > 0 && (
-            <ResponsiveContainer width="100%" height={288}>
-              <Treemap
-                data={clusterTreemapData}
-                dataKey="size"
-                stroke={C.bg}
-                isAnimationActive={false}
-                content={<ClusterTreemapCell maxTarget={maxTarget} C={C} />}
-              />
-            </ResponsiveContainer>
+            <div className="overflow-x-auto">
+              <ClusterTopologyDiagram data={clusterTopology} C={C} />
+            </div>
           )}
         </div>
       </div>

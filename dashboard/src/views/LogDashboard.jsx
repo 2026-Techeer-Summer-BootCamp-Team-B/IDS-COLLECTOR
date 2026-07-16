@@ -841,16 +841,16 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
-  // 2026-07-16: max-h-80(320px)는 항목 5개 기준으로는 안 채워지고, highlighted
-  // 상태(limit=10)에서는 오히려 이 Card가 놓인 grid 행(왼쪽 Recent Logs와 같은
-  // 행, align-items 기본값 stretch)의 높이에 맞춰 카드가 계속 늘어나 보이는
-  // 문제가 있었다 - self-start로 그 stretch를 끄고, 목록 높이를 "정확히 5줄"
-  // 크기(h-48)로 고정해서 그 이상은 항상 내부 스크롤로만 보이게 했다.
+  // 2026-07-16: 목록 높이는 "정확히 5줄" 크기(h-48)로 고정해서 그 이상은 항상
+  // 내부 스크롤로만 보이게 한다. 이 카드는 오른쪽 컬럼(TopSources 위 +
+  // ErrorRateGauge 아래)의 flex-col 안에서 자기 내용 높이만 차지하고, 남는
+  // 세로 공간은 아래 ErrorRateGauge가 flex-1로 흡수해서 왼쪽 Recent Logs
+  // 높이와 맞춘다(아래 grid 행의 stretch + flex-col 구조 참고).
   return (
     <Card
       title="Top Source IPs"
       subtitle={highlighted ? `전체 ${sources.length}개 IP · 5개 이후 스크롤` : "선택 구간 기준"}
-      className={`self-start ${highlighted ? "glow-box-mint" : ""}`}
+      className={highlighted ? "glow-box-mint" : ""}
     >
       <div className="space-y-3 h-48 min-h-0 overflow-y-auto pr-1">
         {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
@@ -895,36 +895,45 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   const data = [{ value: rate }, { value: 100 - rate }];
   const displayRate = useCountUp(`${rate}%`);
 
+  // 2026-07-16: 오른쪽 컬럼(TopSources + 이 카드)이 왼쪽 Recent Logs와 같은 행에서
+  // stretch되면, 이 카드가 flex-1로 남는 세로 공간을 전부 흡수한다 - 고정 140px
+  // 차트+오버레이 블록은 그대로 두고, 그 블록을 담은 wrapper를 flex로 세로
+  // 중앙정렬해서 늘어난 공간이 위아래로 고르게 여백처럼 보이게 했다(예전처럼
+  // 카드 아래쪽에만 어색하게 빈 공간이 남지 않도록).
   return (
-    <Card title={title} subtitle={subtitle} className="relative">
-      <ResponsiveContainer width="100%" height={140}>
-        <PieChart>
-          <Pie
-            data={data}
-            startAngle={180}
-            endAngle={0}
-            innerRadius={55}
-            outerRadius={72}
-            dataKey="value"
-            stroke="none"
-            isAnimationActive
-            animationDuration={800}
-            animationEasing="ease-out"
-          >
-            <Cell fill={C.critical} />
-            <Cell fill={C.surfaceAlt} />
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="absolute inset-x-0 bottom-6 flex flex-col items-center">
-        <span
-          className={`text-dash-fg text-2xl font-semibold tabular-nums ${rate > 0 ? "animate-pulse glow-critical" : ""}`}
-        >
-          {displayRate}
-        </span>
-        <span className="text-dash-muted text-xs">
-          {errorCount} / {events.length} {unitLabel}
-        </span>
+    <Card title={title} subtitle={subtitle} className="flex-1 flex flex-col">
+      <div className="relative flex-1 flex items-center justify-center min-h-[140px]">
+        <div className="relative w-full">
+          <ResponsiveContainer width="100%" height={140}>
+            <PieChart>
+              <Pie
+                data={data}
+                startAngle={180}
+                endAngle={0}
+                innerRadius={55}
+                outerRadius={72}
+                dataKey="value"
+                stroke="none"
+                isAnimationActive
+                animationDuration={800}
+                animationEasing="ease-out"
+              >
+                <Cell fill={C.critical} />
+                <Cell fill={C.surfaceAlt} />
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="absolute inset-x-0 bottom-6 flex flex-col items-center">
+            <span
+              className={`text-dash-fg text-2xl font-semibold tabular-nums ${rate > 0 ? "animate-pulse glow-critical" : ""}`}
+            >
+              {displayRate}
+            </span>
+            <span className="text-dash-muted text-xs">
+              {errorCount} / {events.length} {unitLabel}
+            </span>
+          </div>
+        </div>
       </div>
     </Card>
   );
@@ -1341,7 +1350,7 @@ export function LatencyStatsPanel({ events }) {
     : [];
 
   return (
-    <Card title="API Latency" subtitle={stats ? `선택 구간 · ${stats.count.toLocaleString()}건 기준` : "데이터 없음"}>
+    <Card title="API Latency" subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}>
       {stats ? (
         <div className="grid grid-cols-5 gap-2">
           {rows.map((r) => (
@@ -1390,6 +1399,7 @@ export function RecentLogsTable({ events, filterLevels, status = "ready", error 
     <Card
       title="Recent Logs"
       subtitle={`Showing ${Math.min(filtered.length, 8)} of ${filtered.length}`}
+      className="h-full"
       action={
         <div className="flex flex-wrap gap-1 max-w-md">
           <button
@@ -2248,13 +2258,15 @@ export function DashboardContent() {
 
           {latencyWidget}
 
-          {/* items-start(2026-07-16) - 기본값(stretch)이면 오른쪽 컬럼(Top
-              Sources+Error Rate, 내용이 짧음)이 왼쪽 Recent Logs 높이에 맞춰
-              강제로 늘어나면서 카드 밑에 어색한 빈 공간이 남았다(스크린샷 피드백).
-              items-start로 각 컬럼이 자기 내용 높이만큼만 차지하게 했다. */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
+          {/* 2026-07-16: items-start를 걷어내고 기본 stretch로 되돌렸다 - 대신
+              오른쪽 컬럼을 flex-col로 바꿔서 ErrorRateGauge가 flex-1로 남는
+              세로 공간을 흡수하게 했다. 그래서 오른쪽 컬럼 전체 높이가 항상
+              왼쪽 Recent Logs 높이와 같아지고(stretch), 그 차이만큼의 여백도
+              ErrorRateGauge 카드 안에서 자연스러운 위아래 패딩으로 흡수돼서
+              카드 바깥에 어색한 빈 공간이 남지 않는다. */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2">{recentLogsWidget}</div>
-            <div className="space-y-6">
+            <div className="flex flex-col gap-6">
               {topSourcesWidget}
               {errorRateWidget}
             </div>

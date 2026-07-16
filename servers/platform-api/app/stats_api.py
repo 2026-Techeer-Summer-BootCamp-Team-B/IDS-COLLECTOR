@@ -15,10 +15,10 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 # 임계치. dashboard/src/views/InfrastructureView.jsx의 SourceHealthPanel이 예전엔
 # dashboard/src/data/attackEvents.js의 sourceHealth()로 흉내만 냈다(고정 mock
 # 날짜 기준이라 실제 파이프라인 상태와 무관하게 항상 같은 값이 나옴, 2026-07-15
-# 확인) - 여기서 attack-logs-*의 실제 최신 문서 시각으로 대체한다. waf는 현재
-# 비활성화 상태(moduleMeta.js 참고)라 모니터링 대상에서 뺐다 - 항상 조용한
-# 소스를 넣어봐야 매번 critical만 찍혀 신호가 아니라 잡음이 된다.
-_HEALTH_MODULES = ["was", "falco", "k8s_audit"]
+# 확인) - 여기서 attack-logs-*의 실제 최신 문서 시각으로 대체한다. waf는
+# 2026-07-16에 백엔드가 다시 붙으면서(moduleMeta.js 참고) 실제로 이벤트가
+# 들어오게 됐으므로 모니터링 대상에 포함한다.
+_HEALTH_MODULES = ["was", "waf", "falco", "k8s_audit"]
 _HEALTH_WARNING_SECONDS = 30 * 60
 _HEALTH_CRITICAL_SECONDS = 2 * 60 * 60
 
