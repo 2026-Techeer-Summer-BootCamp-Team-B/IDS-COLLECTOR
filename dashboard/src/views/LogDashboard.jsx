@@ -25,8 +25,9 @@ import { useLogVolume } from "../hooks/useLogVolume";
 import { useLogLevels } from "../hooks/useLogLevels";
 import { useDetectionSources } from "../hooks/useDetectionSources";
 import { useLogs } from "../hooks/useLogs";
-import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } from "../data/realSeverity";
+import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY, getRealSeverityMeta } from "../data/realSeverity";
 import { getModuleMeta } from "../data/moduleMeta";
+import { useLiveAttackFeed } from "../hooks/useLiveFeed";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
 import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
 import { usePollInterval } from "../context/PollIntervalContext";
@@ -936,6 +937,193 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
         </div>
       </div>
     </Card>
+  );
+}
+
+function truncateActivityLabel(name, max = 15) {
+  if (!name) return "-";
+  return name.length > max ? `${name.slice(0, max - 1)}…` : name;
+}
+
+// 모듈 표시 순서 고정(WAF -> WAS -> K8s Audit -> Falco) - "거시적 관점(외곽,
+// 인그레스)에서 미시적 관점(컨테이너/커널)으로" 들어가는 순서라는 요청 취지를
+// 그대로 반영. 실제 인과관계를 증명하는 순서는 아니고 그냥 표시 순서다.
+const ACTIVITY_MODULE_ORDER = ["waf", "was", "k8s_audit", "falco"];
+
+// 이벤트를 묶을 기준 키. source.ip가 있으면 그걸 쓰고(WAS/WAF/K8s Audit는
+// 대부분 있음), Falco의 exec/쉘 이벤트처럼 source.ip가 없는 경우엔(네트워크
+// syscall이 아니면 애초에 필드 자체가 없음) namespace/pod로 대체한다 - 둘 다
+// 없으면 모듈 이름으로 묶어서 최소한 화면에서 사라지지는 않게 한다.
+function bucketKeyForEvent(e) {
+  if (e.sourceIp) return { key: `ip:${e.sourceIp}`, label: e.sourceIp };
+  if (e.pod || e.namespace) {
+    const label = e.pod || e.namespace;
+    return { key: `pod:${e.namespace || "-"}/${e.pod || "-"}`, label };
+  }
+  return { key: `mod:${e.module}`, label: getModuleMeta(e.module).label };
+}
+
+// 2026-07-16: "WAF/WAS/K8s Audit/Falco를 묶어서 실시간 트리로 보여달라"는
+// 요청 - 정확한 사용자 세션 추적(요청 단위 trace ID)은 지금 파이프라인에
+// 없어서 구현 불가지만(정확도가 없는 걸 있는 척 만들면 보안 대시보드에서는
+// 오히려 위험하다), source IP(없으면 pod) 기준으로 최근 이벤트를 묶어
+// "실시간 활동 흐름"으로 보여주는 절충안으로 구현했다. 기존 useLiveAttackFeed
+// (LiveTicker가 쓰는 것과 같은 폴링, /events/recent 기반)를 그대로 재사용 -
+// 새 백엔드/소켓 없이 붙였다.
+export function LiveActivityTree() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const { feed } = useLiveAttackFeed({ feedLimit: 80 });
+
+  const buckets = useMemo(() => {
+    const map = new Map();
+    feed.forEach((e) => {
+      const { key, label } = bucketKeyForEvent(e);
+      if (!map.has(key)) {
+        map.set(key, { key, label, modules: new Map(), maxSeverity: 0, lastTimestamp: e.timestamp });
+      }
+      const b = map.get(key);
+      b.maxSeverity = Math.max(b.maxSeverity, e.severity || 0);
+      if (e.timestamp > b.lastTimestamp) b.lastTimestamp = e.timestamp;
+
+      if (!b.modules.has(e.module)) {
+        b.modules.set(e.module, { module: e.module, count: 0, maxSeverity: 0, lastTimestamp: e.timestamp });
+      }
+      const m = b.modules.get(e.module);
+      m.count += 1;
+      m.maxSeverity = Math.max(m.maxSeverity, e.severity || 0);
+      if (e.timestamp > m.lastTimestamp) m.lastTimestamp = e.timestamp;
+    });
+
+    return Array.from(map.values())
+      .map((b) => ({
+        ...b,
+        modules: Array.from(b.modules.values()).sort(
+          (a, c) => ACTIVITY_MODULE_ORDER.indexOf(a.module) - ACTIVITY_MODULE_ORDER.indexOf(c.module)
+        ),
+      }))
+      .sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+      .slice(0, 6);
+  }, [feed]);
+
+  return (
+    <Card
+      title="실시간 활동 흐름"
+      subtitle="최근 이벤트를 소스(IP 또는 Pod) 기준으로 묶어 표시 — 확정된 인시던트 연관과는 다름"
+    >
+      {buckets.length === 0 ? (
+        <p className="text-dash-muted text-xs py-6 text-center">최근 활동이 없습니다.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <ActivityTreeDiagram buckets={buckets} C={C} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ActivityTreeDiagram({ buckets, C }) {
+  const NODE_GAP = 32;
+  const ROW_GAP = 20;
+
+  const rows = buckets.map((b) => {
+    const modsHeight = Math.max(0, b.modules.length - 1) * NODE_GAP;
+    return { ...b, blockHeight: Math.max(30, modsHeight) };
+  });
+  const totalHeight = rows.reduce((sum, r) => sum + r.blockHeight, 0) + ROW_GAP * Math.max(0, rows.length - 1);
+  const height = Math.max(220, totalHeight + 24);
+  const hubY = height / 2;
+
+  let cursor = 12;
+  const positioned = rows.map((r) => {
+    const centerY = cursor + r.blockHeight / 2;
+    cursor += r.blockHeight + ROW_GAP;
+    return { ...r, centerY };
+  });
+
+  const X_HUB = 34;
+  const X_BUCKET = 180;
+  const X_MODULE = 330;
+  const width = 560;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="실시간 활동 흐름 트리">
+      <circle cx={X_HUB} cy={hubY} r={5} fill={C.live} className="animate-pulse" />
+      <circle cx={X_HUB} cy={hubY} r={14} fill="none" stroke={C.live} strokeWidth={1.5} opacity={0.5} />
+      <text x={X_HUB} y={hubY + 30} textAnchor="middle" fontSize={10} fill={C.muted}>
+        Live
+      </text>
+
+      {positioned.map((b) => {
+        const bucketMeta = getRealSeverityMeta(b.maxSeverity);
+        const modStartY = b.centerY - ((b.modules.length - 1) * NODE_GAP) / 2;
+        return (
+          <g key={b.key}>
+            <path
+              d={`M ${X_HUB + 14} ${hubY} C ${(X_HUB + X_BUCKET) / 2} ${hubY}, ${(X_HUB + X_BUCKET) / 2} ${b.centerY}, ${X_BUCKET - 52} ${b.centerY}`}
+              fill="none"
+              stroke={C.surfaceAlt}
+              strokeWidth={1.5}
+            />
+            <rect
+              x={X_BUCKET - 52}
+              y={b.centerY - 13}
+              width={104}
+              height={26}
+              rx={13}
+              fill={C.surfaceAlt}
+              stroke={bucketMeta.color}
+              strokeWidth={1.5}
+            />
+            <text x={X_BUCKET} y={b.centerY + 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={C.fg} fontFamily="monospace">
+              {truncateActivityLabel(b.label, 15)}
+            </text>
+
+            {b.modules.map((m, i) => {
+              const modY = modStartY + i * NODE_GAP;
+              const meta = getModuleMeta(m.module);
+              const sevMeta = getRealSeverityMeta(m.maxSeverity);
+              const isDanger = m.maxSeverity >= REAL_ERROR_MIN_SEVERITY;
+              return (
+                <g key={m.module}>
+                  <path
+                    d={`M ${X_BUCKET + 52} ${b.centerY} C ${(X_BUCKET + X_MODULE) / 2} ${b.centerY}, ${(X_BUCKET + X_MODULE) / 2} ${modY}, ${X_MODULE - 40} ${modY}`}
+                    fill="none"
+                    stroke={isDanger ? sevMeta.color : C.surfaceAlt}
+                    strokeWidth={isDanger ? 1.5 : 1}
+                  />
+                  {isDanger && (
+                    <circle
+                      cx={X_MODULE}
+                      cy={modY}
+                      r={9}
+                      fill="none"
+                      stroke={sevMeta.color}
+                      strokeWidth={1.5}
+                      className="activity-ripple-ring"
+                    />
+                  )}
+                  <circle
+                    cx={X_MODULE}
+                    cy={modY}
+                    r={9}
+                    fill={meta.color}
+                    stroke={isDanger ? sevMeta.color : C.bg}
+                    strokeWidth={isDanger ? 2 : 1.5}
+                  />
+                  <text x={X_MODULE + 16} y={modY - 3} fontSize={9} fontWeight={600} fill={C.fg}>
+                    {meta.label}
+                  </text>
+                  <text x={X_MODULE + 16} y={modY + 9} fontSize={8.5} fill={C.faint}>
+                    {m.count}건 · {sevMeta.label}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -2238,6 +2426,11 @@ export function DashboardContent() {
             {kpiWarningsWidget}
             {kpiSourcesWidget}
           </div>
+
+          {/* 2026-07-16: "WAF/WAS/K8s Audit/Falco를 실시간 트리로 보여달라"는
+              요청 - KPI 카드 바로 아래, 다른 요약 섹션들보다 위에 둬서 눈에
+              가장 먼저 띄도록 배치했다. */}
+          <LiveActivityTree />
 
           <div>
             <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">로그 개요</p>
