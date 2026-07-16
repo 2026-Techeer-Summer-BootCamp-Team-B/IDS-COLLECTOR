@@ -995,11 +995,15 @@ export default function AdminAuditView({ pushToast }) {
           <p className="text-dash-muted text-xs mb-3">누가 · 언제 · 어떤 조치를 했는지 (최근 50건)</p>
           {auditStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
           {auditStatus === "error" && <p className="text-dash-critical text-xs py-3">{auditError}</p>}
+          {/* 2026-07-16: 50건이 한 화면에 그대로 다 나와서 페이지가 길어지던
+              문제 - 다른 목록들(탐지 룰 랭킹 등)과 같은 패턴으로 높이를 고정하고
+              내부 스크롤로 바꿨다. 헤더 행은 sticky로 고정해서 스크롤해도 어느
+              컬럼인지 계속 보이게. */}
           {auditStatus === "ready" && (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[480px] pr-1">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-dash-muted text-xs uppercase tracking-wide">
+                <tr className="text-dash-muted text-xs uppercase tracking-wide sticky top-0 bg-dash-surface">
                   <th className="text-left font-medium pb-2">시각</th>
                   <th className="text-left font-medium pb-2">사용자</th>
                   <th className="text-left font-medium pb-2">액션</th>

@@ -2248,7 +2248,11 @@ export function DashboardContent() {
 
           {latencyWidget}
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          {/* items-start(2026-07-16) - 기본값(stretch)이면 오른쪽 컬럼(Top
+              Sources+Error Rate, 내용이 짧음)이 왼쪽 Recent Logs 높이에 맞춰
+              강제로 늘어나면서 카드 밑에 어색한 빈 공간이 남았다(스크린샷 피드백).
+              items-start로 각 컬럼이 자기 내용 높이만큼만 차지하게 했다. */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
             <div className="xl:col-span-2">{recentLogsWidget}</div>
             <div className="space-y-6">
               {topSourcesWidget}

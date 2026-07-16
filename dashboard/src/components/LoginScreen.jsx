@@ -9,6 +9,10 @@ export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // 2026-07-16: 로고(public/logo.png)가 아직 안 올라와 있을 수도 있으니, 이미지
+  // 로드가 실패하면 기존의 민트 사각 아이콘으로 조용히 대체 - 깨진 이미지 아이콘이
+  // 그대로 노출되는 것보다 낫다.
+  const [logoFailed, setLogoFailed] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -19,19 +23,50 @@ export default function LoginScreen() {
   }
 
   return (
-    <div className="min-h-screen bg-dash-bg flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 mb-8 justify-center">
-          <div className="w-9 h-9 rounded-lg bg-dash-mint/20 flex items-center justify-center shrink-0 glow-box-mint">
-            <span className="w-3.5 h-3.5 rounded-sm bg-dash-mint" />
-          </div>
+    // 2026-07-16: 대각선으로 흰색/검정 절반씩 나뉜 배경 - linear-gradient에
+    // 같은 색을 50% 지점에서 하드 스톱으로 두 번 줘서 그라데이션이 아니라
+    // 또렷한 경계선으로 갈라지게 했다. 135deg = 좌상단 흰색, 우하단 검정.
+    // 여기에 은은한 민트/퍼플 글로우를 얹어 로그인 페이지만 밋밋하지 않게.
+    <div
+      className="min-h-screen relative flex items-center justify-center px-4 overflow-hidden"
+      style={{ background: "linear-gradient(135deg, #F4F5FA 0%, #F4F5FA 50%, #05060B 50%, #05060B 100%)" }}
+    >
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse 55% 45% at 82% 18%, rgb(0 255 166 / 0.16), transparent), radial-gradient(ellipse 50% 40% at 18% 82%, rgb(166 77 255 / 0.14), transparent)",
+        }}
+      />
+
+      <div className="relative w-full max-w-sm">
+        {/* 로고+서비스 설명 블록은 대각선 경계를 가로지를 수 있어서 자체적으로
+            반투명 다크 글래스 배경을 깔았다 - 밑에 흰색/검정 어느 쪽이 있어도
+            흰 글자가 항상 또렷하게 읽히도록. */}
+        <div className="flex flex-col items-center text-center gap-3 mb-6 bg-black/35 backdrop-blur-md rounded-2xl px-6 py-6 border border-white/10 shadow-xl">
+          {!logoFailed ? (
+            <img
+              src="/logo.png"
+              alt="SENTINEL-OPS"
+              onError={() => setLogoFailed(true)}
+              className="w-16 h-16 rounded-2xl object-cover shadow-lg"
+            />
+          ) : (
+            <div className="w-14 h-14 rounded-2xl bg-dash-mint/20 flex items-center justify-center shrink-0 glow-box-mint">
+              <span className="w-5 h-5 rounded-sm bg-dash-mint" />
+            </div>
+          )}
           <div>
-            <p className="text-dash-fg font-semibold text-base leading-none tracking-wide glow-mint">SENTINEL-OPS</p>
-            <p className="text-dash-muted text-[11px] mt-1">보안 로그 상관분석 대시보드</p>
+            <p className="text-white font-semibold text-lg leading-none tracking-wide glow-mint">SENTINEL-OPS</p>
+            <p className="text-white/75 text-xs mt-2 leading-relaxed">
+              WAS · WAF · Falco · K8s Audit 로그를 실시간으로 모아 상관분석하고,
+              <br />
+              공격을 하나의 인시던트로 재구성해 조기에 탐지하는 보안 관제 대시보드
+            </p>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-dash-surface rounded-2xl p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="bg-dash-surface/95 backdrop-blur-md rounded-2xl p-6 space-y-4 shadow-2xl">
           <div>
             <label className="text-dash-muted text-xs block mb-1.5">아이디</label>
             <input

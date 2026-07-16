@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { ResponsiveContainer, Treemap } from "recharts";
 import WorldMap from "../components/WorldMap";
 import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
@@ -200,6 +201,57 @@ function intensityTextColor(count, max, C) {
   return max && count > 0 ? "#FFFFFF" : C.fg;
 }
 
+// 2026-07-16: "클러스터 구조"가 네임스페이스 라벨 + 폰트 크기 pill을 그냥
+// flex-wrap으로 늘어놓기만 해서 밋밋하고 크기 비교도 안 된다는 피드백 -
+// 네임스페이스>파드 계층을 그대로 살리면서 "공격이 몰린 곳일수록 실제로
+// 넓게 보이는" Treemap으로 바꿨다. depth 1(네임스페이스)은 얇은 테두리
+// 컨테이너 + 좌상단 라벨만, depth 2(파드)가 실제 색칠된 셀 - intensityColor를
+// 그대로 재사용해서 위의 "Top 공격 대상" 막대와 톤이 어긋나지 않게 했다.
+function ClusterTreemapCell(props) {
+  const { x, y, width, height, depth, name, count, maxTarget, C } = props;
+
+  if (depth === 1) {
+    return (
+      <g>
+        <rect x={x} y={y} width={width} height={height} fill="none" stroke={C.surfaceAlt} strokeWidth={2} />
+        {width > 36 && height > 14 && (
+          <text x={x + 5} y={y + 13} fontSize={10} fontWeight={600} fill={C.faint}>
+            {name}
+          </text>
+        )}
+      </g>
+    );
+  }
+
+  const fill = intensityColor(count, maxTarget, C);
+  const textColor = intensityTextColor(count, maxTarget, C);
+  const showLabel = width > 46 && height > 18;
+  const showCount = width > 46 && height > 34;
+
+  return (
+    <g>
+      <rect x={x} y={y} width={width} height={height} fill={fill} stroke={C.bg} strokeWidth={1.5} rx={3} />
+      {showLabel && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 - (showCount ? 6 : 0)}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fontSize={10}
+          fill={textColor}
+        >
+          {name}
+        </text>
+      )}
+      {showCount && (
+        <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" fontSize={9} fill={textColor} opacity={0.85}>
+          {count}건
+        </text>
+      )}
+    </g>
+  );
+}
+
 // 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
 // 건수 비교는 어려워서(원 크기만으로는) 순위형 막대 목록을 옆에 같이 둔다.
 // "Top 공격 대상" 패널과 같은 손그림 막대 스타일 + intensityColor로 톤을 맞춤.
@@ -253,6 +305,18 @@ export default function InfrastructureView() {
     return map;
   }, [targets]);
 
+  // "클러스터 구조" Treemap용 - 네임스페이스가 depth 1 노드, 그 안의 파드들이
+  // depth 2 리프. size=count라 공격이 몰린 파드일수록 실제로 더 넓은 박스로
+  // 그려진다.
+  const clusterTreemapData = useMemo(
+    () =>
+      Object.entries(byNamespace).map(([ns, pods]) => ({
+        name: ns,
+        children: pods.map((p) => ({ name: p.pod, size: p.count, count: p.count })),
+      })),
+    [byNamespace]
+  );
+
   return (
     <div className="space-y-6">
       {/* 페이지 상단 설명 문구 (2026-07-16) - ATT&CK 페이지의 타이틀+서브타이틀
@@ -305,32 +369,23 @@ export default function InfrastructureView() {
 
         <div className="bg-dash-surface rounded-2xl p-5">
           <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
-          <p className="text-dash-muted text-xs mb-4">네임스페이스 &gt; 리소스 · 색이 진할수록 공격 집중</p>
+          <p className="text-dash-muted text-xs mb-4">
+            네임스페이스 &gt; 리소스 · 박스가 클수록, 진할수록 공격이 몰린 곳
+          </p>
           {targetsStatus === "ready" && targets.length === 0 && (
             <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
           )}
-          <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
-            {Object.entries(byNamespace).map(([ns, pods]) => (
-              <div key={ns}>
-                <p className="text-dash-faint text-xs font-medium mb-1.5">{ns}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {pods.map((p) => (
-                    <span
-                      key={p.pod}
-                      className="text-[10px] px-2 py-1 rounded-md whitespace-nowrap"
-                      style={{
-                        backgroundColor: `${intensityColor(p.count, maxTarget, C)}cc`,
-                        color: intensityTextColor(p.count, maxTarget, C),
-                      }}
-                      title={`${p.count}건`}
-                    >
-                      {p.pod} ({p.count})
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          {targetsStatus === "ready" && targets.length > 0 && (
+            <ResponsiveContainer width="100%" height={288}>
+              <Treemap
+                data={clusterTreemapData}
+                dataKey="size"
+                stroke={C.bg}
+                isAnimationActive={false}
+                content={<ClusterTreemapCell maxTarget={maxTarget} C={C} />}
+              />
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
