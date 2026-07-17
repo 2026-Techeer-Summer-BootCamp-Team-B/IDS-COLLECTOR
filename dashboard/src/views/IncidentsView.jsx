@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { SeverityBadge, SourceBadge, StatusDot } from "../components/badges";
-import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
+import { CHART_COLORS, forTheme, DONUT_PALETTE, chartTooltipProps } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
 import { useIncidents } from "../hooks/useIncidents";
@@ -12,7 +12,7 @@ import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
 import { REAL_SEVERITY_LEVELS, getRealSeverityMeta } from "../data/realSeverity";
-import { apiPatch, apiPost, apiDelete, ApiError } from "../lib/authApi";
+import { apiGet, apiPatch, apiPost, apiDelete, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
 // incidents.severity(1~4, event.severity와 같은 실 스케일)를 badges.jsx의
@@ -20,6 +20,63 @@ import { DISPLAY_TIMEZONE } from "../lib/timezone";
 const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" };
 function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
+}
+
+// CriticalToastStack의 "조사하기"로 넘어온 이벤트(App.jsx의 focusEvent)를
+// correlation_key_type별로 이벤트의 해당 필드와 비교해서, 그 이벤트가 속했을
+// 인시던트를 찾는다. 이벤트 자체엔 incident_id가 없어서(정규화 이벤트와
+// 인시던트는 별개 테이블 - correlation-engine이 사후에 묶는다) 완전히 정확한
+// 매칭은 아니고, "이 키 값으로 잡힌 인시던트 중 가장 최근 것"을 최선으로 추정한다
+// - correlation_key_type 3종(source.ip/user.name/orchestrator.resource.name)은
+// servers/correlation-engine/app/scenarios/*.yaml 기준. 매칭 실패 시 null 반환
+// (호출부가 기존처럼 목록 맨 위 항목으로 폴백).
+function matchesCorrelationKey(incident, event) {
+  const key = incident.correlation_key_value;
+  if (!key) return false;
+  switch (incident.correlation_key_type) {
+    case "source.ip":
+      return event.sourceIp === key;
+    case "user.name":
+      return event.raw?.["user.name"] === key;
+    case "orchestrator.resource.name":
+      return event.pod === key;
+    default:
+      return false;
+  }
+}
+
+// 후보를 이 정도로 좁혀서 GET /incidents/{id}/events를 병렬로 쏜다 - user.name
+// 처럼 여러 인시던트가 같은 값을 공유하는 키(예: 시나리오 25개 중 20개가
+// k8s_audit이고 다 같은 인증서로 실행돼서 user.name="system:admin"이 20건 넘게
+// 몰려있음, 2026-07-16 실측)에선 correlation_key만으론 구분이 안 돼서 무한정
+// 늘리면 API 호출도 늘어난다.
+const MAX_MATCH_CANDIDATES = 8;
+
+// correlation_key_value가 같은(=같은 시나리오 계열일 가능성이 있는) 인시던트
+// 후보를 추린 뒤, 실제로 이 이벤트가 그 인시던트에 진짜 속했는지(=incident_events
+// 조인 테이블에 event_id가 있는지) GET /incidents/{id}/events로 확인해서 정확히
+// 매칭한다. correlation_key_value만으로 후보를 하나 찍으면(예전 방식) user.name처럼
+// 여러 인시던트가 같은 값을 공유하는 키에서 사실상 "그냥 최신 인시던트" 수준으로
+// 틀리기 쉬웠다(2026-07-16, 실측: 조사하기 클릭 시 엉뚱한 인시던트로 이동하는
+// 빈도가 더 높았음).
+async function findIncidentForEvent(incidents, event) {
+  if (!event) return null;
+  const candidates = incidents.filter((inc) => matchesCorrelationKey(inc, event)).slice(0, MAX_MATCH_CANDIDATES);
+  if (!candidates.length) return null;
+
+  const checks = await Promise.all(
+    candidates.map(async (inc) => {
+      try {
+        const events = await apiGet(`/incidents/${inc.id}/events`);
+        return events?.some((e) => e.event_id === event.id) ? inc : null;
+      } catch {
+        return null; // 개별 조회 실패는 그 후보만 탈락시키고 계속 진행
+      }
+    })
+  );
+  // candidates는 incidents 순서(최신 갱신순)를 그대로 유지하므로, 실제 매칭된
+  // 것 중 배열에서 가장 앞(=가장 최근)에 있는 걸 채택.
+  return checks.find((inc) => inc) || null;
 }
 
 const STATUS_LABEL = { open: "Open", investigating: "조사중", closed: "종결" };
@@ -32,10 +89,6 @@ const STATUS_META = {
 // investigating을 모두 "진행중"으로 묶는다.
 function statusDotStatus(status) {
   return status === "closed" ? "RESOLVED" : "IN_PROGRESS";
-}
-
-function tooltipStyle(C) {
-  return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
 }
 
 function MiniKpi({ label, value, sub, color, onClick, active = false }) {
@@ -115,7 +168,7 @@ function SeverityDonut({ incidents }) {
       count: counts[l.severity],
       // Overview의 도넛들(SeverityDonutCompact 등)과 같은 톤 다운 순환 팔레트로
       // 통일 - severity 배지 등 다른 곳의 의미색(빨강=critical 등)과는 별개.
-      color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+      color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme),
     }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
@@ -135,7 +188,7 @@ function SeverityDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip {...chartTooltipProps(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -169,7 +222,7 @@ function StatusDonut({ incidents }) {
         key,
         label: meta.label,
         count: counts[key],
-        color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+        color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme),
       }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
@@ -189,7 +242,7 @@ function StatusDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip {...chartTooltipProps(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -360,7 +413,7 @@ function StorylineEntry({ entry, isLast }) {
  *
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
-export default function IncidentsView({ pushToast }) {
+export default function IncidentsView({ pushToast, focusEvent, onFocusConsumed }) {
   const { incidents, status, error, reload } = useIncidents({ limit: 200 });
   const { scenarios } = useScenarios();
   const { bannedIps, status: bannedStatus, error: bannedError, reload: reloadBans } = useBannedIps();
@@ -373,8 +426,84 @@ export default function IncidentsView({ pushToast }) {
 
   useIncidentsSocket(reload);
 
+  // focusEvent(CriticalToastStack "조사하기"로 넘어온 이벤트) 처리. 신경 쓸 게
+  // 세 가지다:
+  //   1) 이미 Incidents를 보고 있는 상태(selectedId가 이미 있음)에서 또 다른
+  //      토스트를 눌러도 반응해야 한다 - 예전엔 selectedId 있으면 그냥 skip이라
+  //      "이미 열어놓고 눌렀더니 아무 반응 없음" 버그가 있었다. consumedFocusRef로
+  //      "이 focusEvent를 이미 처리했는지"를 selectedId 유무와 무관하게 추적한다.
+  //   2) 인시던트는 상관분석 결과라 방금 뜬 CRITICAL 이벤트가 실제 인시던트로
+  //      반영되기까지 살짝 지연될 수 있고(예: S4는 60초 내 5건 threshold),
+  //      드물게는 threshold 미달로 끝내 인시던트가 안 생기기도 한다. 그래서
+  //      즉시 매칭 안 되면 0.5초 간격으로 목록을 강제 재조회하며 최대 2초까지
+  //      재시도하고, 그래도 못 찾으면 최신 인시던트로 폴백한다.
+  //   3) findIncidentForEvent가 이제 GET /incidents/{id}/events를 호출하는
+  //      비동기 함수라(2026-07-16, correlation_key만으로는 부정확해서 - 아래
+  //      matchesCorrelationKey 주석 참고) resolvePendingFocus도 비동기다.
+  //      resolveTokenRef로 "이 실행이 아직 최신 요청인지"를 확인해서, 그 사이에
+  //      새 focusEvent가 오거나 다른 경로로 이미 처리됐으면 뒤늦게 도착한 결과를
+  //      버린다.
+  const consumedFocusRef = useRef(null);
+  const pendingFocusRef = useRef(null); // { event, deadline } | null
+  const incidentsRef = useRef(incidents);
+  incidentsRef.current = incidents;
+  const resolveTokenRef = useRef(0);
+
+  async function resolvePendingFocus() {
+    const pending = pendingFocusRef.current;
+    if (!pending) return;
+    const list = incidentsRef.current;
+    if (!list.length) return;
+
+    const myToken = ++resolveTokenRef.current;
+    const matched = await findIncidentForEvent(list, pending.event);
+    if (pendingFocusRef.current !== pending || resolveTokenRef.current !== myToken) return;
+
+    if (matched) {
+      setSelectedId(matched.id);
+    } else if (Date.now() >= pending.deadline) {
+      setSelectedId(list[0].id);
+    } else {
+      return; // 아직 시간 남았고 매칭도 안 됨 - 다음 재시도(reload)를 기다림
+    }
+    pendingFocusRef.current = null;
+    onFocusConsumed?.();
+  }
+
   useEffect(() => {
-    if (!selectedId && incidents.length) setSelectedId(incidents[0].id);
+    if (!focusEvent || focusEvent === consumedFocusRef.current) return;
+    consumedFocusRef.current = focusEvent;
+    pendingFocusRef.current = { event: focusEvent, deadline: Date.now() + 2000 };
+    resolvePendingFocus();
+
+    reload();
+    const poll = setInterval(reload, 500);
+    const timeout = setTimeout(() => {
+      clearInterval(poll);
+      resolvePendingFocus(); // 마지막 기회 - 그래도 없으면 최신으로 강제 폴백
+    }, 2000);
+
+    return () => {
+      clearInterval(poll);
+      clearTimeout(timeout);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusEvent]);
+
+  // incidents 목록이 갱신될 때마다(위 폴링 포함, 또는 useIncidentsSocket의 기본
+  // 5초 폴링) 두 가지 중 하나를 한다: 대기 중인 focusEvent가 있으면 재매칭 시도,
+  // 없으면(focusEvent 없이 연 일반 진입) 기존처럼 맨 위(최신) 항목을 자동 선택.
+  // 반드시 하나의 effect 안에서 처리한다 - 별개 effect 두 개로 나누면 같은
+  // 커밋에서 둘 다 [incidents] 변화에 반응해 같이 실행되면서 경쟁이 날 수 있다
+  // (실제 마운트 테스트로 재현했던 버그, 자세한 경위는 git log 참고).
+  useEffect(() => {
+    if (pendingFocusRef.current) {
+      resolvePendingFocus();
+      return;
+    }
+    if (!selectedId && incidents.length) {
+      setSelectedId(incidents[0].id);
+    }
   }, [incidents, selectedId]);
 
   const filteredIncidents = useMemo(

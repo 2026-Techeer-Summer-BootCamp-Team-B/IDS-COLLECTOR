@@ -9,12 +9,11 @@ import FalcoView from "./views/FalcoView";
 import K8sAuditView from "./views/K8sAuditView";
 import LiveTicker from "./components/LiveTicker";
 import ToastStack from "./components/ToastStack";
+import CriticalToastStack from "./components/CriticalToastStack";
 import LoginScreen from "./components/LoginScreen";
-import { SOURCE_META } from "./components/badges";
 import { useLiveAttackFeed } from "./hooks/useLiveFeed";
 import { useIncidentStats } from "./hooks/useIncidentStats";
 import { useTheme } from "./hooks/useTheme";
-import { forTheme } from "./data/theme";
 import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { PollIntervalProvider } from "./context/PollIntervalContext";
@@ -42,62 +41,23 @@ const LAYER_NAV_ITEMS = [
   { key: "k8s-audit", label: "K8s API" },
 ];
 
-// CRITICAL(severity=4) 이벤트 알림 — 예전엔 화면 우측 상단에 fixed 팝업으로
-// 떠서 작업 중인 화면을 가렸다는 피드백을 받고, 사이드바 하단(nav 아래 여백)에
-// 자리 잡는 일회성 카드로 옮겼다. dismissedId로 "이 이벤트는 이미 봤음"을
-// 기억해서, 조사하기/닫기 중 하나라도 누르면 그 이벤트에 한해 다시 안 뜬다 -
-// 다음에 새 CRITICAL 이벤트(다른 id)가 오면 다시 나타남.
-function SidebarCriticalAlert({ event, onInvestigate }) {
-  const { theme } = useTheme();
-  const [dismissedId, setDismissedId] = useState(null);
-
-  if (!event || event.id === dismissedId) return null;
-
-  const src = SOURCE_META[event.source] || { label: event.source, color: "#8890B5" };
-
-  return (
-    <div className="mt-4 bg-dash-surface border border-dash-critical rounded-xl p-3 glow-box-critical">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-dash-critical/20 text-dash-critical">
-          CRITICAL
-        </span>
-        <button
-          onClick={() => setDismissedId(event.id)}
-          aria-label="알림 닫기"
-          className="text-dash-muted hover:text-dash-fg text-xs leading-none"
-        >
-          ✕
-        </button>
-      </div>
-      <p className="text-dash-fg text-xs font-medium mb-1 leading-snug line-clamp-2">{event.message}</p>
-      <p className="text-dash-muted text-[10px] mb-2 truncate">
-        {event.namespace && `${event.namespace}/${event.pod} · `}
-        {event.sourceIp && `${event.sourceIp} · `}
-        <span style={{ color: forTheme(src.color, theme) }}>{src.label}</span>
-      </p>
-      <button
-        onClick={() => {
-          setDismissedId(event.id);
-          onInvestigate?.();
-        }}
-        className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical w-full"
-      >
-        조사하기 →
-      </button>
-    </div>
-  );
-}
-
 // Fixed-width inner wrapper + shrinking outer <aside> is what makes the
 // collapse animate smoothly instead of content reflowing/wrapping mid-transition.
-function Sidebar({ active, onSelect, open, incidentBadge, lastCritical, onInvestigateCritical }) {
+//
+// sticky top-0 h-screen: 예전엔 사이드바가 본문과 같은 문서 흐름 안에 있어서
+// 페이지를 스크롤하면 같이 밀려 올라갔다(레이아웃 자체가 flex 2단이고 min-h-screen만
+// 써서 실제 스크롤은 body 전체에서 일어남) - sticky+h-screen으로 뷰포트 좌측에
+// 붙박이로 고정. overflow-x-hidden은 접힘 트랜지션(w-60 -> w-0) 중 내용이 삐져나가는
+// 것만 잘라내고, 세로는 내부 wrapper의 overflow-y-auto가 맡아서 메뉴가 화면보다
+// 길어져도 사이드바만 독립적으로 스크롤되고 본문 스크롤과는 안 섞인다.
+function Sidebar({ active, onSelect, open, incidentBadge }) {
   return (
     <aside
-      className={`shrink-0 flex flex-col bg-dash-bg border-r border-dash-surfaceAlt overflow-hidden transition-all duration-200 ease-in-out ${
+      className={`sticky top-0 h-screen shrink-0 flex flex-col bg-dash-bg border-r border-dash-surfaceAlt overflow-x-hidden transition-all duration-200 ease-in-out ${
         open ? "w-60" : "w-0 border-r-0"
       }`}
     >
-      <div className="w-60 h-full flex flex-col px-5 py-6">
+      <div className="w-60 h-full flex flex-col px-5 py-6 overflow-y-auto">
         <div className="flex items-center gap-2 mb-8 px-1">
           <div className="w-8 h-8 rounded-lg bg-dash-mint/20 flex items-center justify-center shrink-0 glow-box-mint">
             <span className="w-3 h-3 rounded-sm bg-dash-mint" />
@@ -142,10 +102,6 @@ function Sidebar({ active, onSelect, open, incidentBadge, lastCritical, onInvest
               <span>{item.label}</span>
             </button>
           ))}
-
-          {/* K8s API(LAYER_NAV_ITEMS 마지막 항목) 바로 아래 - 맨 아래 여백에
-              두면 스크롤을 안 내리는 이상 놓치기 쉽다는 피드백으로 여기로 이동. */}
-          <SidebarCriticalAlert event={lastCritical} onInvestigate={onInvestigateCritical} />
         </nav>
       </div>
     </aside>
@@ -278,13 +234,20 @@ function Placeholder({ label }) {
 function AppShell() {
   const [active, setActive] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { feed, lastCritical } = useLiveAttackFeed();
+  const { feed, criticalEvents } = useLiveAttackFeed();
 
   // Fake response actions live here (not inside IncidentsView) so they
   // survive switching tabs — IncidentsView unmounts when you navigate away,
   // so anything stored only in its local state would reset.
   const [toasts, setToasts] = useState([]);
   const { stats: incidentStats } = useIncidentStats();
+
+  // CRITICAL 토스트의 "조사하기" -> Incidents 탭으로 넘어간 직후, 목록에서 직접
+  // 찾아 누르지 않아도 그 이벤트에 해당하는 인시던트가 바로 선택되어 있게 하려고
+  // 넘겨주는 값. IncidentsView가 마운트 시 한 번 소비하고 onFocusConsumed로
+  // 비워달라고 알려준다 - 안 비우면 나중에 사이드바로 직접 Incidents를 다시
+  // 열었을 때도 예전 이벤트 기준으로 계속 자동 선택되는 부작용이 생긴다.
+  const [focusIncidentEvent, setFocusIncidentEvent] = useState(null);
 
   function pushToast(message, tone = "success") {
     const toastId = Date.now() + Math.random();
@@ -299,8 +262,6 @@ function AppShell() {
         onSelect={setActive}
         open={sidebarOpen}
         incidentBadge={incidentStats.activeIncidents}
-        lastCritical={lastCritical}
-        onInvestigateCritical={() => setActive("incidents")}
       />
       <div className="flex-1 flex flex-col min-h-screen min-w-0">
         <TopBar
@@ -311,7 +272,13 @@ function AppShell() {
         <ConnectionBar />
         <main className="flex-1 p-6 overflow-y-auto">
           {active === "overview" && <DashboardContent />}
-          {active === "incidents" && <IncidentsView pushToast={pushToast} />}
+          {active === "incidents" && (
+            <IncidentsView
+              pushToast={pushToast}
+              focusEvent={focusIncidentEvent}
+              onFocusConsumed={() => setFocusIncidentEvent(null)}
+            />
+          )}
           {active === "attack" && <AttackMatrixView />}
           {active === "infra" && <InfrastructureView />}
           {active === "admin" && <AdminAuditView pushToast={pushToast} />}
@@ -322,6 +289,13 @@ function AppShell() {
         <LiveTicker feed={feed} />
       </div>
       <ToastStack toasts={toasts} />
+      <CriticalToastStack
+        events={criticalEvents}
+        onInvestigate={(event) => {
+          setFocusIncidentEvent(event);
+          setActive("incidents");
+        }}
+      />
     </div>
   );
 }

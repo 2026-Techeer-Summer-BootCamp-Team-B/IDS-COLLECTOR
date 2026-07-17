@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import WorldMap from "../components/WorldMap";
-import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
+import { CHART_COLORS, DONUT_PALETTE, forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
 import { useSourceHealth } from "../hooks/useSourceHealth";
@@ -178,11 +178,11 @@ function PipelineHealthPanel() {
 // "이상하다"는 피드백 - 결국 이미 잘 어울린다고 인정받은 도넛 차트 색
 // (Overview/Incidents가 쓰는 DONUT_PALETTE)에서 그대로 3단계를 뽑아 쓰기로.
 // 새 색을 발명하지 않고 이미 검증된 톤을 재사용하는 쪽으로 방향을 바꿨다.
-function intensityColor(count, max, C) {
+function intensityColor(count, max, C, theme) {
   const ratio = max ? count / max : 0;
-  if (ratio > 0.66) return DONUT_PALETTE[0]; // 테라코타 - 가장 집중된 곳
-  if (ratio > 0.33) return DONUT_PALETTE[1]; // 앰버
-  if (ratio > 0) return DONUT_PALETTE[3]; // 스틸 블루
+  if (ratio > 0.66) return forTheme(DONUT_PALETTE[0], theme); // 테라코타 - 가장 집중된 곳
+  if (ratio > 0.33) return forTheme(DONUT_PALETTE[1], theme); // 앰버
+  if (ratio > 0) return forTheme(DONUT_PALETTE[3], theme); // 스틸 블루
   return C.surfaceAlt;
 }
 
@@ -195,7 +195,7 @@ function intensityTextColor(count, max, C) {
 // 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
 // 건수 비교는 어려워서(원 크기만으로는) 순위형 막대 목록을 옆에 같이 둔다.
 // "Top 공격 대상" 패널과 같은 손그림 막대 스타일 + intensityColor로 톤을 맞춤.
-function CountryAttackBarChart({ countries, status, error, C }) {
+function CountryAttackBarChart({ countries, status, error, C, theme }) {
   const max = countries[0]?.count || 1;
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
@@ -218,7 +218,7 @@ function CountryAttackBarChart({ countries, status, error, C }) {
               <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
                 <div
                   className="h-full rounded-full"
-                  style={{ width: `${(c.count / max) * 100}%`, backgroundColor: intensityColor(c.count, max, C) }}
+                  style={{ width: `${(c.count / max) * 100}%`, backgroundColor: intensityColor(c.count, max, C, theme) }}
                 />
               </div>
             </div>
@@ -275,7 +275,7 @@ export default function InfrastructureView() {
                       className="h-full rounded-full"
                       style={{
                         width: `${(t.count / maxTarget) * 100}%`,
-                        backgroundColor: intensityColor(t.count, maxTarget, C),
+                        backgroundColor: intensityColor(t.count, maxTarget, C, theme),
                       }}
                     />
                   </div>
@@ -301,7 +301,7 @@ export default function InfrastructureView() {
                       key={p.pod}
                       className="text-[10px] px-2 py-1 rounded-md whitespace-nowrap"
                       style={{
-                        backgroundColor: `${intensityColor(p.count, maxTarget, C)}cc`,
+                        backgroundColor: `${intensityColor(p.count, maxTarget, C, theme)}cc`,
                         color: intensityTextColor(p.count, maxTarget, C),
                       }}
                       title={`${p.count}건`}
@@ -328,7 +328,7 @@ export default function InfrastructureView() {
           </div>
         </div>
 
-        <CountryAttackBarChart countries={countries} status={geoStatus} error={geoError} C={C} />
+        <CountryAttackBarChart countries={countries} status={geoStatus} error={geoError} C={C} theme={theme} />
       </div>
 
       <ModuleVolumeStackedChart />

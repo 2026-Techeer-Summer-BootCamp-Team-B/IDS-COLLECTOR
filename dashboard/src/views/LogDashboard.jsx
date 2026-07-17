@@ -27,7 +27,7 @@ import { getModuleMeta } from "../data/moduleMeta";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
 import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
 import { usePollInterval } from "../context/PollIntervalContext";
-import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
+import { CHART_COLORS, forTheme, DONUT_PALETTE, chartTooltipProps } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
@@ -249,8 +249,8 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
   // 차분한 스틸블루, Major~Critical(중요 로그)만 도넛의 빨강(테라코타) 톤으로
   // 구분되게 유지 - 이 두 색은 WAS/Falco/K8sAudit 상세 뷰도 이 컴포넌트를
   // 그대로 재사용하므로 전체 "계층별 로그" 차트에 다 같이 적용된다.
-  const totalColor = DONUT_PALETTE[3];
-  const errorColor = DONUT_PALETTE[0];
+  const totalColor = forTheme(DONUT_PALETTE[3], theme);
+  const errorColor = forTheme(DONUT_PALETTE[0], theme);
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const { pollMs } = usePollInterval();
   const [internalType, setInternalType] = useState(() => defaultChartTypeFor("log-volume"));
@@ -305,10 +305,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip
-                  contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }}
-                  cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-                />
+                <Tooltip {...chartTooltipProps(C)} cursor={false} />
                 <Bar dataKey="total" fill={totalColor} radius={[3, 3, 0, 0]} />
                 <Bar dataKey="errorish" fill={errorColor} radius={[3, 3, 0, 0]} />
               </BarChart>
@@ -327,7 +324,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
+                <Tooltip {...chartTooltipProps(C)} />
                 <Area type="monotone" dataKey="total" stroke={totalColor} fill="url(#volumeFill)" strokeWidth={2} />
                 <Area type="monotone" dataKey="errorish" stroke={errorColor} fill="url(#errorFill)" strokeWidth={2} />
                 {spikePoint && (
@@ -434,7 +431,7 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
               <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
               <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
               <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip {...chartTooltipProps(C)} />
               <Area
                 type="monotone"
                 dataKey="was"
@@ -491,7 +488,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
 
   const data = REAL_SEVERITY_LEVELS.map((l, i) => {
     const found = levels.find((x) => x.severity === l.severity);
-    return { key: l.key, label: l.label, count: found ? found.count : 0, color: DONUT_PALETTE[i % DONUT_PALETTE.length] };
+    return { key: l.key, label: l.label, count: found ? found.count : 0, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) };
   });
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
@@ -509,7 +506,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status !== "error" && chartType === "donut" && (
         <div className="flex items-center gap-4 h-[88%]">
-          <ResponsiveContainer width={110} height={110}>
+          <ResponsiveContainer width={132} height={132}>
             <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
@@ -528,7 +525,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip {...chartTooltipProps(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -581,10 +578,7 @@ export function LevelDistributionChart({ events }) {
             textAnchor="end"
           />
           <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-          <Tooltip
-            contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }}
-            cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-          />
+          <Tooltip {...chartTooltipProps(C)} cursor={false} />
           <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
             {data.map((d) => (
               <Cell key={d.key} fill={d.color} />
@@ -687,10 +681,6 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   );
 }
 
-function tooltipStyle(C) {
-  return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
-}
-
 // 카테고리형 데이터({key,label,count,color}[])의 막대그래프 버전 - 탐지소스/
 // 심각도/K8s네임스페이스 도넛 3개 + Log Levels 위젯이 사용자 모드에서 "막대"로
 // 전환됐을 때 공통으로 쓴다(도넛+범례 쪽은 각 위젯이 기존 JSX를 그대로 씀 -
@@ -703,7 +693,7 @@ function CategoryBarChart({ data, C, height = 160 }) {
         <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
         <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
         <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} />
-        <Tooltip contentStyle={tooltipStyle(C)} cursor={{ fill: C.surfaceAlt, opacity: 0.5 }} />
+        <Tooltip {...chartTooltipProps(C)} cursor={false} />
         <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
           {data.map((d) => (
             <Cell key={d.key} fill={d.color} />
@@ -732,7 +722,11 @@ function useAutoCycleIndex(length, intervalMs = 2200) {
 }
 
 // 활성 조각을 살짝 키우고 바깥에 얇은 발광 링을 둘러서 "스포트라이트가 훑고
-// 지나간다"는 느낌을 준다.
+// 지나간다"는 느낌을 준다. outerRadius+10까지 부풀리므로, 이걸 쓰는 Pie를 담은
+// ResponsiveContainer는 반드시 (outerRadius+10)*2보다 여유 있게 잡아야 한다 -
+// 안 그러면 SVG 뷰포트 경계에서 강조된 조각 끝이 잘린다(2026-07-16 실측 버그,
+// outerRadius=52인 도넛 4개가 110×110 컨테이너에 담겨있어서 62 > 55(절반)로
+// 잘렸었음 - 132×132로 키워서 고침).
 function renderGlowActiveShape(props) {
   const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
   return (
@@ -809,7 +803,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
         .filter((d) => d.count > 0)
         .map((d, i) => {
           const meta = getModuleMeta(d.module);
-          return { key: d.module, count: d.count, label: meta.label, color: DONUT_PALETTE[i % DONUT_PALETTE.length] };
+          return { key: d.module, count: d.count, label: meta.label, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) };
         }),
     [byModule, theme]
   );
@@ -832,7 +826,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
       {data.length > 0 && chartType === "donut" && (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={110} height={110}>
+          <ResponsiveContainer width={132} height={132}>
             <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
@@ -851,7 +845,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip {...chartTooltipProps(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -896,8 +890,8 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
         label: l.label,
       }))
         .filter((d) => d.count > 0)
-        .map((d, i) => ({ ...d, color: DONUT_PALETTE[i % DONUT_PALETTE.length] })),
-    [levels]
+        .map((d, i) => ({ ...d, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) })),
+    [levels, theme]
   );
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
@@ -917,7 +911,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
       {data.length > 0 && chartType === "donut" && (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={110} height={110}>
+          <ResponsiveContainer width={132} height={132}>
             <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
@@ -936,7 +930,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip {...chartTooltipProps(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -979,8 +973,8 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
     });
     return Object.entries(byNamespace)
       .sort((a, b) => b[1] - a[1])
-      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
-  }, [targets]);
+      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) }));
+  }, [targets, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
@@ -1004,7 +998,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
       {data.length > 0 && chartType === "donut" && (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={110} height={110}>
+          <ResponsiveContainer width={132} height={132}>
             <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
@@ -1023,7 +1017,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip {...chartTooltipProps(C)} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">

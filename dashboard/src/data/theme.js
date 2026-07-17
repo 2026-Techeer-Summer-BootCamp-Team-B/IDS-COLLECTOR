@@ -38,11 +38,16 @@ export const CHART_COLORS = {
     muted: "#5B6180",
     faint: "#8388A6",
     fg: "#0B0C14",
-    critical: "#FF1F4B",
-    high: "#FF7A18",
-    medium: "#F5E400",
-    low: "#8890B5",
-    live: "#39FF6A",
+    // 2026-07-16: 이 4개(critical/high/medium/live)가 dark와 완전히 같은 네온
+    // 값으로 박혀있었다 - was/info는 이미 라이트용으로 톤다운돼있는데 이 넷만
+    // 빠져서, 흰 배경 위 도넛/게이지 차트(Cell fill={C.critical} 등)가 채도
+    // 높은 다크용 색 그대로 튀어 보이던 원인. index.css의 --dash-critical 등
+    // (뱃지가 쓰는 CSS 변수, 이미 올바르게 톤다운돼있었음)과 같은 값으로 맞춤.
+    critical: "#D40036",
+    high: "#CC5200",
+    medium: "#8A7600",
+    low: "#747A9A",
+    live: "#0E9F53",
     was: "#1D4ED8",
     info: "#0891B2",
   },
@@ -61,6 +66,18 @@ export const DONUT_PALETTE = ["#C05B4D", "#D68C3E", "#5B9A5E", "#4A7FB5", "#8890
 // on a white card, so light theme gets a light touch-up — just enough to
 // cut the neon glare, nowhere near the old 40% darken that made colors
 // diverge from dark mode. Dark mode is always returned untouched.
+// 차트 툴팁(Pie/Bar/Area 공통) 스타일 - 예전엔 파일마다 contentStyle만 따로
+// 정의했는데(LogDashboard.jsx/IncidentsView.jsx/SearchDiscoverView.jsx 각각),
+// Recharts는 contentStyle이 툴팁 박스(배경/테두리)만 스타일링하고 안의 라벨/항목
+// 텍스트는 itemStyle/labelStyle을 따로 안 주면 시리즈 자체 색이나 브라우저
+// 기본값으로 떨어진다 - 배경과 우연히 같은 계열이 되면(예: 다크 배경 + 검정
+// 텍스트) 글자가 안 보이는 문제가 있었다(2026-07-16). 셋 다 명시해서 항상
+// C.fg로 대비를 보장하고, 한 군데로 모아서 세 파일이 어긋나지 않게 한다.
+export function chartTooltipProps(C) {
+  const style = { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
+  return { contentStyle: style, itemStyle: { color: C.fg }, labelStyle: { color: C.fg } };
+}
+
 export function forTheme(hex, theme, amount = 0.15) {
   if (theme !== "light" || !hex) return hex;
   const n = parseInt(hex.replace("#", ""), 16);
