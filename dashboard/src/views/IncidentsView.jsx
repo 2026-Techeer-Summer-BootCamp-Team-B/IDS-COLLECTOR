@@ -14,6 +14,7 @@ import { getModuleMeta } from "../data/moduleMeta";
 import { getRealSeverityMeta } from "../data/realSeverity";
 import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
+import { groupSimilarIncidents } from "../lib/incidentGrouping";
 
 // incidents.severity(1~4, event.severity와 같은 실 스케일)를 badges.jsx의
 // SEVERITY_META 키(CRITICAL/HIGH/MEDIUM/LOW)로 별칭 처리.
@@ -334,6 +335,60 @@ function IncidentCard({ incident, active, onClick }) {
   );
 }
 
+// 2026-07-17: "유사 항목 묶어보기"가 켜졌을 때 카드 하나 대신 그룹(같은 상관
+// 규칙 + 같은 상관 키, IP는 대역 오차범위 내면 같은 그룹) 단위로 렌더링.
+// count===1이면 평범한 IncidentCard와 동일하게 동작(클릭 시 바로 선택),
+// count>1이면 클릭 시 펼쳐서 묶인 인시던트들을 인덴트된 IncidentCard 목록으로
+// 보여준다 - 그룹 헤더를 누르면 대표(가장 최신) 인시던트가 동시에 선택돼
+// 오른쪽 상세 패널도 바로 갱신된다.
+function GroupedIncidentCard({ group, expanded, onToggleExpand, selectedId, onSelectIncident }) {
+  const { theme } = useTheme();
+  const rep = group.representative;
+  const meta = getRealSeverityMeta(rep.severity);
+
+  function handleHeaderClick() {
+    onSelectIncident(rep.id);
+    if (group.count > 1) onToggleExpand();
+  }
+
+  return (
+    <div>
+      <button
+        onClick={handleHeaderClick}
+        className={`w-full text-left rounded-lg px-2.5 py-2 border-l-4 transition-colors ${
+          selectedId === rep.id ? "bg-dash-surfaceAlt" : "bg-dash-surface hover:bg-dash-surfaceAlt/60"
+        }`}
+        style={{ borderLeftColor: forTheme(meta.color, theme) }}
+      >
+        <div className="flex items-center gap-1.5 mb-1 justify-between">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <SeverityBadge level={severityBadgeKey(rep.severity)} />
+            <span className="text-dash-faint text-[10px]">{STATUS_LABEL[rep.status]}</span>
+          </div>
+          {group.count > 1 && (
+            <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-dash-mint/15 text-dash-mint">
+              ×{group.count}
+              <span className="ml-0.5">{expanded ? "▲" : "▼"}</span>
+            </span>
+          )}
+        </div>
+        <p className="text-dash-fg text-xs font-medium truncate">{rep.title}</p>
+        <p className="text-dash-faint text-[10px] mt-0.5 truncate">
+          {rep.correlation_key_type}={rep.correlation_key_value}
+          {group.count > 1 ? ` 외 유사 IP/키 ${group.count - 1}건` : ""}
+        </p>
+      </button>
+      {expanded && group.count > 1 && (
+        <div className="pl-2 mt-1 mb-1 space-y-1 border-l-2 border-dash-surfaceAlt ml-2">
+          {group.members.map((inc) => (
+            <IncidentCard key={inc.id} incident={inc} active={inc.id === selectedId} onClick={() => onSelectIncident(inc.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StorylineEntry({ entry, isLast }) {
   const lines = String(entry.detail || "").split("\n");
   return (
@@ -377,6 +432,22 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
 
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedId, setSelectedId] = useState(null);
+  // 2026-07-17: "유사 항목 묶어보기" - 같은 상관 규칙 + 같은 상관 키(또는 비슷한
+  // 대역의 IP)인 인시던트를 리스트에서 그룹 하나로 접어 보여준다. ipTolerance는
+  // ipPrefixKey의 prefixBits와 같은 값(32=정확히 일치, 24=같은 /24 대역(기본,
+  // 오차범위 최소), 16=더 넓은 대역).
+  const [groupSimilar, setGroupSimilar] = useState(false);
+  const [ipTolerance, setIpTolerance] = useState(24);
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set());
+
+  function toggleGroupExpanded(key) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   useIncidentsSocket(reload);
 
@@ -394,6 +465,11 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   const filteredIncidents = useMemo(
     () => (statusFilter === "ALL" ? incidents : incidents.filter((i) => i.status === statusFilter)),
     [incidents, statusFilter]
+  );
+
+  const incidentGroups = useMemo(
+    () => (groupSimilar ? groupSimilarIncidents(filteredIncidents, ipTolerance) : null),
+    [groupSimilar, filteredIncidents, ipTolerance]
   );
 
   const selected = incidents.find((i) => i.id === selectedId) || null;
@@ -497,14 +573,56 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
             하염없이 길어지던 문제 - 높이를 고정하고 리스트 안에서만 스크롤되게
             바꿨다(InfrastructureView의 "클러스터 구조" 패널과 같은 패턴).
             pr-2로 스크롤바가 카드 텍스트를 가리지 않게 여백을 둔다. */}
-        <div className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
-          {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
-          {status === "ready" && filteredIncidents.length === 0 && (
-            <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>
-          )}
-          {filteredIncidents.map((inc) => (
-            <IncidentCard key={inc.id} incident={inc} active={inc.id === selectedId} onClick={() => setSelectedId(inc.id)} />
-          ))}
+        <div>
+          {/* 2026-07-17: 같은 규칙으로 반복 발화하거나 비슷한 대역의 IP에서 온
+              인시던트가 리스트를 도배하는 문제 - 토글로 켜면 하나로 묶어서
+              "×N" 배지로 보여주고 눌러서 펼칠 수 있다. */}
+          <div className="flex flex-col gap-1.5 mb-2">
+            <button
+              onClick={() => setGroupSimilar((v) => !v)}
+              className={`text-[11px] font-medium px-2 py-1.5 rounded-lg border transition-colors text-left ${
+                groupSimilar
+                  ? "bg-dash-mint/15 text-dash-mint border-dash-mint/40"
+                  : "bg-dash-bg text-dash-muted border-transparent hover:text-dash-fg hover:bg-dash-surfaceAlt"
+              }`}
+            >
+              유사 항목 묶어보기 {groupSimilar ? "ON" : "OFF"}
+            </button>
+            {groupSimilar && (
+              <select
+                value={ipTolerance}
+                onChange={(e) => setIpTolerance(Number(e.target.value))}
+                className="text-[11px] bg-dash-bg text-dash-muted border border-dash-surfaceAlt rounded-lg px-2 py-1.5 cursor-pointer"
+                title="같은 그룹으로 묶을 IP 오차범위 - 좁을수록(정확히 일치) 더 세밀하게 나뉘고, 넓을수록(같은 /16) 더 많이 묶인다"
+              >
+                <option value={32}>IP 정확히 일치</option>
+                <option value={24}>같은 /24 대역 (오차 최소, 기본값)</option>
+                <option value={16}>같은 /16 대역 (넓게 묶기)</option>
+              </select>
+            )}
+          </div>
+
+          <div className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
+            {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
+            {status === "ready" && filteredIncidents.length === 0 && (
+              <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>
+            )}
+            {!groupSimilar &&
+              filteredIncidents.map((inc) => (
+                <IncidentCard key={inc.id} incident={inc} active={inc.id === selectedId} onClick={() => setSelectedId(inc.id)} />
+              ))}
+            {groupSimilar &&
+              incidentGroups.map((group) => (
+                <GroupedIncidentCard
+                  key={group.key}
+                  group={group}
+                  expanded={expandedGroups.has(group.key)}
+                  onToggleExpand={() => toggleGroupExpanded(group.key)}
+                  selectedId={selectedId}
+                  onSelectIncident={setSelectedId}
+                />
+              ))}
+          </div>
         </div>
 
         {selected ? (

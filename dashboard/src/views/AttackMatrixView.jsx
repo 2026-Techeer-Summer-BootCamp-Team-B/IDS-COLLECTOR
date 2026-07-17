@@ -145,7 +145,10 @@ export default function AttackMatrixView({ onNavigateToIncident } = {}) {
             </div>
             <span className="text-dash-muted text-xs">{incidents.length} matched incidents</span>
           </div>
-          <div className="space-y-1">
+          {/* 2026-07-17: 같은 기법으로 매칭된 인시던트가 계속 쌓이면 이 목록이
+              끝없이 늘어나서 페이지 전체가 하염없이 길어지던 문제 - IncidentsView의
+              좌측 리스트와 같은 패턴(높이 고정 + 내부 스크롤)으로 통일. */}
+          <div className="space-y-1 max-h-[520px] overflow-y-auto pr-2">
             {incidentsStatus === "loading" && <p className="text-dash-muted text-xs">인시던트를 불러오는 중...</p>}
             {incidentsStatus === "error" && <p className="text-dash-critical text-xs">{incidentsError}</p>}
             {incidentsStatus === "ready" && incidents.length === 0 && (
@@ -232,7 +235,10 @@ export default function AttackMatrixView({ onNavigateToIncident } = {}) {
                         {timelineStatus === "ready" && timeline.length === 0 && (
                           <p className="text-dash-muted text-xs">연결된 원본 로그가 없습니다.</p>
                         )}
-                        <div className="space-y-1.5">
+                        {/* 인시던트 하나에 원본 로그가 많이 묶이면(브루트포스류
+                            threshold 시나리오 등) 이 안쪽 목록도 끝없이 늘어질 수
+                            있어 마찬가지로 높이를 고정하고 내부 스크롤로 막는다. */}
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                           {timelineStatus === "ready" &&
                             timeline.map((t) => (
                               <div key={t.event_id} className="bg-dash-surface rounded-lg p-2.5">
