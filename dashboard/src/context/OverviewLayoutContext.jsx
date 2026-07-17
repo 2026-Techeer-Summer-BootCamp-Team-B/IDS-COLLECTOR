@@ -17,16 +17,22 @@ const STORAGE_ACTIVE_KEY = "sentinelops_overview_active_v2";
 // 위젯 설정 빌더의 팔레트(왼쪽 목록)에 뜨는 전체 위젯 카탈로그. type은
 // LogDashboard.jsx의 renderWidgetContent()가 실제 컴포넌트로 매핑할 때 쓰는 키.
 // w/h는 그 위젯을 처음 캔버스에 놓을 때 기본 크기(12칸 그리드 기준).
+// icon: 위젯 설정 팔레트에서 라벨 글씨만으로는 뭔지 안 보인다는 2026-07-18
+// 피드백으로 추가 - LogDashboard.jsx의 WidgetPreviewIcon이 이 값으로 작은
+// 미리보기 아이콘을 그린다(실제 차트를 그대로 축소하는 대신, 종류를 대표하는
+// 간단한 도형 - 실제 위젯 렌더링은 데이터 fetch가 필요해서 팔레트 단계에선
+// 무겁고, chartTypeOptions가 있는 위젯은 그 중 첫 옵션 모양을 대표로 쓴다).
 export const WIDGET_CATALOG = [
-  { type: "kpi-total", label: "Total Logs", w: 3, h: 6 },
-  { type: "kpi-errors", label: "Errors", w: 3, h: 6 },
-  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6 },
-  { type: "kpi-sources", label: "탐지 시나리오", w: 3, h: 6 },
+  { type: "kpi-total", label: "Total Logs", w: 3, h: 6, icon: "number" },
+  { type: "kpi-errors", label: "Errors", w: 3, h: 6, icon: "number" },
+  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6, icon: "number" },
+  { type: "kpi-sources", label: "탐지 시나리오", w: 3, h: 6, icon: "number" },
   {
     type: "log-volume",
     label: "Log Volume",
     w: 8,
     h: 9,
+    icon: "area",
     chartTypeOptions: [
       { value: "area", label: "영역" },
       { value: "bar", label: "막대" },
@@ -37,6 +43,7 @@ export const WIDGET_CATALOG = [
     label: "Log Levels",
     w: 4,
     h: 9,
+    icon: "bar",
     chartTypeOptions: [
       { value: "bar", label: "막대" },
       { value: "donut", label: "도넛" },
@@ -47,6 +54,7 @@ export const WIDGET_CATALOG = [
     label: "탐지 소스별 분포",
     w: 4,
     h: 9,
+    icon: "donut",
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
       { value: "bar", label: "막대" },
@@ -57,6 +65,7 @@ export const WIDGET_CATALOG = [
     label: "심각도 분포",
     w: 4,
     h: 9,
+    icon: "donut",
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
       { value: "bar", label: "막대" },
@@ -67,13 +76,16 @@ export const WIDGET_CATALOG = [
   // LayerAttackStatsCompact 참고). 이 type을 바꾸면 이미 저장된 커스텀
   // 대시보드(localStorage)에 이 타입으로 박혀있는 위젯이 CATALOG_BY_TYPE에서
   // 안 찾아져서 통째로 사라진다 - 그래서 라벨/차트타입만 바꾸고 키는 안 건드림.
-  { type: "donut-k8s-namespace", label: "계층별 공격 통계", w: 4, h: 9 },
-  { type: "latency-stats", label: "API Latency", w: 12, h: 5 },
-  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 9 },
-  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14 },
-  { type: "top-sources", label: "Top Sources", w: 4, h: 7 },
-  { type: "error-rate", label: "Error Rate", w: 4, h: 7 },
-  { type: "geo-summary", label: "지역별 분포", w: 12, h: 11 },
+  { type: "donut-k8s-namespace", label: "계층별 공격 통계", w: 4, h: 9, icon: "hbar" },
+  { type: "latency-stats", label: "API Latency", w: 12, h: 5, icon: "gauge" },
+  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 9, icon: "area" },
+  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14, icon: "list" },
+  { type: "top-sources", label: "Top Sources", w: 4, h: 7, icon: "list" },
+  { type: "error-rate", label: "Error Rate", w: 4, h: 7, icon: "gauge" },
+  { type: "geo-summary", label: "지역별 분포", w: 12, h: 11, icon: "map" },
+  // 2026-07-16(8차)에 기본 화면에서 뺐던 위젯 - 2026-07-18, "위젯 목록에 다시
+  // 추가해달라"는 요청으로 선택적 위젯(카탈로그에만)으로 복원.
+  { type: "activity-flow", label: "실시간 탐지", w: 12, h: 12, icon: "pulse" },
 ];
 
 const CATALOG_BY_TYPE = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w]));

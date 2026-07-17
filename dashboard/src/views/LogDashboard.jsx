@@ -1066,6 +1066,201 @@ function useCountUp(rawValue, duration = 500) {
   return display;
 }
 
+// 2026-07-16(8차)에 "별로였다"는 피드백으로 기본 Overview 화면에서 제거했던
+// "실시간 활동 흐름" 위젯 - 2026-07-18, "어제 추가했다가 삭제한 실시간 탐지하는
+// 것도 위젯 목록에 추가해달라"는 요청으로 복원. 단, 기본 화면에는 다시 넣지
+// 않고 위젯 설정(커스텀 대시보드) 팔레트에서 원하는 사람만 추가하는 선택적
+// 위젯으로만 등록한다(catalog type: "activity-flow", WIDGET_CATALOG 참고) -
+// 기본 모드 자체는 그대로 안 건드리는 게 이 구조의 원칙(DashboardBuilder 위
+// 주석 참고).
+const ACTIVITY_MODULE_ORDER = ["waf", "was", "k8s_audit", "falco"];
+
+// WAS/WAF/Falco/K8s Audit 건물 비유(출입문 보안검색대 -> 내부 CCTV -> 관리실
+// 통제기록 -> 방 안 정밀수색)를 땅속 4개 지층으로 그린다. 계층 순서/깊이는
+// ACTIVITY_MODULE_ORDER와 동일하게 맞춘다.
+const LAYER_INFO = {
+  waf: { depth: "1단계", caption: "출입문 · 보안 검색대", desc: "요청이 앱에 닿기 전에 먼저 걸러내는 곳" },
+  was: { depth: "2단계", caption: "건물 내부 · CCTV", desc: "앱까지 들어온 요청이 실제로 찍히는 곳" },
+  k8s_audit: { depth: "3단계", caption: "관리실 · 통제 기록", desc: "클러스터 설정을 누가 바꿨는지 남는 곳" },
+  falco: { depth: "4단계", caption: "방 안 · 정밀 수색", desc: "컨테이너 안에서 실제로 실행된 동작을 보는 곳" },
+};
+
+// 최근 1분 이내(WINDOW_MS) 이벤트만 점으로 남기고, 그 창을 벗어나면 점도 같이
+// 사라진다 - 조용하면 계층이 비어있고, 로그가 들어오면 그때부터 점이 하나씩 늘어난다.
+const ACTIVITY_WINDOW_MS = 60_000;
+
+const ACTIVITY_GROUND_Y = 30;
+const ACTIVITY_LAYER_H = 64;
+const ACTIVITY_LAYER_GAP = 8;
+const ACTIVITY_DIAGRAM_HEIGHT =
+  ACTIVITY_GROUND_Y + ACTIVITY_MODULE_ORDER.length * (ACTIVITY_LAYER_H + ACTIVITY_LAYER_GAP) - ACTIVITY_LAYER_GAP + 10;
+
+// "이 로그가 어느 계층 로그인지"만 확실한 사실 기준으로 묶는다 - event.module
+// 4종 고정 분류라 왜곡 없이 보여줄 수 있다. useLiveAttackFeed(LiveTicker와 같은
+// 폴링, /events/recent 기반)를 재사용.
+export function LiveActivityTree() {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const { feed } = useLiveAttackFeed({ feedLimit: 80 });
+  // 새 이벤트가 안 들어와도 시간은 계속 흐르므로(1분이 지나면 점이 빠져야 함),
+  // 2초마다 강제로 리렌더해서 "지금으로부터 1분 이내" 기준을 다시 계산한다.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  // "로그 하나당 점 하나가 깜빡이며 나타난다"는 걸 표현하기 위해, 이전
+  // 렌더에서 이미 본 이벤트 키를 기억해뒀다가 이번 렌더에 처음 보이는
+  // 이벤트만 _isNew로 표시한다.
+  const seenKeysRef = useRef(new Set());
+
+  const layers = useMemo(() => {
+    const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+    const seen = seenKeysRef.current;
+    return ACTIVITY_MODULE_ORDER.map((module) => {
+      const events = feed
+        .filter((e) => e.module === module && e.timestamp.getTime() >= cutoff)
+        .sort((a, b) => b.timestamp - a.timestamp);
+      const maxSeverity = events.reduce((m, e) => Math.max(m, e.severity || 0), 0);
+      const recent = events.slice(0, 10).map((e) => {
+        const key = `${module}-${e.timestamp.getTime()}-${e.sourceIp || e.pod || e.namespace || ""}`;
+        return { ...e, _key: key, _isNew: !seen.has(key) };
+      });
+      return {
+        module,
+        meta: getModuleMeta(module),
+        count: events.length,
+        maxSeverity,
+        recent,
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feed, tick]);
+
+  // 렌더 커밋 후 이번에 보인 키들을 "이미 본 것"으로 표시 - 다음 렌더부터는
+  // 같은 이벤트가 다시 새것으로 판정되어 반짝이지 않는다.
+  useEffect(() => {
+    const seen = seenKeysRef.current;
+    layers.forEach((layer) => layer.recent.forEach((e) => seen.add(e._key)));
+    if (seen.size > 500) {
+      const keep = new Set(layers.flatMap((layer) => layer.recent.map((e) => e._key)));
+      seenKeysRef.current = keep;
+    }
+  }, [layers]);
+
+  return (
+    <Card
+      title="실시간 탐지"
+      subtitle="WAF → WAS → K8s Audit → Falco, 건물 비유의 4단계 지하 구조 — 최근 1분 이내 로그만 점으로 표시"
+    >
+      <div className="overflow-x-auto">
+        <ActivityLayerDiagram layers={layers} C={C} />
+      </div>
+    </Card>
+  );
+}
+
+// 각 계층은 가로로 긴 띠 하나 - 왼쪽엔 "몇 단계 / 무슨 로그 / 건물 비유 캡션",
+// 오른쪽엔 그 계층에서 실제로 찍힌 최근 이벤트를 점으로 나열한다(가장 왼쪽이
+// 최신). 위험 이벤트(severity>=REAL_ERROR_MIN_SEVERITY)만 activity-ripple-ring으로
+// 펄스를 준다.
+function ActivityLayerDiagram({ layers, C }) {
+  const width = 560;
+  const groundY = ACTIVITY_GROUND_Y;
+  const LAYER_H = ACTIVITY_LAYER_H;
+  const LAYER_GAP = ACTIVITY_LAYER_GAP;
+  const LABEL_W = 128;
+  const DOT_R = 6;
+  const DOT_GAP = 20;
+  const DOTS_X0 = LABEL_W + 22;
+  const MAX_DOTS = Math.min(10, Math.floor((width - DOTS_X0 - 14) / DOT_GAP));
+  const height = ACTIVITY_DIAGRAM_HEIGHT;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="실시간 활동 흐름 - 계층별 지하 구조">
+      <line x1={0} y1={groundY} x2={width} y2={groundY} stroke={C.faint} strokeWidth={1} strokeDasharray="3 4" />
+      <text x={0} y={groundY - 9} fontSize={9} fill={C.faint}>
+        지표면
+      </text>
+      <circle cx={width - 40} cy={groundY - 12} r={4} fill={C.live} className="animate-pulse" />
+      <text x={width - 30} y={groundY - 9} fontSize={9} fill={C.muted}>
+        LIVE
+      </text>
+
+      {layers.map((layer, i) => {
+        const y0 = groundY + i * (LAYER_H + LAYER_GAP);
+        const info = LAYER_INFO[layer.module];
+        const dotsY = y0 + LAYER_H / 2 + 4;
+        const recent = layer.recent.slice(0, MAX_DOTS);
+        const depthOpacity = 0.06 + i * 0.035;
+
+        return (
+          <g key={layer.module}>
+            <rect x={0} y={y0} width={width} height={LAYER_H} fill={layer.meta.color} opacity={depthOpacity} />
+            <rect x={0} y={y0} width={width} height={LAYER_H} fill="none" stroke={C.surfaceAlt} strokeWidth={1} />
+
+            <text x={10} y={y0 + 17} fontSize={8.5} fontWeight={700} fill={C.faint} letterSpacing={0.5}>
+              {info.depth}
+            </text>
+            <text x={10} y={y0 + 31} fontSize={11} fontWeight={700} fill={layer.meta.color}>
+              {layer.meta.label}
+            </text>
+            <text x={10} y={y0 + 44} fontSize={8} fill={C.muted}>
+              {info.caption}
+            </text>
+            <text x={10} y={y0 + LAYER_H - 7} fontSize={8} fill={C.faint}>
+              {layer.count}건
+            </text>
+
+            <line x1={LABEL_W} y1={y0 + 6} x2={LABEL_W} y2={y0 + LAYER_H - 6} stroke={C.surfaceAlt} strokeWidth={1} />
+
+            {recent.length === 0 ? (
+              <text x={DOTS_X0} y={dotsY - 4} fontSize={9} fill={C.faint}>
+                최근 1분간 활동 없음
+              </text>
+            ) : (
+              recent.map((e, j) => {
+                const ex = DOTS_X0 + j * DOT_GAP;
+                const eSevMeta = getRealSeverityMeta(e.severity);
+                const eDanger = (e.severity || 0) >= REAL_ERROR_MIN_SEVERITY;
+                const isNewest = j === 0;
+                return (
+                  <g key={e._key || `${layer.module}-${e.timestamp}-${j}`}>
+                    {eDanger && (
+                      <circle
+                        cx={ex}
+                        cy={dotsY - 4}
+                        r={DOT_R + 2}
+                        fill="none"
+                        stroke={eSevMeta.color}
+                        strokeWidth={1.5}
+                        className="activity-ripple-ring"
+                      />
+                    )}
+                    <circle
+                      cx={ex}
+                      cy={dotsY - 4}
+                      r={isNewest ? DOT_R + 1 : DOT_R}
+                      fill={eDanger ? eSevMeta.color : layer.meta.color}
+                      opacity={isNewest ? 1 : Math.max(0.25, 0.85 - j * 0.07)}
+                      stroke={C.bg}
+                      strokeWidth={1}
+                      className={e._isNew ? "activity-dot-blink" : undefined}
+                    >
+                      <title>{`${e.sourceIp || e.pod || e.namespace || "-"} · ${eSevMeta.label}`}</title>
+                    </circle>
+                  </g>
+                );
+              })
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 // 탐지 소스별(WAS/Falco/K8s Audit) 도넛 — 3계층 상관분석 프로젝트의 핵심 축이라
 // Overview 요약에도 반드시 있어야 하는 지표. GET /stats(by_module) 연동 - WAF는
 // 비활성화 상태라 보통 안 잡히거나 0건(정상).
@@ -1103,13 +1298,13 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
           <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
         )
       }
-      className={isControlled ? "min-h-80 h-full" : ""}
+      className={isControlled ? "h-full" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
       {data.length > 0 && chartType === "donut" && (
-        <div className="flex items-center gap-4">
+        <div className={`flex items-center gap-4 ${isControlled ? "h-[calc(100%-2rem)]" : ""}`}>
           <ResponsiveContainer width={110} height={110}>
             <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
@@ -1188,13 +1383,13 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-severity")} value={chartType} onChange={setInternalType} />
         )
       }
-      className={isControlled ? "min-h-80 h-full" : ""}
+      className={isControlled ? "h-full" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
       {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
       {data.length > 0 && chartType === "donut" && (
-        <div className="flex items-center gap-4">
+        <div className={`flex items-center gap-4 ${isControlled ? "h-[calc(100%-2rem)]" : ""}`}>
           <ResponsiveContainer width={110} height={110}>
             <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
@@ -1240,99 +1435,60 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
 }
 
 // 계층별 공격 통계 — GET /scenarios(hit_count 포함, scenarios_api.py)를 재사용해서
-// "어떤 공격이 많이 들어왔는지"를 계층(WAS/WAF/Falco/K8s Audit)별로 색상 구분해서
-// 보여준다. 2026-07-17: "K8s 네임스페이스별 분포는 필요 없다, 계층별 공격 통계로
-// 바꿔달라" 피드백으로 이 카드가 있던 자리(위젯 타입은 donut-k8s-namespace 그대로
-// 유지 - 저장된 커스텀 대시보드가 이 슬롯을 참조 중일 수 있어 타입 키를 바꾸면
-// 그 대시보드에서만 위젯이 사라진다)를 교체했다. required_modules[0](YAML에서
-// 시나리오가 요구하는 첫 모듈)을 그 시나리오의 "계층"으로 취급 - AdminAuditView의
-// "탐지 룰별 적중 랭킹"과 같은 hit_count 소스지만, 여기는 전역 랭킹이 아니라
-// 계층별 색상 구분 + 계층별 합계 요약이 핵심이라 별도로 뺐다.
+// 계층(WAS/WAF/Falco/K8s Audit) 4개의 적중 합계만 보여준다. 2026-07-17: "K8s
+// 네임스페이스별 분포는 필요 없다, 계층별 공격 통계로 바꿔달라" 피드백으로 이
+// 카드가 있던 자리(위젯 타입은 donut-k8s-namespace 그대로 유지 - 저장된 커스텀
+// 대시보드가 이 슬롯을 참조 중일 수 있어 타입 키를 바꾸면 그 대시보드에서만
+// 위젯이 사라진다)를 교체했다. 처음엔 시나리오(공격) 단위 랭킹 막대까지 같이
+// 보여줬는데, "네 가지 계층만 보여주고 세부적으로 나타내지 말아달라"는 후속
+// 피드백(2026-07-17)으로 개별 시나리오 목록은 걷어내고 계층 4개 요약만 남겼다.
+// required_modules[0](YAML에서 시나리오가 요구하는 첫 모듈)을 그 시나리오의
+// "계층"으로 취급한다.
 //
 // scenarios/status/error는 props로 받는다(자체 useScenarios() 호출 안 함) - 같은
-// /scenarios 응답을 "탐지 시나리오" KPI 카드(kpi-sources, 2026-07-17 "Active
-// Sources를 탐지 가능한 시나리오 개수로" 피드백으로 추가)도 필요로 해서, 부모
-// (DashboardContent)가 한 번만 fetch해 두 위젯에 같이 내려준다 - Overview
-// 기본 모드에선 이 위젯과 KPI 카드가 항상 동시에 보이므로, 각자 훅을 부르면
-// /scenarios가 매번 두 번 나간다.
+// /scenarios 응답을 "탐지 시나리오" KPI 카드(kpi-sources)도 필요로 해서, 부모
+// (DashboardContent)가 한 번만 fetch해 두 위젯에 같이 내려준다.
 const LAYER_ORDER = ["was", "waf", "falco", "k8s_audit"];
 
-function LayerAttackStatsCompact({ scenarios, status, error }) {
+function LayerAttackStatsCompact({ scenarios, status, error, controlled = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
 
-  const ranked = useMemo(
-    () =>
-      scenarios
-        .filter((s) => s.hit_count > 0)
-        .map((s) => {
-          const module = s.required_modules?.[0] || "unknown";
-          const meta = getModuleMeta(module);
-          return { key: s.id, name: s.name, hits: s.hit_count, module, moduleLabel: meta.label, color: meta.color, mitre: s.mitre_technique_id };
-        })
-        .sort((a, b) => b.hits - a.hits),
-    [scenarios]
-  );
-  const top = ranked.slice(0, 6);
-  const totalHits = ranked.reduce((sum, r) => sum + r.hits, 0);
-
   const layerTotals = useMemo(() => {
     const byModule = {};
-    ranked.forEach((r) => {
-      byModule[r.module] = (byModule[r.module] || 0) + r.hits;
+    scenarios.forEach((s) => {
+      const module = s.required_modules?.[0] || "unknown";
+      byModule[module] = (byModule[module] || 0) + (s.hit_count || 0);
     });
     return LAYER_ORDER.map((m) => ({ module: m, ...getModuleMeta(m), count: byModule[m] || 0 }));
-  }, [ranked]);
+  }, [scenarios]);
+  const totalHits = layerTotals.reduce((sum, l) => sum + l.count, 0);
 
   return (
     <Card
       title="계층별 공격 통계"
-      subtitle={status === "ready" ? `전체 기간 · 발화 시나리오 ${ranked.length}개 · 총 ${totalHits}건` : "불러오는 중..."}
+      subtitle={status === "ready" ? `전체 기간 · 총 ${totalHits}건` : "불러오는 중..."}
+      className={controlled ? "h-full" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            {layerTotals.map((l) => (
-              <span key={l.module} className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: l.color }} />
-                <span className="text-dash-muted">{l.label}</span>
-                <span className="text-dash-fg font-medium">{l.count}</span>
-              </span>
-            ))}
-          </div>
-          {top.length === 0 ? (
-            <p className="text-dash-muted text-xs">아직 발화된 공격이 없습니다.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={Math.max(150, top.length * 32)}>
-              <BarChart data={top} layout="vertical" margin={{ left: 4, right: 24, top: 4, bottom: 4 }}>
-                <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
-                <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  stroke={C.muted}
-                  tickLine={false}
-                  axisLine={false}
-                  fontSize={10}
-                  width={110}
-                  tickFormatter={(v) => (v.length > 13 ? `${v.slice(0, 13)}…` : v)}
-                />
-                <Tooltip
-                  contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
-                  cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-                  formatter={(value, _name, item) => [`${value}건`, item?.payload?.moduleLabel ?? "적중 건수"]}
-                  labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
-                />
-                <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
-                  {top.map((d) => (
-                    <Cell key={d.key} fill={d.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        <ResponsiveContainer width="100%" height={controlled ? "85%" : 150}>
+          <BarChart data={layerTotals} layout="vertical" margin={{ left: 4, right: 24, top: 4, bottom: 4 }}>
+            <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
+            <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
+            <YAxis type="category" dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} width={80} />
+            <Tooltip
+              contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+              cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+              formatter={(value) => [`${value}건`, "적중 건수"]}
+            />
+            <Bar dataKey="count" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+              {layerTotals.map((l) => (
+                <Cell key={l.module} fill={l.color} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       )}
     </Card>
   );
@@ -1654,6 +1810,94 @@ const KPI_SEVERITY_PARAMS = {
   SOURCES: {},
 };
 
+// 위젯 설정 팔레트용 미니 미리보기 아이콘 - 2026-07-18, "글씨 라벨만 있어서
+// 어떤 위젯인지 안 보인다"는 피드백으로 추가. 실제 데이터를 fetch하는 진짜
+// 차트를 팔레트에 그대로 그리면 목록 하나 열 때마다 API가 N번 나가서 무겁고,
+// chartTypeOptions가 있는 위젯은 어차피 사용자가 나중에 바꿀 수 있으니 "종류"만
+// 대표하는 간단한 도형으로 충분하다고 판단했다. WIDGET_CATALOG의 icon 필드
+// (kind)로 어떤 모양을 그릴지 정한다.
+function WidgetPreviewIcon({ kind }) {
+  const stroke = "rgb(var(--dash-mint))";
+  const dim = "currentColor";
+  const cls = "w-9 h-6 shrink-0 text-dash-faint";
+  switch (kind) {
+    case "number":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          <rect x="1" y="1" width="34" height="22" rx="4" fill="none" stroke={dim} strokeOpacity="0.35" />
+          <text x="18" y="16" textAnchor="middle" fontSize="10" fill={stroke} fontWeight="700">88</text>
+        </svg>
+      );
+    case "area":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          <polyline points="2,18 9,10 16,14 23,6 30,11 34,4" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "bar":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          {[6, 14, 20, 10, 17].map((h, i) => (
+            <rect key={i} x={2 + i * 7} y={22 - h} width="4" height={h} fill={stroke} opacity="0.85" />
+          ))}
+        </svg>
+      );
+    case "hbar":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          {[26, 18, 12, 8].map((w, i) => (
+            <rect key={i} x="2" y={2 + i * 5} width={w} height="3" rx="1.5" fill={stroke} opacity="0.85" />
+          ))}
+        </svg>
+      );
+    case "donut":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          <circle cx="18" cy="12" r="9" fill="none" stroke={dim} strokeOpacity="0.2" strokeWidth="4" />
+          <circle cx="18" cy="12" r="9" fill="none" stroke={stroke} strokeWidth="4" strokeDasharray="34 57" strokeLinecap="round" transform="rotate(-90 18 12)" />
+        </svg>
+      );
+    case "list":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          {[4, 10, 16].map((y, i) => (
+            <rect key={i} x="2" y={y} width={i === 0 ? 30 : i === 1 ? 24 : 28} height="3" rx="1.5" fill={stroke} opacity={0.8 - i * 0.15} />
+          ))}
+        </svg>
+      );
+    case "gauge":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          <path d="M4 20 A14 14 0 0 1 32 20" fill="none" stroke={dim} strokeOpacity="0.2" strokeWidth="4" />
+          <path d="M4 20 A14 14 0 0 1 22 7" fill="none" stroke={stroke} strokeWidth="4" strokeLinecap="round" />
+        </svg>
+      );
+    case "map":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          <rect x="1" y="1" width="34" height="22" rx="4" fill="none" stroke={dim} strokeOpacity="0.2" />
+          <circle cx="12" cy="10" r="2" fill={stroke} />
+          <circle cx="22" cy="15" r="3" fill={stroke} opacity="0.6" />
+          <circle cx="27" cy="7" r="1.5" fill={stroke} />
+        </svg>
+      );
+    case "pulse":
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          <circle cx="18" cy="12" r="3" fill={stroke} />
+          <circle cx="18" cy="12" r="7" fill="none" stroke={stroke} strokeOpacity="0.5" strokeWidth="1.5" />
+          <circle cx="18" cy="12" r="11" fill="none" stroke={stroke} strokeOpacity="0.25" strokeWidth="1.5" />
+        </svg>
+      );
+    default:
+      return (
+        <svg viewBox="0 0 36 24" className={cls}>
+          <rect x="1" y="1" width="34" height="22" rx="4" fill="none" stroke={dim} strokeOpacity="0.25" />
+        </svg>
+      );
+  }
+}
+
 // 커스텀 대시보드/빌더에서만 위젯을 감싸는 얇은 프레임 - 위쪽 좁은 바가 드래그
 // 핸들(react-grid-layout의 draggableHandle=".widget-drag-handle"과 매칭), 본문은
 // 기존 위젯을 그대로 넣고 넘치면 스크롤. 기본 모드는 이 프레임을 아예 거치지
@@ -1669,7 +1913,10 @@ const KPI_SEVERITY_PARAMS = {
 // 위젯 자체(Card/KpiCard 등이 이미 갖고 있는 배경/테두리)만 보이게 하고, 드래그
 // 핸들/차트타입 버튼/제거 버튼은 마우스를 올렸을 때만 우상단에 작은 플로팅
 // 툴바로 뜨도록 바꿨다 - 평소엔 기본 모드와 완전히 똑같이 보인다.
-function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove, children }) {
+// height/onHeightChange: 2026-07-18, "도넛 차트들 길이가 버그가 있던데 위젯
+// 높이도 설정할 수 있게 해달라"는 피드백으로 추가 - 리사이즈 핸들을 드래그하는
+// 대신(정밀하게 맞추기 까다로움) −/+ 버튼으로 grid row 단위(h)를 직접 조절한다.
+function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove, height, onHeightChange, children }) {
   const options = chartTypeOptionsFor(widgetType);
 
   return (
@@ -1699,6 +1946,29 @@ function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove
                 {opt.label}
               </button>
             ))}
+          </div>
+        )}
+        {onHeightChange && (
+          <div
+            className="flex items-center gap-0.5 shrink-0 normal-case tracking-normal cursor-default border-l border-dash-surfaceAlt pl-1.5 ml-0.5"
+            onMouseDown={(e) => e.stopPropagation()}
+            title="위젯 높이 조절"
+          >
+            <button
+              onClick={() => onHeightChange(-2)}
+              title="낮게"
+              className="w-4 h-4 flex items-center justify-center rounded text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt leading-none"
+            >
+              −
+            </button>
+            <span className="text-dash-faint tabular-nums w-4 text-center">{height}</span>
+            <button
+              onClick={() => onHeightChange(2)}
+              title="높게"
+              className="w-4 h-4 flex items-center justify-center rounded text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt leading-none"
+            >
+              +
+            </button>
           </div>
         )}
         {onRemove && (
@@ -1765,16 +2035,31 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   const removeWidget = (uid) => setWidgets((prev) => prev.filter((w) => w.uid !== uid));
   const setWidgetChartType = (uid, type) =>
     setWidgets((prev) => prev.map((w) => (w.uid === uid ? { ...w, chartType: type } : w)));
+  // 2026-07-18: "위젯들 높이도 설정할 수 있게 해달라" 피드백 - 리사이즈 핸들
+  // 드래그 대신 -/+ 버튼으로 grid row(h) 단위를 직접 조절. 최소 3(너무 작으면
+  // 헤더도 못 담아 의미 없음)으로 바닥을 둔다.
+  const setWidgetHeight = (uid, delta) =>
+    setWidgets((prev) => prev.map((w) => (w.uid === uid ? { ...w, h: Math.max(3, w.h + delta) } : w)));
 
   const gridLayout = widgets.map((w) => ({ i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h }));
   const dropEntry = draggingType ? catalogEntry(draggingType) : null;
   const canSave = widgets.length > 0 && name.trim().length > 0;
+  // 2026-07-18: "중복 제거해서 사용한 위젯은 안 나오게" 피드백 - 캔버스에 이미
+  // 올라간 타입은 팔레트에서 숨긴다(이전엔 같은 타입을 여러 번 놓을 수 있게
+  // 일부러 허용했었는데, 그게 오히려 "지금 뭘 더 추가할 수 있는지" 헷갈리게
+  // 만든다는 피드백으로 방침을 바꿨다). 이미 추가한 위젯을 빼고 싶으면
+  // WidgetFrame의 ✕로 캔버스에서 지우면 팔레트에 다시 나타난다.
+  const usedTypes = new Set(widgets.map((w) => w.type));
+  const availableCatalog = WIDGET_CATALOG.filter((w) => !usedTypes.has(w.type));
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 items-start">
       <div className="w-full lg:w-56 shrink-0 bg-dash-surface rounded-2xl border border-dash-mint/15 p-3 space-y-1.5">
         <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-1">위젯 목록 (드래그해서 캔버스에 추가)</p>
-        {WIDGET_CATALOG.map((w) => (
+        {availableCatalog.length === 0 && (
+          <p className="text-dash-faint text-[11px] px-1 py-2">모든 위젯을 이미 추가했습니다.</p>
+        )}
+        {availableCatalog.map((w) => (
           <div
             key={w.type}
             draggable
@@ -1785,9 +2070,10 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
               e.dataTransfer.effectAllowed = "copy";
             }}
             onDragEnd={() => setDraggingType(null)}
-            className="cursor-grab active:cursor-grabbing text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none"
+            className="cursor-grab active:cursor-grabbing flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none"
           >
-            {w.label}
+            <WidgetPreviewIcon kind={w.icon} />
+            <span className="truncate">{w.label}</span>
           </div>
         ))}
       </div>
@@ -1848,6 +2134,8 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
                   title={catalogEntry(w.type)?.label}
                   chartType={w.chartType}
                   onChartTypeChange={(type) => setWidgetChartType(w.uid, type)}
+                  height={w.h}
+                  onHeightChange={(delta) => setWidgetHeight(w.uid, delta)}
                   onRemove={() => removeWidget(w.uid)}
                 >
                   {renderWidgetContent(w.type, w.chartType)}
@@ -1876,6 +2164,12 @@ function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, o
     onChartTypeCommit(dashboard.widgets.map((w) => (w.uid === uid ? { ...w, chartType: type } : w)));
   };
 
+  const handleHeightChange = (uid, delta) => {
+    onLayoutCommit(
+      dashboard.widgets.map((w) => (w.uid === uid ? { ...w, h: Math.max(3, w.h + delta) } : w))
+    );
+  };
+
   return (
     <div className="space-y-3">
       {dashboard.widgets.length === 0 ? (
@@ -1900,6 +2194,8 @@ function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, o
                 title={catalogEntry(w.type)?.label}
                 chartType={w.chartType}
                 onChartTypeChange={(type) => handleChartType(w.uid, type)}
+                height={w.h}
+                onHeightChange={(delta) => handleHeightChange(w.uid, delta)}
               >
                 {renderWidgetContent(w.type, w.chartType)}
               </WidgetFrame>
@@ -2145,7 +2441,7 @@ export function DashboardContent() {
       case "donut-severity":
         return <SeverityDonutCompact hours={hours} chartType={chartType || "donut"} />;
       case "donut-k8s-namespace":
-        return <LayerAttackStatsCompact scenarios={scenarios} status={scenariosStatus} error={scenariosError} />;
+        return <LayerAttackStatsCompact scenarios={scenarios} status={scenariosStatus} error={scenariosError} controlled />;
       case "latency-stats":
         return <LatencyStatsPanel events={wasEventsForLatency} />;
       case "module-volume":
@@ -2168,6 +2464,8 @@ export function DashboardContent() {
         return <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />;
       case "geo-summary":
         return <GeoSummaryCard />;
+      case "activity-flow":
+        return <LiveActivityTree />;
       default:
         return null;
     }
