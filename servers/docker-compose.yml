@@ -23,6 +23,11 @@ services:
     build:
       context: .
       dockerfile: normalizer/Dockerfile
+    # CI(cd.yml)가 ghcr.io에 푸시하는 이미지 - build:는 로컬 개발용(`docker compose
+    # up -d --build`)으로 그대로 남겨두고, 배포 서버는 `docker compose pull`로 이
+    # 태그를 받아온다. TAG를 지정하지 않으면 latest, 롤백 시 `TAG=<git-sha> docker
+    # compose up -d`로 특정 커밋 이미지를 지정할 수 있다.
+    image: ghcr.io/2026-techeer-summer-bootcamp-team-b/ids-collector-normalizer:${TAG:-latest}
     container_name: normalizer
     restart: unless-stopped
     environment:
@@ -59,6 +64,7 @@ services:
     build:
       context: .
       dockerfile: correlation-engine/Dockerfile
+    image: ghcr.io/2026-techeer-summer-bootcamp-team-b/ids-collector-correlation-engine:${TAG:-latest}
     container_name: correlation-engine
     restart: unless-stopped
     environment:
@@ -93,6 +99,7 @@ services:
     build:
       context: .
       dockerfile: platform-api/Dockerfile
+    image: ghcr.io/2026-techeer-summer-bootcamp-team-b/ids-collector-platform-api:${TAG:-latest}
     container_name: platform-api
     restart: unless-stopped
     environment:
