@@ -32,6 +32,16 @@ scenarios:
   # 영원히 안 걸린다. 예전엔 "K8s"(소문자 s)로 적혀 있었는데 실제 Falco 룰 이름은
   # "K8S"(대문자)라 Falco가 정상 탐지해도 S1/S5가 절대 발화하지 않는 버그였다
   # (실측 확인 후 수정, 2026-07-14).
+  #
+  # "Run shell untrusted" 추가(2026-07-18): falcosecurity/event-generator로 이
+  # 시나리오를 검증하다가 발견 - event-generator의 RunShellUntrusted 액션은
+  # "Terminal shell in container"가 아니라 falco_rules.yaml의 별개 룰인 "Run shell
+  # untrusted"(태그 mitre_execution/T1059.004, tty 없이 신뢰 안 된 부모 프로세스에서
+  # 쉘이 뜨는 조건)를 트리거한다(WebFetch로 원본 재확인) - 실측 로그(clickhouse)에도
+  # "Terminal shell in container" 372건과 별개로 "Run shell untrusted" 91건이 계속
+  # 쌓이고 있었는데 이 stage2가 못 잡고 있었다. 둘 다 "컨테이너 안에서 예상 밖의 쉘이
+  # 실행됐다"는 같은 위협군이라 stage2 후보에 추가 - exec 권한 사용 직후 어느 조건의
+  # 쉘이 뜨든 다 잡는다.
   - id: S1
     name: "Pod Exec 권한 사용 이후 컨테이너 내 이상행동"
     type: sequence
@@ -50,7 +60,7 @@ scenarios:
         ]
     stage2:
       event_module: falco
-      event_action: ["Terminal shell in container", "Contact K8S API Server From Container"]
+      event_action: ["Terminal shell in container", "Contact K8S API Server From Container", "Run shell untrusted"]
     severity: 4
     mitre_technique_id: "T1609"
 
@@ -231,3 +241,139 @@ scenarios:
       orchestrator_resource_type: cronjobs
     severity: 3
     mitre_technique_id: "T1053"
+
+  # S34 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "Drop and execute new binary in container" 룰 그대로(WebFetch로 원본 재확인) -
+  # 컨테이너 베이스 이미지에 없던 실행파일이 새로 실행되면 발화("초기 침투 후 페이로드를
+  # 심고 실행"하는 전형적인 패턴, priority=CRITICAL). 실측 확인(2026-07-17,
+  # falcosecurity/event-generator 전체 카탈로그 검증 중) - falco는 실제로 이 룰을 52건
+  # 탐지하고 있었는데 대응 시나리오가 없어서 전부 원본 로그로만 남고 인시던트가 안
+  # 떴다. MITRE 매핑: 원본 태그가 tactic 단위(mitre_persistence, TA0003)뿐이고 구체
+  # technique ID가 없어서(S1 원조 케이스와 동일 상황) MITRE 공식 Containers 매트릭스를
+  # 직접 대조 - Persistence 열에는 이 행위(이미 떠 있는 컨테이너 안에서 새 바이너리
+  # 실행)에 맞는 항목이 없고, 오히려 S1/S3가 이미 쓰는 T1609(Container Administration
+  # Command, Execution 전술 - "컨테이너 안에서 명령/바이너리가 실행된다"는 공통점)가
+  # 가장 근접해 재사용.
+  - id: S34
+    name: "컨테이너 내 미확인 바이너리 드롭 후 실행"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Drop and execute new binary in container"
+    severity: 4
+    mitre_technique_id: "T1609"
+
+  # S35 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "Netcat Remote Code Execution in Container" 룰 그대로(WebFetch로 원본 재확인,
+  # 태그 mitre_execution/T1059) - 컨테이너 안에서 nc/ncat이 리버스쉘/RCE에 쓰이는
+  # 플래그로 실행되면 발화. S34와 같은 실측 확인(2026-07-17)에서 발견 - falco가 3건
+  # 탐지했지만 대응 시나리오가 없었다.
+  - id: S35
+    name: "컨테이너 내 Netcat 기반 원격 코드 실행 정황"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Netcat Remote Code Execution in Container"
+    severity: 3
+    mitre_technique_id: "T1059"
+
+  # S40 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "PTRACE attached to process" 룰 그대로(WebFetch로 원본 재확인, 태그
+  # mitre_privilege_escalation/T1055.008 - sub-technique는 이 프로젝트 컨벤션대로
+  # 부모 T1055로 기록) - ptrace로 다른 프로세스에 attach하면 발화(프로세스 인젝션/
+  # 크리덴셜 덤핑 정황). 실측 확인(2026-07-17, event-generator 전체 카탈로그 검증
+  # 중) - falco 이력상 283건으로 가장 빈번한 미탐 룰이었다. 디버깅 도구(strace/gdb)의
+  # 정상 사용과 겹칠 수 있어 오탐 가능성이 있다 - PATCH /incidents/{id}/verdict로
+  # false_positive 라벨을 쌓아 나중에 조정할 것(S28/S30과 동일 피드백 루프 전제).
+  - id: S40
+    name: "프로세스 PTRACE 부착 정황 (인젝션/크리덴셜 덤핑)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "PTRACE attached to process"
+    severity: 3
+    mitre_technique_id: "T1055"
+
+  # S41 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "Execution from /dev/shm" 룰 그대로(WebFetch로 원본 재확인, 태그
+  # mitre_execution/T1059.004 - 부모 T1059로 기록) - 디스크가 아니라 tmpfs(/dev/shm)에
+  # 심어진 바이너리가 실행되면 발화. 재부팅 시 사라지는 임시 파일시스템에 페이로드를
+  # 두고 실행하는 건 파일시스템 흔적을 최소화하려는 전형적인 회피 패턴 - S36
+  # (memfd_create 파일리스 실행)과 같은 계열이지만 메모리가 아니라 tmpfs를 쓴다는
+  # 점에서 별개 신호. S40과 같은 실측 확인(2026-07-17)에서 발견.
+  - id: S41
+    name: "/dev/shm에서의 실행 정황 (파일시스템 흔적 최소화)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Execution from /dev/shm"
+    severity: 3
+    mitre_technique_id: "T1059"
+
+  # S42 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "Disallowed SSH Connection Non Standard Port" 룰 그대로(WebFetch로 원본 재확인,
+  # 태그 mitre_execution/T1059) - 컨테이너에서 SSH가 비표준 포트로 연결을 시도하면
+  # 발화(방화벽/모니터링 우회 목적의 은닉 통신 정황). S40과 같은 실측 확인
+  # (2026-07-17)에서 발견.
+  - id: S42
+    name: "비표준 포트 SSH 연결 시도"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Disallowed SSH Connection Non Standard Port"
+    severity: 2
+    mitre_technique_id: "T1059"
+
+  # S43 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "System user interactive" 룰 그대로(WebFetch로 원본 재확인, 태그
+  # mitre_execution/T1059, priority=INFO로 원본에서도 가장 낮은 등급) - www-data/
+  # nobody처럼 원래 로그인이 없어야 할 시스템 계정이 인터랙티브 셸을 얻으면 발화.
+  # 원본이 INFO라 falco-values.yaml의 다른 severity 재정의 없이 그대로 쓰면
+  # event.severity=1로 묻히지만(severity.yaml 매핑), 이 계정 체계에서 절대 정상적으로
+  # 발생하지 않아야 할 사건이라는 희소성 때문에 시나리오 자체 severity는 한 단계
+  # 올려 잡는다(S28 bad_bot과 같은 논리 - 단독 이벤트가 이미 유의미한 신호). S40과
+  # 같은 실측 확인(2026-07-17)에서 발견(이력상 1건뿐이라 가장 드문 신호).
+  - id: S43
+    name: "시스템 계정의 인터랙티브 셸 획득 정황"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "System user interactive"
+    severity: 2
+    mitre_technique_id: "T1059"

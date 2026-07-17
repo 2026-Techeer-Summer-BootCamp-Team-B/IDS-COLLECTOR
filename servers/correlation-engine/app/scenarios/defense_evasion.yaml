@@ -28,3 +28,66 @@ scenarios:
       event_action: "Clear Log Activities"
     severity: 3
     mitre_technique_id: "T1070"
+
+  # S36 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "Fileless execution via memfd_create" 룰 그대로(WebFetch로 원본 재확인, 태그
+  # mitre_defense_evasion/T1620) - memfd_create로 디스크에 흔적을 안 남기고 메모리에서
+  # 바로 바이너리를 실행하면 발화(priority=CRITICAL) - 멀웨어의 대표적인 탐지 회피
+  # 기법. S34/S35와 같은 실측 확인(2026-07-17, event-generator 전체 카탈로그 검증
+  # 중)에서 발견 - falco가 탐지하고 있었는데 대응 시나리오가 없었다.
+  - id: S36
+    name: "memfd_create를 통한 파일리스 실행 정황"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Fileless execution via memfd_create"
+    severity: 4
+    mitre_technique_id: "T1620"
+
+  # S37 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "Remove Bulk Data from Disk" 룰 그대로(WebFetch로 원본 재확인, 태그
+  # mitre_impact/T1485) - 대량 데이터 삭제 유틸리티 실행을 탐지(파괴/랜섬웨어 정황).
+  # MITRE 전술은 Impact(가용성 파괴)라 이 파일의 나머지 시나리오(Defense Evasion)와는
+  # 다르지만, "흔적을 지우거나 데이터를 지운다"는 행위 패턴이 S23(로그 삭제)과
+  # 유사해서 같은 파일에 둔다 - S34/S35/S36과 같은 실측 확인(2026-07-17)에서 발견.
+  - id: S37
+    name: "디스크 대량 데이터 삭제 정황 (데이터 파괴)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Remove Bulk Data from Disk"
+    severity: 3
+    mitre_technique_id: "T1485"
+
+  # S44 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "PTRACE anti-debug attempt" 룰 그대로(WebFetch로 원본 재확인, 태그
+  # mitre_defense_evasion/T1622) - 프로세스가 자기 자신에게 PTRACE_TRACEME 등으로
+  # 안티디버깅 기법을 걸면 발화 - 분석/탐지 도구의 관찰을 피하려는 멀웨어의 전형적
+  # 특징. S34~S37과 같은 실측 확인(2026-07-17, event-generator 전체 카탈로그 검증
+  # 중)에서 발견.
+  - id: S44
+    name: "안티디버깅 시도 정황"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "PTRACE anti-debug attempt"
+    severity: 2
+    mitre_technique_id: "T1622"

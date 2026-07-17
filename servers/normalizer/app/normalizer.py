@@ -92,6 +92,17 @@ def normalize_was(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "http.response.status_code": status,
             "http.response.body.bytes": payload.get("body_bytes_sent"),
             "user_agent.original": payload.get("user_agent"),
+            # nginx-was-logger가 Downward API(POD_NAME/POD_NAMESPACE)로 자기 자신의
+            # 실제 pod를 log_format에 실어 보낸 값(juice-shop-nginx-configmap.yaml
+            # 참고) - 정적 하드코딩이 아니라 이 로그를 실제로 남긴 pod를 항상 정확히
+            # 가리킨다. enrichment.py는 이 값이 비어 있을 때만 폴백으로 채운다.
+            "orchestrator.namespace": payload.get("orchestrator_namespace") or None,
+            "orchestrator.resource.type": "pod" if payload.get("orchestrator_pod") else None,
+            "orchestrator.resource.name": payload.get("orchestrator_pod") or None,
+            # nginx-was-logger의 TARGET_NAME(배포 시점 고정값, juice-shop-nginx-
+            # configmap.yaml/juice-shop-with-nginx-sidecar.yaml 참고) - 여러 타깃을
+            # 보호하게 되면 타깃마다 이 값이 다르게 설정된다.
+            "target.name": payload.get("target_name") or None,
         }
     )
 
@@ -104,8 +115,9 @@ def normalize_was(payload: Dict[str, Any], event_id: str, original: str) -> Norm
 def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> NormalizedEvent:
     """WafAlert 한 건을 NormalizedEvent로 변환.
 
-    wire 필드: attack_type / risk_level / matched_rule_id / payload_snippet /
-    target_endpoint / http_method / user_agent / blocked / mode (+ client_ip).
+    wire 필드: attack_type / risk_level / matched_rule_id / matched_rule_name /
+    payload_snippet / target_endpoint / http_method / user_agent / blocked / mode /
+    source_ip / target_name (+ target_pod_name / target_namespace).
     센서 개편으로 필드명이 바뀌면 이 파서와 본 계약 문서를 같이 갱신할 것.
     """
     return NormalizedEvent(
@@ -122,7 +134,8 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "event.severity": get_severity("waf", payload),
             "event.original": original,
             "rule.id": payload.get("matched_rule_id"),
-            "source.ip": payload.get("client_ip"),
+            "rule.name": payload.get("matched_rule_name"),
+            "source.ip": payload.get("source_ip"),
             "http.request.method": payload.get("http_method"),
             "url.path": payload.get("target_endpoint"),
             "user_agent.original": payload.get("user_agent"),
@@ -130,6 +143,16 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
             "waf.payload_snippet": payload.get("payload_snippet"),
             "waf.blocked": payload.get("blocked"),
             "waf.mode": payload.get("mode"),
+            # WAF backend가 Juice Shop의 응답 헤더(X-Served-By-Pod/Namespace)를 그대로
+            # 옮겨 담은 값(app/proxy/proxy.py 참고) - prevention 모드로 차단된 요청은
+            # Juice Shop까지 안 가서 둘 다 None. enrichment.py는 이 값이 비어 있을
+            # 때만(예: 차단된 요청) 폴백으로 채운다.
+            "orchestrator.namespace": payload.get("target_namespace") or None,
+            "orchestrator.resource.type": "pod" if payload.get("target_pod_name") else None,
+            "orchestrator.resource.name": payload.get("target_pod_name") or None,
+            # WAF backend의 TARGET_NAME(배포 시점 고정값, config.py 참고) - WafAlert에
+            # 이미 있던(그동안 아무도 안 채우던) target_name 필드를 이제 실제로 쓴다.
+            "target.name": payload.get("target_name") or None,
         }
     )
 
@@ -336,6 +359,21 @@ def _audit_configmap_has_credentials(payload: Dict[str, Any]) -> Any:
     return None
 
 
+def _audit_ingress_has_tls(payload: Dict[str, Any]) -> Any:
+    """ingress의 request body(spec)에 tls 키가 있는지 검사한다(값이 빈 배열이어도
+    "존재"로 친다 - falcosecurity/plugins의 ingress_tls 매크로
+    `jevt.value[/requestObject/spec/tls] exists`와 동일 판정). requestObject
+    자체가 없으면(예: 감사정책이 안 맞아 body가 안 온 경우) 판정 불가라 None을
+    반환 - False(명시적으로 tls 없음)와 구분해서 오탐을 막는다. requestObject가
+    JSON Patch 배열이면 배열 안 dict 원소 중 하나라도 tls 키가 있으면 True를
+    반환한다(다른 _audit_* 함수들과 같은 패턴)."""
+    request_objects = _audit_request_objects(payload)
+    if not request_objects:
+        return None
+
+    return any("tls" in (request_object.get("spec") or {}) for request_object in request_objects)
+
+
 def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> NormalizedEvent:
     """kube-apiserver audit 로그(audit.k8s.io/v1 Event JSON) 한 줄을 NormalizedEvent로 변환.
 
@@ -357,6 +395,16 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
     role_rule_flags = _audit_role_rule_flags(payload) if resource in RBAC_ROLE_RESOURCES else None
     binding_role_name = _audit_binding_role_name(payload) if resource in RBAC_BINDING_RESOURCES else None
     pod_security_flags = _audit_pod_security_flags(payload) if (resource == "pods" and verb == "create") else None
+
+    # event.action에 위험 플래그를 붙여서 "create pods"(severity=2, 일반 생성)와
+    # "create pods [host_path_volume]"(severity=4, S16 재료)를 화면에서 바로 구분할 수
+    # 있게 한다(2026-07-18) - 이전엔 둘 다 event.action이 "create pods"로 동일해서
+    # kubernetes.audit.pod.security_flags 필드를 따로 펼쳐보지 않는 한 왜 같은
+    # 액션인데 severity가 다른지 알 수 없었다. correlation-engine의 어떤 시나리오도
+    # subresource 없는 순수 "create pods" 문자열을 event_action으로 정확히 매치하지
+    # 않는다(S16은 orchestrator_resource_type/pod_security_flags_any 같은 별도
+    # 필드로 매치) - event.action에 접미사를 붙여도 상관분석 매칭에 영향 없음.
+    action_flag_suffix = f" [{', '.join(pod_security_flags)}]" if pod_security_flags else ""
     service_type = (
         _audit_service_type(payload)
         if (resource == "services" and verb in ("create", "update", "patch"))
@@ -366,6 +414,9 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
         _audit_configmap_has_credentials(payload)
         if (resource == "configmaps" and verb in ("create", "update", "patch"))
         else None
+    )
+    ingress_has_tls = (
+        _audit_ingress_has_tls(payload) if (resource == "ingresses" and verb == "create") else None
     )
 
     return NormalizedEvent(
@@ -378,7 +429,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "event.module": "k8s_audit",
             "event.dataset": "k8s_audit.audit",
             "event.kind": "event",
-            "event.action": f"{verb} {resource_full}".strip(),
+            "event.action": f"{verb} {resource_full}{action_flag_suffix}".strip(),
             "event.outcome": "success" if (status_code and status_code < 400) else "failure",
             "event.severity": get_severity(
                 "audit",
@@ -387,6 +438,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
                     "pod_security_flags": pod_security_flags,
                     "service_type": service_type,
                     "configmap_has_credentials": configmap_has_credentials,
+                    "ingress_has_tls": ingress_has_tls,
                 },
             ),
             "event.original": original,
@@ -403,6 +455,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "kubernetes.audit.pod.security_flags": pod_security_flags,
             "kubernetes.audit.service.type": service_type,
             "kubernetes.audit.configmap.has_credentials": configmap_has_credentials,
+            "kubernetes.audit.ingress.has_tls": ingress_has_tls,
             "http.response.status_code": status_code,
         }
     )
