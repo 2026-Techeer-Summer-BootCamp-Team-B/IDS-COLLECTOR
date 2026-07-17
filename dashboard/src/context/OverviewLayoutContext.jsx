@@ -21,7 +21,7 @@ export const WIDGET_CATALOG = [
   { type: "kpi-total", label: "Total Logs", w: 3, h: 6 },
   { type: "kpi-errors", label: "Errors", w: 3, h: 6 },
   { type: "kpi-warnings", label: "Warnings", w: 3, h: 6 },
-  { type: "kpi-sources", label: "Active Sources", w: 3, h: 6 },
+  { type: "kpi-sources", label: "탐지 시나리오", w: 3, h: 6 },
   {
     type: "log-volume",
     label: "Log Volume",
@@ -62,16 +62,12 @@ export const WIDGET_CATALOG = [
       { value: "bar", label: "막대" },
     ],
   },
-  {
-    type: "donut-k8s-namespace",
-    label: "K8s 네임스페이스 분포",
-    w: 4,
-    h: 9,
-    chartTypeOptions: [
-      { value: "donut", label: "도넛" },
-      { value: "bar", label: "막대" },
-    ],
-  },
+  // type 키는 "donut-k8s-namespace" 그대로 유지 - 2026-07-17에 K8s 네임스페이스별
+  // 분포 도넛에서 계층별 공격 통계로 내용만 교체했다(LogDashboard.jsx의
+  // LayerAttackStatsCompact 참고). 이 type을 바꾸면 이미 저장된 커스텀
+  // 대시보드(localStorage)에 이 타입으로 박혀있는 위젯이 CATALOG_BY_TYPE에서
+  // 안 찾아져서 통째로 사라진다 - 그래서 라벨/차트타입만 바꾸고 키는 안 건드림.
+  { type: "donut-k8s-namespace", label: "계층별 공격 통계", w: 4, h: 9 },
   { type: "latency-stats", label: "API Latency", w: 12, h: 5 },
   { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 9 },
   { type: "recent-logs", label: "Recent Logs", w: 8, h: 14 },

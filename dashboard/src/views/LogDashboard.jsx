@@ -44,7 +44,7 @@ import GoogleGeoMap from "../components/GoogleGeoMap";
 // 별도 청크로 로드되게 한다.
 const Globe3D = lazy(() => import("../components/Globe3D"));
 import { useGeoStats } from "../hooks/useGeoStats";
-import { useK8sTargets } from "../hooks/useK8sTargets";
+import { useScenarios } from "../hooks/useScenarios";
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
 import "react-grid-layout/css/styles.css";
 import {
@@ -291,17 +291,18 @@ function useLogVolumeColors(defaults) {
 // 거기서까지 이 breakdown을 켜면 이미 좁힌 모듈 하나 보겠다고 API를 4번 더
 // 부르는 낭비가 생긴다 - 그래서 module 유무로 분기해서 별도 하위 컴포넌트로
 // 뺐다(훅 호출 순서는 각 컴포넌트 인스턴스마다 고정이라 이렇게 나눠도 안전함).
-function LogVolumeBreakdownBody({ rangeKey }) {
+function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const { pollMs } = usePollInterval();
+  const sevParams = KPI_SEVERITY_PARAMS[kpiFilter] || {};
 
-  const total = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, pollMs });
-  const was = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "was", pollMs });
-  const waf = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "waf", pollMs });
-  const falco = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "falco", pollMs });
-  const k8s = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "k8s_audit", pollMs });
+  const total = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, pollMs, ...sevParams });
+  const was = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "was", pollMs, ...sevParams });
+  const waf = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "waf", pollMs, ...sevParams });
+  const falco = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "falco", pollMs, ...sevParams });
+  const k8s = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "k8s_audit", pollMs, ...sevParams });
 
   const defaults = useMemo(
     () => ({
@@ -360,7 +361,9 @@ function LogVolumeBreakdownBody({ rangeKey }) {
   return (
     <Card
       title="Log Volume"
-      subtitle={`Last ${preset.label} · ${data.length} buckets · 모듈별 구분`}
+      subtitle={`Last ${preset.label} · ${data.length} buckets · 모듈별 구분${
+        kpiFilter !== "ALL" ? ` · ${{ ERROR: "Errors", WARNING: "Warnings" }[kpiFilter] || kpiFilter} 필터` : ""
+      }`}
       action={
         spike ? (
           <span className="text-[11px] font-medium px-2 py-1 rounded-md bg-dash-pink/15 text-dash-pink whitespace-nowrap">
@@ -456,11 +459,11 @@ function LogVolumeBreakdownBody({ rangeKey }) {
   );
 }
 
-export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
+export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType: chartTypeProp }) {
   // module 없이 호출되면(Overview) 5선 breakdown으로 위임 - 아래 기존 로직은
   // module이 특정된 상세 뷰(WAS/Falco/K8sAudit) 전용으로 계속 쓰인다.
   if (!module) {
-    return <LogVolumeBreakdownBody rangeKey={rangeKey} />;
+    return <LogVolumeBreakdownBody rangeKey={rangeKey} kpiFilter={kpiFilter} />;
   }
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
@@ -719,14 +722,15 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
 // Log Levels 차트 실데이터 버전 — event.severity 1~4 그대로 4개 막대(기존
 // LevelDistributionChart의 9단계는 FalcoView 등 여전히 mock인 다른 뷰가
 // 재사용 중이라 그대로 두고, Overview 전용으로 새로 뺐다).
-export function RealLevelDistributionChart({ hours, module, chartType: chartTypeProp }) {
+export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { pollMs } = usePollInterval();
   const [internalType, setInternalType] = useState(() => defaultChartTypeFor("level-distribution"));
   const isControlled = chartTypeProp !== undefined;
   const chartType = isControlled ? chartTypeProp : internalType;
-  const { levels, total, status, error } = useLogLevels({ hours, module, pollMs });
+  const sevParams = KPI_SEVERITY_PARAMS[kpiFilter] || {};
+  const { levels, total, status, error } = useLogLevels({ hours, module, pollMs, ...sevParams });
 
   const data = REAL_SEVERITY_LEVELS.map((l, i) => {
     const found = levels.find((x) => x.severity === l.severity);
@@ -737,7 +741,11 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
   return (
     <Card
       title="Log Levels"
-      subtitle={status === "ready" ? `선택 구간 · ${total}건` : "불러오는 중..."}
+      subtitle={
+        status === "ready"
+          ? `선택 구간 · ${total}건${kpiFilter !== "ALL" ? ` · ${{ ERROR: "Errors", WARNING: "Warnings" }[kpiFilter] || kpiFilter} 필터` : ""}`
+          : "불러오는 중..."
+      }
       action={
         !isControlled && (
           <ChartTypeToggle options={chartTypeOptionsFor("level-distribution")} value={chartType} onChange={setInternalType} />
@@ -1061,13 +1069,14 @@ function useCountUp(rawValue, duration = 500) {
 // 탐지 소스별(WAS/Falco/K8s Audit) 도넛 — 3계층 상관분석 프로젝트의 핵심 축이라
 // Overview 요약에도 반드시 있어야 하는 지표. GET /stats(by_module) 연동 - WAF는
 // 비활성화 상태라 보통 안 잡히거나 0건(정상).
-function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
+function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType: chartTypeProp }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-source"));
   const isControlled = chartTypeProp !== undefined;
   const chartType = isControlled ? chartTypeProp : internalType;
-  const { byModule, status, error } = useDetectionSources({ lookbackMs });
+  const sevParams = KPI_SEVERITY_PARAMS[kpiFilter] || {};
+  const { byModule, status, error } = useDetectionSources({ lookbackMs, ...sevParams });
   const data = useMemo(
     () =>
       byModule
@@ -1084,7 +1093,11 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
   return (
     <Card
       title="탐지 소스별 분포"
-      subtitle={status === "ready" ? `WAS / Falco / K8s Audit · 총 ${total}건` : "불러오는 중..."}
+      subtitle={
+        status === "ready"
+          ? `WAS / Falco / K8s Audit · 총 ${total}건${kpiFilter !== "ALL" ? ` · ${{ ERROR: "Errors", WARNING: "Warnings" }[kpiFilter] || kpiFilter} 필터` : ""}`
+          : "불러오는 중..."
+      }
       action={
         !isControlled && (
           <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
@@ -1226,87 +1239,99 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
   );
 }
 
-// K8s 네임스페이스별 분포 도넛 — GET /stats/k8s-targets(namespace/리소스별 집계)를
-// 네임스페이스 단위로 합쳐서 보여준다. 지금은 관찰 대상(Juice Shop)이 하나뿐이라
-// 조각이 하나일 수 있지만, 나중에 인스턴스가 늘어나면(네임스페이스 여러 개)
-// 여기서 바로 비교가 된다 — Infrastructure 탭의 K8s 타깃 랭킹과 같은 소스.
-function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
+// 계층별 공격 통계 — GET /scenarios(hit_count 포함, scenarios_api.py)를 재사용해서
+// "어떤 공격이 많이 들어왔는지"를 계층(WAS/WAF/Falco/K8s Audit)별로 색상 구분해서
+// 보여준다. 2026-07-17: "K8s 네임스페이스별 분포는 필요 없다, 계층별 공격 통계로
+// 바꿔달라" 피드백으로 이 카드가 있던 자리(위젯 타입은 donut-k8s-namespace 그대로
+// 유지 - 저장된 커스텀 대시보드가 이 슬롯을 참조 중일 수 있어 타입 키를 바꾸면
+// 그 대시보드에서만 위젯이 사라진다)를 교체했다. required_modules[0](YAML에서
+// 시나리오가 요구하는 첫 모듈)을 그 시나리오의 "계층"으로 취급 - AdminAuditView의
+// "탐지 룰별 적중 랭킹"과 같은 hit_count 소스지만, 여기는 전역 랭킹이 아니라
+// 계층별 색상 구분 + 계층별 합계 요약이 핵심이라 별도로 뺐다.
+//
+// scenarios/status/error는 props로 받는다(자체 useScenarios() 호출 안 함) - 같은
+// /scenarios 응답을 "탐지 시나리오" KPI 카드(kpi-sources, 2026-07-17 "Active
+// Sources를 탐지 가능한 시나리오 개수로" 피드백으로 추가)도 필요로 해서, 부모
+// (DashboardContent)가 한 번만 fetch해 두 위젯에 같이 내려준다 - Overview
+// 기본 모드에선 이 위젯과 KPI 카드가 항상 동시에 보이므로, 각자 훅을 부르면
+// /scenarios가 매번 두 번 나간다.
+const LAYER_ORDER = ["was", "waf", "falco", "k8s_audit"];
+
+function LayerAttackStatsCompact({ scenarios, status, error }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-k8s-namespace"));
-  const isControlled = chartTypeProp !== undefined;
-  const chartType = isControlled ? chartTypeProp : internalType;
-  const { targets, status, error } = useK8sTargets({ limit: 20 });
-  const data = useMemo(() => {
-    const byNamespace = {};
-    targets.forEach((t) => {
-      byNamespace[t.namespace] = (byNamespace[t.namespace] || 0) + t.count;
+
+  const ranked = useMemo(
+    () =>
+      scenarios
+        .filter((s) => s.hit_count > 0)
+        .map((s) => {
+          const module = s.required_modules?.[0] || "unknown";
+          const meta = getModuleMeta(module);
+          return { key: s.id, name: s.name, hits: s.hit_count, module, moduleLabel: meta.label, color: meta.color, mitre: s.mitre_technique_id };
+        })
+        .sort((a, b) => b.hits - a.hits),
+    [scenarios]
+  );
+  const top = ranked.slice(0, 6);
+  const totalHits = ranked.reduce((sum, r) => sum + r.hits, 0);
+
+  const layerTotals = useMemo(() => {
+    const byModule = {};
+    ranked.forEach((r) => {
+      byModule[r.module] = (byModule[r.module] || 0) + r.hits;
     });
-    return Object.entries(byNamespace)
-      .sort((a, b) => b[1] - a[1])
-      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
-  }, [targets]);
-  const total = data.reduce((s, d) => s + d.count, 0);
-  const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+    return LAYER_ORDER.map((m) => ({ module: m, ...getModuleMeta(m), count: byModule[m] || 0 }));
+  }, [ranked]);
 
   return (
     <Card
-      title="K8s 네임스페이스별 분포"
-      subtitle={status === "ready" ? `전체 기간 · 총 ${total}건` : "불러오는 중..."}
-      action={
-        !isControlled && (
-          <ChartTypeToggle
-            options={chartTypeOptionsFor("donut-k8s-namespace")}
-            value={chartType}
-            onChange={setInternalType}
-          />
-        )
-      }
-      className={isControlled ? "min-h-80 h-full" : ""}
+      title="계층별 공격 통계"
+      subtitle={status === "ready" ? `전체 기간 · 발화 시나리오 ${ranked.length}개 · 총 ${totalHits}건` : "불러오는 중..."}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
-      {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">데이터가 없습니다.</p>}
-      {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
-      {data.length > 0 && chartType === "donut" && (
-        <div className="flex items-center gap-4">
-          <ResponsiveContainer width={110} height={110}>
-            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-              <Pie
-                data={data}
-                dataKey="count"
-                nameKey="label"
-                innerRadius={32}
-                outerRadius={52}
-                stroke="none"
-                isAnimationActive
-                animationDuration={700}
-                animationEasing="ease-out"
-                activeIndex={activeIndex}
-                activeShape={renderGlowActiveShape}
-              >
-                {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="flex-1 space-y-1.5 text-xs">
-            {data.map((d, i) => (
-              <div
-                key={d.key}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
-                  i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
-                }`}
-              >
-                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
-                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
-                  {d.label}
-                </span>
-                <span className="text-dash-fg">{d.count}</span>
-              </div>
+      {status === "ready" && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            {layerTotals.map((l) => (
+              <span key={l.module} className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: l.color }} />
+                <span className="text-dash-muted">{l.label}</span>
+                <span className="text-dash-fg font-medium">{l.count}</span>
+              </span>
             ))}
           </div>
+          {top.length === 0 ? (
+            <p className="text-dash-muted text-xs">아직 발화된 공격이 없습니다.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(150, top.length * 32)}>
+              <BarChart data={top} layout="vertical" margin={{ left: 4, right: 24, top: 4, bottom: 4 }}>
+                <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
+                <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  stroke={C.muted}
+                  tickLine={false}
+                  axisLine={false}
+                  fontSize={10}
+                  width={110}
+                  tickFormatter={(v) => (v.length > 13 ? `${v.slice(0, 13)}…` : v)}
+                />
+                <Tooltip
+                  contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+                  cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+                  formatter={(value, _name, item) => [`${value}건`, item?.payload?.moduleLabel ?? "적중 건수"]}
+                  labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+                />
+                <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+                  {top.map((d) => (
+                    <Cell key={d.key} fill={d.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       )}
     </Card>
@@ -1614,6 +1639,19 @@ const KPI_MIN_SEVERITY = {
   ERROR: REAL_ERROR_MIN_SEVERITY,
   WARNING: REAL_WARNING_SEVERITY,
   SOURCES: undefined,
+};
+
+// 2026-07-17: "KPI 카드 눌러도 Log Volume/Log Levels/탐지 소스 분포 차트가 안
+// 바뀐다" 피드백으로 /stats, /stats/volume, /stats/levels에 min_severity(">=")/
+// severity(정확히 일치) 쿼리 파라미터를 새로 추가했다(stats_api.py의
+// _severity_filters 참고) - 이 세 엔드포인트는 /logs와 달리 서버에서 exact
+// severity로도 바로 걸러주므로, 위 KPI_MIN_SEVERITY(WARNING을 ">= 2"로 보내고
+// 클라이언트에서 다시 좁히는 /logs 전용 우회)와는 별개로 이 맵을 쓴다.
+const KPI_SEVERITY_PARAMS = {
+  ALL: {},
+  ERROR: { minSeverity: REAL_ERROR_MIN_SEVERITY },
+  WARNING: { severity: REAL_WARNING_SEVERITY },
+  SOURCES: {},
 };
 
 // 커스텀 대시보드/빌더에서만 위젯을 감싸는 얇은 프레임 - 위쪽 좁은 바가 드래그
@@ -1974,10 +2012,19 @@ export function DashboardContent() {
   const hours = preset.lookbackMs / (60 * 60 * 1000);
   const { pollMs } = usePollInterval();
 
-  // GET /stats/kpi — 상단 4개 KPI 카드(Total/Errors/Warnings/Active Sources +
+  // GET /stats/kpi — 상단 4개 KPI 카드(Total/Errors/Warnings/탐지 시나리오 +
   // 이전 구간 대비 델타). pollMs로 갱신(기본 2초, Admin 페이지에서 커스텀 가능) —
   // 더미 로그 생성기 돌릴 때 화면이 수동 새로고침 없이 따라 올라가야 한다는 피드백 반영.
   const { data: kpi, status: kpiStatus } = useKpi({ hours, pollMs });
+
+  // GET /scenarios — 2026-07-17: 4번째 KPI 카드를 "Active Sources"(distinct
+  // event.module 개수, 사실상 항상 WAS/WAF/Falco/K8s Audit 4로 고정이라 정보값이
+  // 없다는 피드백)에서 "탐지 시나리오"(지금 켜져있는 상관 시나리오 개수)로
+  // 바꿨다. 같은 응답을 "계층별 공격 통계" 위젯(LayerAttackStatsCompact)도 쓰므로
+  // 여기서 한 번만 fetch해서 둘 다에 내려준다.
+  const { scenarios, status: scenariosStatus, error: scenariosError } = useScenarios();
+  const enabledScenarioCount = scenarios.filter((s) => s.enabled).length;
+  const totalScenarioCount = scenarios.length;
 
   // GET /logs — 아래 차트/테이블에 실제로 흘려보내는 이벤트. kpiFilter에 따라
   // min_severity로 서버에서 미리 좁혀서 요청.
@@ -2083,28 +2130,22 @@ export function DashboardContent() {
       case "kpi-sources":
         return (
           <KpiCard
-            label="Active Sources"
-            value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
-            delta={
-              kpiStatus === "ready" && kpi.sources_delta !== 0
-                ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new`
-                : undefined
-            }
-            positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
+            label="탐지 시나리오"
+            value={scenariosStatus === "ready" ? `${enabledScenarioCount}/${totalScenarioCount}개` : "-"}
             onClick={() => setKpiFilter("SOURCES")}
             active={kpiFilter === "SOURCES"}
           />
         );
       case "log-volume":
-        return <LogVolumeChart rangeKey={rangeKey} chartType={chartType || "area"} />;
+        return <LogVolumeChart rangeKey={rangeKey} kpiFilter={kpiFilter} chartType={chartType || "area"} />;
       case "level-distribution":
-        return <RealLevelDistributionChart hours={hours} chartType={chartType || "bar"} />;
+        return <RealLevelDistributionChart hours={hours} kpiFilter={kpiFilter} chartType={chartType || "bar"} />;
       case "donut-source":
-        return <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} chartType={chartType || "donut"} />;
+        return <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} kpiFilter={kpiFilter} chartType={chartType || "donut"} />;
       case "donut-severity":
         return <SeverityDonutCompact hours={hours} chartType={chartType || "donut"} />;
       case "donut-k8s-namespace":
-        return <K8sNamespaceDonutCompact chartType={chartType || "donut"} />;
+        return <LayerAttackStatsCompact scenarios={scenarios} status={scenariosStatus} error={scenariosError} />;
       case "latency-stats":
         return <LatencyStatsPanel events={wasEventsForLatency} />;
       case "module-volume":
@@ -2167,19 +2208,17 @@ export function DashboardContent() {
   );
   const kpiSourcesWidget = (
     <KpiCard
-      label="Active Sources"
-      value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
-      delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
-      positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
+      label="탐지 시나리오"
+      value={scenariosStatus === "ready" ? `${enabledScenarioCount}/${totalScenarioCount}개` : "-"}
       onClick={() => setKpiFilter("SOURCES")}
       active={kpiFilter === "SOURCES"}
     />
   );
-  const logVolumeWidget = <LogVolumeChart rangeKey={rangeKey} />;
-  const levelDistributionWidget = <RealLevelDistributionChart hours={hours} />;
-  const donutSourceWidget = <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} />;
+  const logVolumeWidget = <LogVolumeChart rangeKey={rangeKey} kpiFilter={kpiFilter} />;
+  const levelDistributionWidget = <RealLevelDistributionChart hours={hours} kpiFilter={kpiFilter} />;
+  const donutSourceWidget = <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} kpiFilter={kpiFilter} />;
   const donutSeverityWidget = <SeverityDonutCompact hours={hours} />;
-  const donutK8sWidget = <K8sNamespaceDonutCompact />;
+  const donutK8sWidget = <LayerAttackStatsCompact scenarios={scenarios} status={scenariosStatus} error={scenariosError} />;
   const latencyWidget = <LatencyStatsPanel events={wasEventsForLatency} />;
   const recentLogsWidget = (
     <RecentLogsTable events={displayEvents} filterLevels={REAL_SEVERITY_LEVELS} status={logsStatus} error={logsError} />
@@ -2257,7 +2296,7 @@ export function DashboardContent() {
 
       {kpiFilter !== "ALL" && (
         <p className="text-dash-faint text-[11px]">
-          {{ ERROR: "Errors", WARNING: "Warnings", SOURCES: "Active Sources" }[kpiFilter]} 필터 적용 중 —{" "}
+          {{ ERROR: "Errors", WARNING: "Warnings", SOURCES: "탐지 시나리오" }[kpiFilter]} 필터 적용 중 —{" "}
           {kpiFilter === "SOURCES"
             ? "Top Sources 카드가 더 넓게 펼쳐져 있습니다."
             : "아래 차트/테이블이 이 조건으로 좁혀져 있습니다."}{" "}
