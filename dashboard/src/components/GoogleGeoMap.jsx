@@ -3,7 +3,7 @@ import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import WorldMap from "./WorldMap";
 import { renderHoverPanelHTML } from "./HoverPanel";
-import { countryToFlagEmoji } from "../lib/flagEmoji";
+import { resolveFlagCode } from "../lib/flagEmoji";
 
 // 2026-07-17(5차): "city가 null이 아니라 여러 지역이 나오는데, 지도를
 // 스크롤/확대하면 지역이 자세히 보이게 해달라"는 요청 - 기존 WorldMap은
@@ -174,7 +174,7 @@ export default function GoogleGeoMap({ points, compact = false }) {
         infoWindowRef.current.setContent(
           await renderHoverPanelHTML({
             title: p.country,
-            titleFlag: countryToFlagEmoji(p.countryCode, p.country),
+            titleFlag: resolveFlagCode(p.countryCode, p.country),
             subtitle: p.city || undefined,
             rows: [{ color: C.critical, value: `${p.count}건`, label: "탐지" }],
           })

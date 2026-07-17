@@ -42,18 +42,19 @@ function isAlpha2(code) {
   return typeof code === "string" && /^[A-Za-z]{2}$/.test(code);
 }
 
-// A(65)~Z(90) -> Regional Indicator Symbol Letter A~Z(1F1E6~1F1FF), 대문자
-// 알파벳 코드포인트 차이만큼 그대로 옮기면 된다.
-function alpha2ToFlagEmoji(code) {
-  const upper = code.toUpperCase();
-  return String.fromCodePoint(...[...upper].map((c) => 0x1f1e6 + (c.charCodeAt(0) - 65)));
-}
-
+// 2026-07-17: 유니코드 국기 이모지(Regional Indicator Symbol 조합)로 처음
+// 구현했는데, 국기 이모지 폰트가 없는 OS/브라우저에서 이모지가 아니라 그
+// 문자 그대로("KR", "CN" 등 알파벳 두 글자)가 보인다는 피드백 - OS/폰트에
+// 의존하지 않는 flag-icons(CSS 스프라이트, main.jsx에서 전역 import)로
+// 교체한다. flag-icons는 `fi fi-{소문자 alpha-2}` 클래스라 여기서는 코드
+// 문자열만 돌려주고(항상 소문자), 실제 렌더링(className 조립)은
+// HoverPanel이 한다.
+//
 // countryCode(ISO alpha-2)를 우선 쓰고, 없으면 국가명 매핑 테이블로 폴백.
-// 그래도 못 찾으면 빈 문자열(호출부에서 그냥 국기 없이 표시).
-export function countryToFlagEmoji(countryCode, countryName) {
-  if (isAlpha2(countryCode)) return alpha2ToFlagEmoji(countryCode);
+// 그래도 못 찾으면 null(호출부에서 국기 없이 표시).
+export function resolveFlagCode(countryCode, countryName) {
+  if (isAlpha2(countryCode)) return countryCode.toLowerCase();
   const mapped = countryName && COUNTRY_NAME_TO_CODE[countryName];
-  if (isAlpha2(mapped)) return alpha2ToFlagEmoji(mapped);
-  return "";
+  if (isAlpha2(mapped)) return mapped.toLowerCase();
+  return null;
 }

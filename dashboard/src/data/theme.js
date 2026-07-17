@@ -20,6 +20,10 @@ export const CHART_COLORS = {
     pink: "#A64DFF",
     muted: "#8890B5",
     faint: "#5A6288",
+    // 도넛 hover 시 비활성 조각을 죽이는 전용 회색 - faint(다른 데서도 널리
+    // 쓰는 은은한 회색)를 그대로 쓰니 "너무 밝다"는 2026-07-17 피드백이 있어서,
+    // faint와는 별개로 이 용도에만 쓰는 더 어두운 회색을 새로 둔다.
+    donutDim: "#33364A",
     fg: "#F2F5FF",
     critical: "#FF1F4B",
     high: "#FF7A18",
@@ -44,6 +48,7 @@ export const CHART_COLORS = {
     pink: "#7A1FD1",
     muted: "#5B6180",
     faint: "#8388A6",
+    donutDim: "#5F6380",
     fg: "#0B0C14",
     critical: "#FF1F4B",
     high: "#FF7A18",

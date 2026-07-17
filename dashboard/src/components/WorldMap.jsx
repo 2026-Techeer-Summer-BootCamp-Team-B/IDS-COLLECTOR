@@ -3,7 +3,7 @@ import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { WORLD_COUNTRIES } from "../data/worldCountries";
 import { HoverPanel } from "./HoverPanel";
-import { countryToFlagEmoji } from "../lib/flagEmoji";
+import { resolveFlagCode } from "../lib/flagEmoji";
 
 /**
  * Real-world map (Natural Earth 110m country outlines, see
@@ -67,7 +67,7 @@ export default function WorldMap({ points, compact = false }) {
         >
           <HoverPanel
             title={hover.point.country}
-            titleFlag={countryToFlagEmoji(hover.point.countryCode, hover.point.country)}
+            titleFlag={resolveFlagCode(hover.point.countryCode, hover.point.country)}
             subtitle={hover.point.city || undefined}
             rows={[{ color: C.critical, value: `${hover.point.count}건`, label: "탐지" }]}
           />

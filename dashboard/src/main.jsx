@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ThemeProvider } from "./hooks/useTheme";
 import "pretendard/dist/web/static/pretendard.css";
+import "flag-icons/css/flag-icons.min.css";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(

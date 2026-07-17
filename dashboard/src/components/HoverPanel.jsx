@@ -26,11 +26,7 @@ export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, class
     >
       {title != null && title !== "" && (
         <div className="flex items-center gap-1.5 text-[13px] font-semibold text-gray-900 whitespace-nowrap leading-tight">
-          {titleFlag && (
-            <span className="text-base leading-none" aria-hidden="true">
-              {titleFlag}
-            </span>
-          )}
+          {titleFlag && <span className={`fi fi-${titleFlag} text-base leading-none`} aria-hidden="true" />}
           <span>{title}</span>
         </div>
       )}

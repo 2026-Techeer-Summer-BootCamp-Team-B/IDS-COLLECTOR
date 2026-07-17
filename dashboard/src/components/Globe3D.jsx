@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { CHART_COLORS } from "../data/theme";
 import { WORLD_COUNTRIES } from "../data/worldCountries";
 import { HoverPanel } from "./HoverPanel";
-import { countryToFlagEmoji } from "../lib/flagEmoji";
+import { resolveFlagCode } from "../lib/flagEmoji";
 
 /**
  * 3D rotating globe for Overview's GeoIP summary (Infrastructure tab keeps
@@ -292,7 +292,7 @@ export default function Globe3D({ points = [], theme = "dark" }) {
         <div className="pointer-events-none absolute z-10" style={{ left: hover.x + 14, top: hover.y + 14 }}>
           <HoverPanel
             title={hover.point.country}
-            titleFlag={countryToFlagEmoji(hover.point.countryCode, hover.point.country)}
+            titleFlag={resolveFlagCode(hover.point.countryCode, hover.point.country)}
             subtitle={hover.point.city || undefined}
             rows={[{ color: CHART_COLORS[theme].critical, value: `${hover.point.count}건`, label: "탐지" }]}
           />

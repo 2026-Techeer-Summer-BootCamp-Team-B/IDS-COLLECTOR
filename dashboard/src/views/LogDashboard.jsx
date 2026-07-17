@@ -735,8 +735,8 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
   // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
-    [data, hoveredIndex, C.faint]
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
+    [data, hoveredIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
 
@@ -765,9 +765,6 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                 startAngle={90}
                 endAngle={-270}
                 stroke="none"
-                isAnimationActive
-                animationDuration={700}
-                animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
                 onMouseEnter={(_, i) => {
@@ -809,12 +806,16 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                         : "text-dash-muted"
                       : hoveredIndex === i
                       ? "text-dash-fg font-bold"
-                      : "text-dash-faint"
+                      : ""
                   }`}
+                  // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
+                  // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
+                  // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
+                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
                 >
                   <span
                     className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
@@ -1073,6 +1074,18 @@ function easeInOutQuad(t) {
 // 사라짐). 그래서 recharts/CSS에 맡기지 않고, 매 프레임 색을 JS로 직접
 // 보간해서 fill에 완성된 rgb() 문자열로 꽂아준다 - 매 프레임 DOM이 새로
 // 만들어지더라도 그 순간의 올바른 색이 바로 찍히므로 애니메이션처럼 보인다.
+//
+// 2026-07-17(추가): hover 진입은 부드러운데 해제는 순간적으로 바뀌는 비대칭
+// 현상이 있었다 - 원인은 이 fill 애니메이션 자체가 아니라, Pie에 남아있던
+// isAnimationActive(700ms)가 activeIndex/activeShape가 바뀌는 hover 진입
+// 시점에만 추가로 겹쳐 걸리면서(회전목마 스포트라이트가 옮겨붙는 순간) 두
+// 애니메이션이 섞여 "진입만 유독 오래/부드럽게" 보이게 만들었던 것 - 해제 때는
+// activeIndex가 안 바뀌니(useAutoCycleIndex의 blur는 인덱스를 유지) 이 fill
+// 트윈만 단독으로 돌아서 상대적으로 더 빨라 보였다. Pie 쪽 isAnimationActive를
+// 꺼서(각 Pie의 activeShape/activeIndex 자체는 그대로 유지 - 확대 로직 불변)
+// 이 fill 트윈만 색상 전환을 전담하게 해서 양방향이 동일한 300ms로 대칭적으로
+// 느껴지도록 했다(범례 텍스트/배경박스/점의 CSS transition도 전부 동일하게
+// duration-300으로 맞춰서 조각과 어긋나지 않게 함).
 function useAnimatedFills(targetColors, durationMs = 300) {
   const [colors, setColors] = useState(targetColors);
   const colorsRef = useRef(targetColors);
@@ -1207,8 +1220,8 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
   // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
-    [data, hoveredIndex, C.faint]
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
+    [data, hoveredIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
 
@@ -1239,9 +1252,6 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                 startAngle={90}
                 endAngle={-270}
                 stroke="none"
-                isAnimationActive
-                animationDuration={700}
-                animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
                 onMouseEnter={(_, i) => {
@@ -1283,12 +1293,16 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                         : "text-dash-muted"
                       : hoveredIndex === i
                       ? "text-dash-fg font-bold"
-                      : "text-dash-faint"
+                      : ""
                   }`}
+                  // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
+                  // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
+                  // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
+                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
                 >
                   <span
                     className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
@@ -1330,8 +1344,8 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
   // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
-    [data, hoveredIndex, C.faint]
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
+    [data, hoveredIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
 
@@ -1362,9 +1376,6 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                 startAngle={90}
                 endAngle={-270}
                 stroke="none"
-                isAnimationActive
-                animationDuration={700}
-                animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
                 onMouseEnter={(_, i) => {
@@ -1406,12 +1417,16 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                         : "text-dash-muted"
                       : hoveredIndex === i
                       ? "text-dash-fg font-bold"
-                      : "text-dash-faint"
+                      : ""
                   }`}
+                  // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
+                  // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
+                  // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
+                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
                 >
                   <span
                     className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
@@ -1451,8 +1466,8 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
   // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
-    [data, hoveredIndex, C.faint]
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
+    [data, hoveredIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
 
@@ -1487,9 +1502,6 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                 startAngle={90}
                 endAngle={-270}
                 stroke="none"
-                isAnimationActive
-                animationDuration={700}
-                animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
                 onMouseEnter={(_, i) => {
@@ -1531,12 +1543,16 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                         : "text-dash-muted"
                       : hoveredIndex === i
                       ? "text-dash-fg font-bold"
-                      : "text-dash-faint"
+                      : ""
                   }`}
+                  // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
+                  // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
+                  // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
+                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
                 >
                   <span
                     className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
