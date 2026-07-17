@@ -1,6 +1,7 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme";
+import OnboardingPlayer from "./onboarding/OnboardingPlayer";
 
 // 2026-07-16: 처음 로그인하는 사용자가 "이 대시보드에 뭐가 있지?"부터 궁금할 것
 // 같다는 피드백 - App.jsx의 NAV_ITEMS/LAYER_NAV_ITEMS와 같은 5개 메인 페이지를
@@ -8,145 +9,14 @@ import { useTheme } from "../hooks/useTheme";
 // 파랑·네온 없음)이라 예전처럼 페이지별 accent 컬러는 안 쓰고 전부 흰색/회색 톤으로
 // 통일했다.
 //
-// video/image는 아직 실제 파일이 없어서 지금은 항상 플레이스홀더가 뜬다 -
-// dashboard/public/onboarding/ 아래에 같은 파일명으로 넣으면(예: overview.mp4)
-// 바로 그 자리에 재생된다. Vite는 public/ 밑을 그대로 빌드 결과물 루트로
-// 복사하므로 코드에서는 "/onboarding/xxx.mp4"처럼 절대경로로 참조하면 된다
-// (로컬 개발 서버·Vercel 배포 둘 다 동일하게 동작).
-const FEATURE_PAGES = [
-  {
-    key: "overview",
-    label: "Overview",
-    desc: "전체 로그 및 위협 현황을 실시간으로 한눈에 확인",
-    video: "/onboarding/overview.mp4",
-    image: "/onboarding/overview.png",
-  },
-  {
-    key: "incidents",
-    label: "Incidents",
-    desc: "상관분석을 통해 여러 이벤트를 하나의 공격 인시던트로 통합",
-    video: "/onboarding/incidents.mp4",
-    image: "/onboarding/incidents.png",
-  },
-  {
-    key: "attack",
-    label: "ATT&CK",
-    desc: "MITRE ATT&CK 기반 탐지 기법 및 커버리지 현황",
-    video: "/onboarding/attack.mp4",
-    image: "/onboarding/attack.png",
-  },
-  {
-    key: "infra",
-    label: "Infrastructure",
-    desc: "로그 파이프라인 상태와 공격이 집중되는 Kubernetes 클러스터 모니터링",
-    video: "/onboarding/infra.mp4",
-    image: "/onboarding/infra.png",
-  },
-  {
-    key: "admin",
-    label: "Admin / Audit",
-    desc: "탐지 정책, 알림 채널, 차단 IP 관리 및 관리자 감사 로그",
-    video: "/onboarding/admin.mp4",
-    image: "/onboarding/admin.png",
-  },
-];
-
-// 미디어 로드 실패는 카드별로 독립 추적(각 카드가 자기 state를 들고 있음) -
-// 영상이 없거나 깨졌으면 이미지로, 이미지도 없으면 플레이스홀더 블록으로 조용히
-// 대체한다(로고와 같은 onError 폴백 패턴). 이미지가 object-contain인 이유는
-// 대시보드 스크린샷은 폭이 넓은 경우가 많아서 object-cover로 자르면 양옆이
-// 잘려나가 "화면이 깨진 것처럼" 보인다는 피드백 때문 - 검정 레터박스를 감수하고
-// 원본 비율 그대로 다 보이게 했다.
-function OnboardingCard({ page }) {
-  const [videoFailed, setVideoFailed] = useState(false);
-  const [imageFailed, setImageFailed] = useState(false);
-  // 2026-07-16: 자동재생 영상을 사용자가 멈출 수 있어야 한다는 피드백 - video
-  // 엘리먼트를 ref로 직접 잡고 play()/pause()를 토글한다. isPlaying은 autoPlay
-  // 기본값(true)에서 시작해서 버튼을 누를 때만 바뀐다.
-  const videoRef = useRef(null);
-  const [isPlaying, setIsPlaying] = useState(true);
-
-  const showVideo = page.video && !videoFailed;
-  const showImage = !showVideo && page.image && !imageFailed;
-  const showPlaceholder = !showVideo && !showImage;
-
-  function togglePlay() {
-    const el = videoRef.current;
-    if (!el) return;
-    if (el.paused) {
-      el.play();
-      setIsPlaying(true);
-    } else {
-      el.pause();
-      setIsPlaying(false);
-    }
-  }
-
-  return (
-    <div>
-      {/* 2026-07-16: 설명 문구가 영상 "아래"에 있던 걸 "위"로 옮겨달라는 요청 -
-          텍스트 블록을 미디어 박스보다 먼저 렌더링한다. */}
-      <div className="pb-3">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-white/60 shrink-0" />
-          <p className="text-white text-sm font-semibold">{page.label}</p>
-        </div>
-        <p className="text-white/55 text-xs leading-relaxed">{page.desc}</p>
-      </div>
-
-      {/* 2026-07-16: 페이지 전체 폭을 1240px 스케일로 넓히면서 미디어 박스도
-          고정 h-96 대신 aspect-video(16:9)로 바꿔 넓어진 폭에 맞춰 자연스럽게
-          커지도록 했다(넓은 화면에서는 커지고, 좁은 화면에서는 알아서 줄어듦). */}
-      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/50 border border-white/10">
-        {showVideo && (
-          <video
-            ref={videoRef}
-            src={page.video}
-            className="w-full h-full object-cover"
-            autoPlay
-            muted
-            loop
-            playsInline
-            onError={() => setVideoFailed(true)}
-          />
-        )}
-        {showImage && (
-          <img
-            src={page.image}
-            alt={page.label}
-            className="w-full h-full object-contain bg-black"
-            onError={() => setImageFailed(true)}
-          />
-        )}
-        {showPlaceholder && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/70">
-            <span className="text-white/35 text-xs">{page.label} 화면 준비 중</span>
-          </div>
-        )}
-
-        {showVideo && (
-          <button
-            type="button"
-            onClick={togglePlay}
-            aria-label={isPlaying ? "영상 멈추기" : "영상 재생"}
-            className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
-          >
-            {isPlaying ? (
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <rect x="3" y="2" width="4" height="12" rx="1" />
-                <rect x="9" y="2" width="4" height="12" rx="1" />
-              </svg>
-            ) : (
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M4 2.5v11l10-5.5-10-5.5Z" />
-              </svg>
-            )}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+// 2026-07-16(2차): 온보딩 카드 5개 + 그 렌더러가 전부 이 파일 안에 있던 걸
+// components/onboarding/ 폴더로 분리했다("각 페이지마다 각 컴포넌트로" 요청).
+// 개별 카드 내용은 components/onboarding/OverviewOnboardingCard.jsx 등을 참고.
+//
+// 2026-07-17(3차): "온보딩 영상을 다 봐야 로그인 창이 나오게" 요청으로,
+// 5개를 스크롤로 훑어보는 OnboardingSection 대신 한 번에 하나씩 순서대로
+// 이어 재생하는 OnboardingPlayer를 쓴다. OnboardingSection.jsx는 코드는
+// 남아있지만 이 파일에서는 더 이상 쓰지 않는다.
 
 // 상단 툴바의 마이크/카메라/화면공유/전체화면 아이콘 - 참고 스타일 프롬프트에
 // 있던 장식용 요소라 실제 동작은 없다(로그인 화면에 화상회의 컨트롤이 있을
@@ -169,6 +39,13 @@ export default function LoginScreen() {
   // 로드가 실패하면 기존의 흰 사각 아이콘으로 조용히 대체 - 깨진 이미지 아이콘이
   // 그대로 노출되는 것보다 낫다.
   const [logoFailed, setLogoFailed] = useState(false);
+  // 2026-07-17: "온보딩 영상 5개를 이어서 하나의 영상처럼 만들고, 다 시청해야
+  // 로그인/회원가입 창이 나오게 해달라"는 요청 - 온보딩을 다 보기 전엔
+  // onboardingDone이 false라 로그인 폼 대신 OnboardingPlayer만 보이고,
+  // 마지막 영상까지 끝나면(OnboardingPlayer의 onComplete) true로 바뀌면서
+  // 로그인 폼으로 전환된다. 새로고침하면 다시 처음부터 - 별도로 localStorage에
+  // "이미 봤음"을 저장해두진 않았다(요청에 없던 부분이라 우선 뺐다).
+  const [onboardingDone, setOnboardingDone] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -296,82 +173,79 @@ export default function LoginScreen() {
         <span className="text-white text-xl leading-none">✦</span>
       </div>
 
-      {/* 2026-07-16: "로그인은 상단 고정, 온보딩 소개는 여러 장을 세로로 쌓아
-          스크롤로 훑어본다"는 요청대로 구조를 다시 짰다 - 로그인 카드가 위에
-          먼저 오고(페이지 자체는 스크롤 안 해도 항상 보임), 그 아래 소개 카드가
-          내부 스크롤 영역(온보딩 카드 5개, 각각 전보다 훨씬 큰 h-64)을 갖는다. */}
+      {/* 2026-07-17: "온보딩 영상을 다 봐야 로그인/회원가입 창이 나오게"라는
+          요청으로 구조가 다시 바뀌었다 - 이전엔 로그인 카드가 항상 위에 고정
+          노출되고 그 아래 온보딩 카드 5개가 스크롤 갤러리로 같이 떠 있었지만,
+          이제는 onboardingDone이 false인 동안은 OnboardingPlayer(영상을
+          이어붙여 순서대로 자동재생하는 컴포넌트)만 보이고, 마지막 영상까지
+          다 끝나야 로그인 카드로 화면이 바뀐다. */}
       {/* 2026-07-16: "로그인 입력창은 작아도 되니 대시보드(온보딩) 크기를
           1240x800 스케일로 크게 키워달라"는 요청 - 바깥 컬럼 폭을
-          max-w-xl(576px) -> max-w-[1240px]로 크게 넓히고, 로그인 카드만
-          별도로 max-w-sm(384px)로 좁혀서 중앙에 작게 띄운다. 온보딩 섹션은
-          넓어진 폭 전체를 그대로 쓴다. */}
+          max-w-xl(576px) -> max-w-[1240px]로 크게 넓혔다. 로그인 카드가 보일
+          때는 그 안에서만 max-w-sm(384px)로 좁혀서 중앙에 작게 띄운다.
+          OnboardingPlayer는 넓어진 폭 전체를 그대로 쓴다. */}
       <div className="relative w-full max-w-[1240px] space-y-5">
-        <div className="max-w-sm mx-auto bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
-          <div className="flex items-center gap-2.5 mb-4">
-            {!logoFailed ? (
-              <img
-                src="/logo.png"
-                alt="SENTINEL-OPS"
-                onError={() => setLogoFailed(true)}
-                className="w-11 h-11 rounded-xl object-cover shadow-lg shrink-0"
-              />
-            ) : (
-              <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
-                <span className="w-4 h-4 rounded-sm bg-white" />
+        {!onboardingDone ? (
+          <OnboardingPlayer onComplete={() => setOnboardingDone(true)} />
+        ) : (
+          <div className="max-w-sm mx-auto bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              {!logoFailed ? (
+                <img
+                  src="/logo.png"
+                  alt="SENTINEL-OPS"
+                  onError={() => setLogoFailed(true)}
+                  className="w-11 h-11 rounded-xl object-cover shadow-lg shrink-0"
+                />
+              ) : (
+                <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
+                  <span className="w-4 h-4 rounded-sm bg-white" />
+                </div>
+              )}
+              <div>
+                <p className="text-white font-semibold text-base leading-none tracking-wide">SENTINEL-OPS</p>
+                <p className="text-white/60 text-[11px] mt-1.5 leading-relaxed">
+                  WAS · WAF · Falco · K8s Audit 로그를 실시간으로 수집하고 상관분석하여 공격을 하나의
+                  인시던트로 재구성해 조기에 탐지하는 보안 관제 플랫폼
+                </p>
               </div>
-            )}
-            <div>
-              <p className="text-white font-semibold text-base leading-none tracking-wide">SENTINEL-OPS</p>
-              <p className="text-white/60 text-[11px] mt-1.5 leading-relaxed">
-                WAS · WAF · Falco · K8s Audit 로그를 실시간으로 수집하고 상관분석하여 공격을 하나의
-                인시던트로 재구성해 조기에 탐지하는 보안 관제 플랫폼
-              </p>
             </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div>
+                <label className="text-white/50 text-xs block mb-1.5">아이디</label>
+                <input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoFocus
+                  autoComplete="username"
+                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
+                />
+              </div>
+              <div>
+                <label className="text-white/50 text-xs block mb-1.5">비밀번호</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {error && <p className="text-white text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-2">{error}</p>}
+
+              <button
+                type="submit"
+                disabled={!username || !password || submitting}
+                className="w-full text-sm font-medium py-2 rounded-lg bg-white/90 text-black hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                {submitting ? "로그인 중..." : "로그인"}
+              </button>
+            </form>
           </div>
-
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div>
-              <label className="text-white/50 text-xs block mb-1.5">아이디</label>
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoFocus
-                autoComplete="username"
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
-              />
-            </div>
-            <div>
-              <label className="text-white/50 text-xs block mb-1.5">비밀번호</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
-                placeholder="••••••••"
-              />
-            </div>
-
-            {error && <p className="text-white text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-2">{error}</p>}
-
-            <button
-              type="submit"
-              disabled={!username || !password || submitting}
-              className="w-full text-sm font-medium py-2 rounded-lg bg-white/90 text-black hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              {submitting ? "로그인 중..." : "로그인"}
-            </button>
-          </form>
-        </div>
-
-        <div className="bg-black/35 backdrop-blur-xl rounded-2xl border border-white/10 shadow-xl p-5">
-          <p className="text-white/45 text-[11px] uppercase tracking-wide mb-4 px-1">대시보드 둘러보기</p>
-          <div className="space-y-6 max-h-[80vh] overflow-y-auto pr-2">
-            {FEATURE_PAGES.map((page) => (
-              <OnboardingCard key={page.key} page={page} />
-            ))}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

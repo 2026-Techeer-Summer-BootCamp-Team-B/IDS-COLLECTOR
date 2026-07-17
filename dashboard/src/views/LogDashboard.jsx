@@ -25,8 +25,9 @@ import { useLogVolume } from "../hooks/useLogVolume";
 import { useLogLevels } from "../hooks/useLogLevels";
 import { useDetectionSources } from "../hooks/useDetectionSources";
 import { useLogs } from "../hooks/useLogs";
-import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } from "../data/realSeverity";
+import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY, getRealSeverityMeta } from "../data/realSeverity";
 import { getModuleMeta } from "../data/moduleMeta";
+import { useLiveAttackFeed } from "../hooks/useLiveFeed";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
 import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
 import { usePollInterval } from "../context/PollIntervalContext";
@@ -35,7 +36,7 @@ import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
 import TimeRangePicker from "../components/TimeRangePicker";
-import WorldMap from "../components/WorldMap";
+import GoogleGeoMap from "../components/GoogleGeoMap";
 // three.js는 이 카드에서만 쓰이는데도 LogDashboard.jsx가 Card/KpiCard 등 공용
 // 프리미티브를 export하다보니 다른 뷰(WAS/Falco/K8sAudit/Incidents)들이 전부 이
 // 파일을 import한다 — 정적 import로 넣으면 그 뷰들 번들에도 300~400KB가 얹혀버려서
@@ -546,7 +547,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }} />
+                <Tooltip contentStyle={tooltipStyle(C)} />
                 <Area type="monotone" dataKey="total" stroke={totalColor} fill="url(#volumeFill)" strokeWidth={2} />
                 <Area type="monotone" dataKey="errorish" stroke={errorColor} fill="url(#errorFill)" strokeWidth={2} />
                 {spikePoint && (
@@ -766,7 +767,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -841,16 +842,16 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
-  // 2026-07-16: max-h-80(320px)는 항목 5개 기준으로는 안 채워지고, highlighted
-  // 상태(limit=10)에서는 오히려 이 Card가 놓인 grid 행(왼쪽 Recent Logs와 같은
-  // 행, align-items 기본값 stretch)의 높이에 맞춰 카드가 계속 늘어나 보이는
-  // 문제가 있었다 - self-start로 그 stretch를 끄고, 목록 높이를 "정확히 5줄"
-  // 크기(h-48)로 고정해서 그 이상은 항상 내부 스크롤로만 보이게 했다.
+  // 2026-07-16: 목록 높이는 "정확히 5줄" 크기(h-48)로 고정해서 그 이상은 항상
+  // 내부 스크롤로만 보이게 한다. 이 카드는 오른쪽 컬럼(TopSources 위 +
+  // ErrorRateGauge 아래)의 flex-col 안에서 자기 내용 높이만 차지하고, 남는
+  // 세로 공간은 아래 ErrorRateGauge가 flex-1로 흡수해서 왼쪽 Recent Logs
+  // 높이와 맞춘다(아래 grid 행의 stretch + flex-col 구조 참고).
   return (
     <Card
       title="Top Source IPs"
       subtitle={highlighted ? `전체 ${sources.length}개 IP · 5개 이후 스크롤` : "선택 구간 기준"}
-      className={`self-start ${highlighted ? "glow-box-mint" : ""}`}
+      className={highlighted ? "glow-box-mint" : ""}
     >
       <div className="space-y-3 h-48 min-h-0 overflow-y-auto pr-1">
         {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
@@ -895,43 +896,55 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   const data = [{ value: rate }, { value: 100 - rate }];
   const displayRate = useCountUp(`${rate}%`);
 
+  // 2026-07-16: 오른쪽 컬럼(TopSources + 이 카드)이 왼쪽 Recent Logs와 같은 행에서
+  // stretch되면, 이 카드가 flex-1로 남는 세로 공간을 전부 흡수한다 - 고정 140px
+  // 차트+오버레이 블록은 그대로 두고, 그 블록을 담은 wrapper를 flex로 세로
+  // 중앙정렬해서 늘어난 공간이 위아래로 고르게 여백처럼 보이게 했다(예전처럼
+  // 카드 아래쪽에만 어색하게 빈 공간이 남지 않도록).
   return (
-    <Card title={title} subtitle={subtitle} className="relative">
-      <ResponsiveContainer width="100%" height={140}>
-        <PieChart>
-          <Pie
-            data={data}
-            startAngle={180}
-            endAngle={0}
-            innerRadius={55}
-            outerRadius={72}
-            dataKey="value"
-            stroke="none"
-            isAnimationActive
-            animationDuration={800}
-            animationEasing="ease-out"
-          >
-            <Cell fill={C.critical} />
-            <Cell fill={C.surfaceAlt} />
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="absolute inset-x-0 bottom-6 flex flex-col items-center">
-        <span
-          className={`text-dash-fg text-2xl font-semibold tabular-nums ${rate > 0 ? "animate-pulse glow-critical" : ""}`}
-        >
-          {displayRate}
-        </span>
-        <span className="text-dash-muted text-xs">
-          {errorCount} / {events.length} {unitLabel}
-        </span>
+    <Card title={title} subtitle={subtitle} className="flex-1 flex flex-col">
+      <div className="relative flex-1 flex items-center justify-center min-h-[140px]">
+        <div className="relative w-full">
+          <ResponsiveContainer width="100%" height={140}>
+            <PieChart>
+              <Pie
+                data={data}
+                startAngle={180}
+                endAngle={0}
+                innerRadius={55}
+                outerRadius={72}
+                dataKey="value"
+                stroke="none"
+                isAnimationActive
+                animationDuration={800}
+                animationEasing="ease-out"
+              >
+                <Cell fill={C.critical} />
+                <Cell fill={C.surfaceAlt} />
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="absolute inset-x-0 bottom-6 flex flex-col items-center">
+            <span
+              className={`text-dash-fg text-2xl font-semibold tabular-nums ${rate > 0 ? "animate-pulse glow-critical" : ""}`}
+            >
+              {displayRate}
+            </span>
+            <span className="text-dash-muted text-xs">
+              {errorCount} / {events.length} {unitLabel}
+            </span>
+          </div>
+        </div>
       </div>
     </Card>
   );
 }
 
 function tooltipStyle(C) {
-  return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
+  // surfaceAlt가 순수 블랙에 가까운 다크 테마에서는 border:none이면 카드/페이지
+  // 배경과 거의 구분이 안 돼(2026-07-16 피드백: "도넛 차트에 마우스를 대면
+  // 검정색이라 잘 안 보임") - 옅은 테두리를 둬서 배경과 확실히 분리되게 한다.
+  return { background: C.surfaceAlt, border: `1px solid ${C.faint}`, borderRadius: 8, color: C.fg, fontSize: 12 };
 }
 
 // 카테고리형 데이터({key,label,count,color}[])의 막대그래프 버전 - 탐지소스/
@@ -1006,12 +1019,21 @@ function useCountUp(rawValue, duration = 500) {
 
   useEffect(() => {
     const numeric = typeof rawValue === "number" ? rawValue : parseFloat(String(rawValue).replace(/,/g, ""));
-    const isPlainNumber = !Number.isNaN(numeric) && String(rawValue).trim() === String(rawValue).replace(/,/g, "").trim() || /^[\d,]+(\.\d+)?%?$/.test(String(rawValue).trim());
+    // 2026-07-16: "%" 말고 "ms"/"건" 같은 다른 단위 접미사가 붙은 값("42ms",
+    // "128건")도 여기 들어오는데, 예전엔 suffix를 "%"만 인식해서 애니메이션이
+    // 시작되는 순간 단위가 사라지는 버그가 있었다("42ms" -> 애니메이션 중/후
+    // "42"만 남음) - 꼬리의 숫자/콤마/마침표/공백이 아닌 문자열을 통째로
+    // 접미사로 떼어내고, 남은 부분이 순수 숫자(콤마/소수점 허용)인지만 검사하도록
+    // 일반화했다.
+    const trimmed = String(rawValue).trim();
+    const suffixMatch = trimmed.match(/[^\d,.\s]+$/);
+    const numericPart = suffixMatch ? trimmed.slice(0, -suffixMatch[0].length).trim() : trimmed;
+    const isPlainNumber = !Number.isNaN(numeric) && /^[\d,]+(\.\d+)?$/.test(numericPart);
     if (Number.isNaN(numeric) || !isPlainNumber) {
       setDisplay(rawValue);
       return;
     }
-    const suffix = String(rawValue).trim().endsWith("%") ? "%" : "";
+    const suffix = suffixMatch ? suffixMatch[0] : "";
     const hasComma = String(rawValue).includes(",");
     const start = fromRef.current;
     const startTime = performance.now();
@@ -1094,7 +1116,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1179,7 +1201,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1266,7 +1288,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1296,21 +1318,59 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
 // 보여주는 쪽을 택함 — 랜딩 화면의 "화려한" 대표 비주얼 역할. 자세히 보려면
 // Infrastructure 탭으로.
 //
-// 주의: enrichment.py의 GeoIP lookup이 아직 모든 IP를 "KR/Seoul"로 고정
-// 반환하는 더미라, MaxMind DB가 붙기 전까진 지구본에 한반도 쪽 점만 두드러질
-// 수 있다 — 팀원 확인 필요(useGeoStats.js 주석 참고).
+// countries는 도시 단위 포인트라(2026-07-16, GeoLite2-City 도입) 같은 나라가 여러
+// 개 있을 수 있다 - 부제의 "N개국"은 countries.length가 아니라 countryCode
+// distinct count로 센다.
 function GeoSummaryCard() {
   const { theme } = useTheme();
-  const { countries, status, error } = useGeoStats({ limit: 10 });
+  const { countries, status, error } = useGeoStats({ limit: 50 });
   const total = countries.reduce((s, c) => s + c.count, 0);
+  const countryCount = new Set(countries.map((c) => c.countryCode)).size;
+  // 2026-07-17(7차): "Infrastructure처럼 Overview 지도도 2D/3D 토글로 바꿀 수
+  // 있게 해달라" - Infrastructure 패널과 같은 2D(Google Maps)/3D(지구본) 전환을
+  // 여기도 그대로 적용. 기본은 지금까지 써왔던 3D(지구본)를 유지해서 랜딩 화면의
+  // "화려한" 첫인상은 그대로 두고, 자세히 보고 싶을 때만 2D로 바꾸게 했다.
+  const [mapMode, setMapMode] = useState("3d");
 
   return (
-    <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`전체 기간 · ${countries.length}개국 · 총 ${total}건 · 드래그로 회전`}>
+    <Card
+      title="공격 발원지 (GeoIP)"
+      subtitle={
+        mapMode === "3d"
+          ? `전체 기간 · ${countryCount}개국 · 총 ${total}건 · 드래그로 회전`
+          : `전체 기간 · ${countryCount}개국 · 총 ${total}건 · 스크롤로 확대`
+      }
+      action={
+        <div className="flex items-center gap-1 shrink-0 bg-dash-surfaceAlt rounded-lg p-0.5">
+          {[
+            { key: "2d", label: "2D" },
+            { key: "3d", label: "3D" },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setMapMode(opt.key)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                mapMode === opt.key ? "bg-dash-fg text-dash-bg" : "text-dash-muted hover:text-dash-fg"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
       {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
-      <div className="h-80">
-        <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
-          <Globe3D points={countries} theme={theme} />
-        </Suspense>
+      {/* 2026-07-16(6차): 지구본이 카드 하단에서 살짝 잘린다는 피드백 - h-80(320px)
+          에서 조금만 늘렸다. */}
+      <div className="h-[360px]">
+        {mapMode === "2d" ? (
+          <GoogleGeoMap points={countries} />
+        ) : (
+          <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
+            <Globe3D points={countries} theme={theme} />
+          </Suspense>
+        )}
       </div>
     </Card>
   );
@@ -1341,7 +1401,7 @@ export function LatencyStatsPanel({ events }) {
     : [];
 
   return (
-    <Card title="API Latency" subtitle={stats ? `선택 구간 · ${stats.count.toLocaleString()}건 기준` : "데이터 없음"}>
+    <Card title="API Latency" subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}>
       {stats ? (
         <div className="grid grid-cols-5 gap-2">
           {rows.map((r) => (
@@ -1390,6 +1450,7 @@ export function RecentLogsTable({ events, filterLevels, status = "ready", error 
     <Card
       title="Recent Logs"
       subtitle={`Showing ${Math.min(filtered.length, 8)} of ${filtered.length}`}
+      className="h-full"
       action={
         <div className="flex flex-wrap gap-1 max-w-md">
           <button
@@ -1989,7 +2050,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label={`Total Logs (${preset.label})`}
-            value={kpiStatus === "ready" ? kpi.current.total : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
             onClick={() => setKpiFilter("ALL")}
@@ -2000,7 +2061,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Errors (Major~Critical)"
-            value={kpiStatus === "ready" ? kpi.current.errors : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
             onClick={() => setKpiFilter("ERROR")}
@@ -2012,7 +2073,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Warnings (Minor)"
-            value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
             onClick={() => setKpiFilter("WARNING")}
@@ -2023,7 +2084,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Active Sources"
-            value={kpiStatus === "ready" ? kpi.current.sources : "-"}
+            value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
             delta={
               kpiStatus === "ready" && kpi.sources_delta !== 0
                 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new`
@@ -2076,7 +2137,7 @@ export function DashboardContent() {
   const kpiTotalWidget = (
     <KpiCard
       label={`Total Logs (${preset.label})`}
-      value={kpiStatus === "ready" ? kpi.current.total : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
       onClick={() => setKpiFilter("ALL")}
@@ -2086,7 +2147,7 @@ export function DashboardContent() {
   const kpiErrorsWidget = (
     <KpiCard
       label="Errors (Major~Critical)"
-      value={kpiStatus === "ready" ? kpi.current.errors : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
       onClick={() => setKpiFilter("ERROR")}
@@ -2097,7 +2158,7 @@ export function DashboardContent() {
   const kpiWarningsWidget = (
     <KpiCard
       label="Warnings (Minor)"
-      value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
       onClick={() => setKpiFilter("WARNING")}
@@ -2107,7 +2168,7 @@ export function DashboardContent() {
   const kpiSourcesWidget = (
     <KpiCard
       label="Active Sources"
-      value={kpiStatus === "ready" ? kpi.current.sources : "-"}
+      value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
       delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
       positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
       onClick={() => setKpiFilter("SOURCES")}
@@ -2229,6 +2290,9 @@ export function DashboardContent() {
             {kpiSourcesWidget}
           </div>
 
+          {/* 2026-07-16(8차): "실시간 활동 흐름 / 상관 흐름 둘 다 별로였다"는
+              직접 피드백으로 두 위젯과 이 행 전체를 제거했다. */}
+
           <div>
             <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">로그 개요</p>
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -2248,13 +2312,15 @@ export function DashboardContent() {
 
           {latencyWidget}
 
-          {/* items-start(2026-07-16) - 기본값(stretch)이면 오른쪽 컬럼(Top
-              Sources+Error Rate, 내용이 짧음)이 왼쪽 Recent Logs 높이에 맞춰
-              강제로 늘어나면서 카드 밑에 어색한 빈 공간이 남았다(스크린샷 피드백).
-              items-start로 각 컬럼이 자기 내용 높이만큼만 차지하게 했다. */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
+          {/* 2026-07-16: items-start를 걷어내고 기본 stretch로 되돌렸다 - 대신
+              오른쪽 컬럼을 flex-col로 바꿔서 ErrorRateGauge가 flex-1로 남는
+              세로 공간을 흡수하게 했다. 그래서 오른쪽 컬럼 전체 높이가 항상
+              왼쪽 Recent Logs 높이와 같아지고(stretch), 그 차이만큼의 여백도
+              ErrorRateGauge 카드 안에서 자연스러운 위아래 패딩으로 흡수돼서
+              카드 바깥에 어색한 빈 공간이 남지 않는다. */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2">{recentLogsWidget}</div>
-            <div className="space-y-6">
+            <div className="flex flex-col gap-6">
               {topSourcesWidget}
               {errorRateWidget}
             </div>

@@ -22,6 +22,13 @@ function synthesizeMessage(doc) {
   if (module === "k8s_audit") {
     return doc["event.action"] || "K8s Audit 이벤트";
   }
+  if (module === "waf") {
+    const attackType = doc["event.action"] || "공격 시도";
+    const path = doc["url.path"] ?? "";
+    const blocked = doc["waf.blocked"];
+    const line = `${attackType}${path ? ` → ${path}` : ""}`;
+    return blocked === true ? `${line} (차단됨)` : blocked === false ? `${line} (허용됨)` : line;
+  }
   return doc["event.action"] || doc["event.dataset"] || "-";
 }
 

@@ -94,8 +94,8 @@ export default function WASView() {
       </div>
 
       <div className="flex flex-wrap gap-4">
-        <KpiCard label={`Total Requests (${preset.label})`} value={totalRequests.toLocaleString()} />
-        <KpiCard label="Errors (HTTP 4xx/5xx)" value={errorCount} accent="critical" />
+        <KpiCard label={`Total Requests (${preset.label})`} value={`${totalRequests.toLocaleString()}건`} />
+        <KpiCard label="Errors (HTTP 4xx/5xx)" value={`${errorCount}건`} accent="critical" />
         <KpiCard label="p99 Latency" value={latency ? `${latency.p99}ms` : "-"} />
         <KpiCard label="Avg Latency" value={latency ? `${latency.avg}ms` : "-"} />
       </div>

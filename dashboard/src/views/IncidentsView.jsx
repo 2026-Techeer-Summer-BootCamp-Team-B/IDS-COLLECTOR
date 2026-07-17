@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { SeverityBadge, SourceBadge } from "../components/badges";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { SeverityBadge, SourceBadge, SEVERITY_META } from "../components/badges";
 import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
@@ -11,7 +11,7 @@ import { useScenarios } from "../hooks/useScenarios";
 import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
-import { REAL_SEVERITY_LEVELS, getRealSeverityMeta } from "../data/realSeverity";
+import { getRealSeverityMeta } from "../data/realSeverity";
 import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 
@@ -21,6 +21,11 @@ const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" 
 function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
 }
+// 2026-07-17(5차): "심각도 분포" 도넛이 REAL_SEVERITY_LEVELS 원래 라벨
+// (Critical/Major/Minor/Info)을 그대로 써서, 같은 화면의 공격 스토리라인
+// 카드 배지(CRITICAL/HIGH/MEDIUM/LOW)와 단어가 달라 보였다는 피드백 -
+// 도넛도 같은 배지 라벨 체계로 통일한다.
+const SEVERITY_BADGE_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 
 // 2026-07-16: "전체 인시던트/Open/조사중/종결"처럼 한/영이 섞여있던 걸 실제
 // 인시던트 관리 툴(PagerDuty/Opsgenie류)에서 쓰는 영문 상태명으로 통일 -
@@ -32,7 +37,9 @@ const STATUS_META = {
   closed: { label: "Resolved", color: "#00FFA6" },
 };
 function tooltipStyle(C) {
-  return { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
+  // LogDashboard.jsx의 동일 함수와 같은 이유 - 순수 블랙 테마에서 border:none이면
+  // 배경과 안 구분됨 (2026-07-16, 도넛 차트 호버 가시성 피드백).
+  return { background: C.surfaceAlt, border: `1px solid ${C.faint}`, borderRadius: 8, color: C.fg, fontSize: 12 };
 }
 
 function MiniKpi({ label, value, sub, color, onClick, active = false }) {
@@ -125,12 +132,16 @@ function SeverityDonut({ incidents }) {
   const data = useMemo(() => {
     const counts = {};
     incidents.forEach((i) => {
-      counts[i.severity] = (counts[i.severity] || 0) + 1;
+      const key = severityBadgeKey(i.severity);
+      counts[key] = (counts[key] || 0) + 1;
     });
-    return REAL_SEVERITY_LEVELS.filter((l) => counts[l.severity]).map((l, i) => ({
-      key: l.key,
-      label: l.label,
-      count: counts[l.severity],
+    // 공격 스토리라인 카드 배지(CRITICAL/HIGH/MEDIUM/LOW)와 같은 라벨을 쓴다 -
+    // 예전엔 REAL_SEVERITY_LEVELS 원래 이름(Critical/Major/Minor/Info)을 써서
+    // 같은 화면 안에서 같은 심각도가 다른 단어로 보였다.
+    return SEVERITY_BADGE_ORDER.filter((key) => counts[key]).map((key, i) => ({
+      key,
+      label: SEVERITY_META[key].label,
+      count: counts[key],
       // Overview의 도넛들(SeverityDonutCompact 등)과 같은 톤 다운 순환 팔레트로
       // 통일 - severity 배지 등 다른 곳의 의미색(빨강=critical 등)과는 별개.
       color: DONUT_PALETTE[i % DONUT_PALETTE.length],
@@ -153,7 +164,7 @@ function SeverityDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -207,7 +218,7 @@ function StatusDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -222,6 +233,68 @@ function StatusDonut({ incidents }) {
             ))}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// 공격 유형(=적중된 상관 규칙)별 인시던트 통계 - 예전엔 TopSignalsCard가
+// "1위 규칙 이름 + 건수"만 텍스트 한 줄로 보여줘서 전체 분포 감이 안 왔다는
+// 피드백(2026-07-16) - 상위 5개 규칙을 막대그래프로 보여준다. AdminAuditView의
+// RuleRankingBarChart와 데이터 소스(GET /scenarios, hit_count)는 같지만, 그쪽은
+// "룰 관리자" 관점(토글 포함 전체 목록)이고 여기는 "이 인시던트들이 왜
+// 만들어졌는지" 관점이라 컴포넌트를 공유하지 않고 이 파일 안에 따로 둔다.
+function TopAttackTypesBarChart({ scenarios }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const data = useMemo(
+    () =>
+      [...scenarios]
+        .filter((s) => s.hit_count > 0)
+        .sort((a, b) => b.hit_count - a.hit_count)
+        .slice(0, 5)
+        .map((s) => ({ id: s.id, name: s.name, hits: s.hit_count })),
+    [scenarios]
+  );
+
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">공격 유형별 적중 통계 TOP 5</h3>
+      <p className="text-dash-muted text-xs mb-3">
+        어떤 상관 규칙(공격 패턴)이 인시던트를 가장 많이 만들었는지 · GET /scenarios 기준
+      </p>
+      {/* 2026-07-16(8차): "높이를 조금 줄여도 될 거 같다"는 피드백 - 행당
+          높이를 44 -> 36, 최소 높이를 180 -> 160으로 줄였다. */}
+      {data.length === 0 ? (
+        <p className="text-dash-muted text-xs py-3">적중된 상관 규칙이 없습니다.</p>
+      ) : (
+        <ResponsiveContainer width="100%" height={Math.max(160, data.length * 36)}>
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
+            <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
+            <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
+            <YAxis
+              type="category"
+              dataKey="name"
+              stroke={C.muted}
+              tickLine={false}
+              axisLine={false}
+              fontSize={11}
+              width={140}
+              tickFormatter={(v) => (v.length > 16 ? `${v.slice(0, 16)}…` : v)}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle(C)}
+              cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+              formatter={(value) => [`${value}건`, "적중 건수"]}
+              labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+            />
+            <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+              {data.map((d, i) => (
+                <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       )}
     </div>
   );
@@ -292,7 +365,7 @@ function StorylineEntry({ entry, isLast }) {
  *
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
-export default function IncidentsView({ pushToast }) {
+export default function IncidentsView({ pushToast, pendingIncident }) {
   const { incidents, status, error, reload } = useIncidents({ limit: 200 });
   const { scenarios } = useScenarios();
   // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
@@ -310,6 +383,13 @@ export default function IncidentsView({ pushToast }) {
   useEffect(() => {
     if (!selectedId && incidents.length) setSelectedId(incidents[0].id);
   }, [incidents, selectedId]);
+
+  // ATT&CK 매트릭스의 "조치하러 가기" 버튼으로 들어온 경우 - App.jsx가
+  // pendingIncident.nonce를 매번 새 값으로 넘겨주므로(같은 인시던트를 다시
+  // 눌러도 감지됨), 여기서도 바로 그 인시던트를 선택 상태로 맞춘다.
+  useEffect(() => {
+    if (pendingIncident?.id) setSelectedId(pendingIncident.id);
+  }, [pendingIncident]);
 
   const filteredIncidents = useMemo(
     () => (statusFilter === "ALL" ? incidents : incidents.filter((i) => i.status === statusFilter)),
@@ -405,6 +485,8 @@ export default function IncidentsView({ pushToast }) {
         <SeverityDonut incidents={incidents} />
         <StatusDonut incidents={incidents} />
       </div>
+
+      <TopAttackTypesBarChart scenarios={scenarios} />
 
       {/* 좌측 폭을 320px -> 240px로 줄였다(2026-07-16) - 카드 내용을 핵심만
           남기고 나니 320px는 과하게 넓었고, 그만큼 우측 상세 패널이 좁았다.

@@ -3,17 +3,12 @@ import { apiGet, ApiError } from "../lib/authApi";
 import { getCountryGeo } from "../data/countryGeo";
 
 // GET /stats/geo (servers/platform-api/app/analytics_api.py, ClickHouse
-// security_events_analytics 집계) — 국가별 탐지 건수. data/attackEvents.js의
-// byCountry(ATTACK_EVENTS) mock 대체. 응답은 {country_iso_code, count}뿐이라
-// WorldMap/Globe3D가 필요로 하는 lat/lon/국가명은 data/countryGeo.js(오프라인
-// 생성 테이블)로 붙인다 — 코드가 테이블에 없으면(희귀 지역코드 등) 그 항목은
-// 그린다.
-//
-// 주의: enrichment.py의 GeoIP lookup이 아직 모든 IP를 "KR/Seoul"로 고정
-// 반환하는 더미라, MaxMind DB가 붙기 전까지는 실제로 연결해도 지도에 한반도
-// 쪽 점 하나만 두드러지게 보일 수 있다 — 백엔드 GeoIP가 실측으로 바뀌면
-// 자동으로 정상화된다.
-export function useGeoStats({ limit = 10 } = {}) {
+// security_events_analytics 집계) - 도시 단위 탐지 건수. 위경도는 GeoLite2-City가
+// 실측한 값을 API가 그대로 내려주므로(2026-07-16, geoip2fast country-only 배포판에서
+// 교체), data/countryGeo.js는 더 이상 좌표 조회용이 아니라 국가 표시 이름(한글/영문
+// 국가명) 조회용으로만 쓴다 - country_iso_code가 그 테이블에 없는 희귀 지역코드면
+// 코드 자체를 이름으로 표시한다.
+export function useGeoStats({ limit = 50 } = {}) {
   const [countries, setCountries] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
@@ -25,12 +20,15 @@ export function useGeoStats({ limit = 10 } = {}) {
       .then((res) => {
         if (cancelled) return;
         const mapped = (res ?? [])
-          .map((row) => {
-            const geo = getCountryGeo(row.country_iso_code);
-            if (!geo) return null;
-            return { country: geo.name, countryCode: row.country_iso_code, lat: geo.lat, lon: geo.lon, count: row.count };
-          })
-          .filter(Boolean);
+          .filter((row) => row.lat != null && row.lon != null)
+          .map((row) => ({
+            country: getCountryGeo(row.country_iso_code)?.name ?? row.country_iso_code,
+            countryCode: row.country_iso_code,
+            city: row.city_name ?? null,
+            lat: row.lat,
+            lon: row.lon,
+            count: row.count,
+          }));
         setCountries(mapped);
         setStatus("ready");
         setError(null);

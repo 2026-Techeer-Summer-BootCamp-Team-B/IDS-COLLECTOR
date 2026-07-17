@@ -1,6 +1,5 @@
 import React from "react";
-import { CHART_COLORS } from "../data/theme";
-import { useTheme } from "../hooks/useTheme";
+import { DONUT_PALETTE } from "../data/theme";
 import { Card } from "../views/LogDashboard";
 
 /**
@@ -12,8 +11,6 @@ import { Card } from "../views/LogDashboard";
  * items: [{ label, count, sub? }] — pre-sorted, this just renders + bars.
  */
 export default function RankedList({ title, subtitle, items, limit = 8, valueSuffix = "" }) {
-  const { theme } = useTheme();
-  const C = CHART_COLORS[theme];
   const max = items[0]?.count || 1;
 
   return (
@@ -31,12 +28,18 @@ export default function RankedList({ title, subtitle, items, limit = 8, valueSuf
                   {item.sub ? <span className="text-dash-faint"> · {item.sub}</span> : null}
                 </span>
               </div>
+              {/* 2026-07-16: 순위 막대가 mint/pink 2색 번갈이라 "WAS/WAF/Falco/
+                  K8s Audit 4개 페이지 다 색이 두 개뿐"이라는 피드백 - Overview
+                  도넛들과 같은 DONUT_PALETTE를 순위 인덱스로 순환시켜 순위마다
+                  다른 톤이 나오도록 바꿨다(리스트가 5개 넘으면 색이 한 바퀴
+                  돌아 반복되는데, 바로 옆 순위끼리는 항상 다른 색이라 구분엔
+                  지장 없음). */}
               <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
                 <div
                   className="h-full rounded-full"
                   style={{
                     width: `${(item.count / max) * 100}%`,
-                    backgroundColor: i % 2 === 0 ? C.mint : C.pink,
+                    backgroundColor: DONUT_PALETTE[i % DONUT_PALETTE.length],
                   }}
                 />
               </div>

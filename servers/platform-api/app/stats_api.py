@@ -15,10 +15,10 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 # 임계치. dashboard/src/views/InfrastructureView.jsx의 SourceHealthPanel이 예전엔
 # dashboard/src/data/attackEvents.js의 sourceHealth()로 흉내만 냈다(고정 mock
 # 날짜 기준이라 실제 파이프라인 상태와 무관하게 항상 같은 값이 나옴, 2026-07-15
-# 확인) - 여기서 attack-logs-*의 실제 최신 문서 시각으로 대체한다. waf는 현재
-# 비활성화 상태(moduleMeta.js 참고)라 모니터링 대상에서 뺐다 - 항상 조용한
-# 소스를 넣어봐야 매번 critical만 찍혀 신호가 아니라 잡음이 된다.
-_HEALTH_MODULES = ["was", "falco", "k8s_audit"]
+# 확인) - 여기서 attack-logs-*의 실제 최신 문서 시각으로 대체한다. waf는
+# 2026-07-16에 백엔드가 다시 붙으면서(moduleMeta.js 참고) 실제로 이벤트가
+# 들어오게 됐으므로 모니터링 대상에 포함한다.
+_HEALTH_MODULES = ["was", "waf", "falco", "k8s_audit"]
 _HEALTH_WARNING_SECONDS = 30 * 60
 _HEALTH_CRITICAL_SECONDS = 2 * 60 * 60
 
@@ -138,7 +138,11 @@ async def get_source_health() -> List[Dict[str, Any]]:
 
 async def _window_kpi(start: datetime, end: datetime) -> Dict[str, int]:
     """구간 하나에 대한 total/errors(severity>=3)/warnings(severity==2)/sources(고유
-    event.module 수)를 한 번의 요청으로 뽑는다. /kpi가 현재/이전 두 구간에 대해 호출."""
+    event.module 수)/blocked(waf.blocked=true 건수)를 한 번의 요청으로 뽑는다.
+    /kpi가 현재/이전 두 구간에 대해 호출. blocked는 2026-07-16 "총 BLOCKED가
+    뭘 뜻하는지" 피드백으로 추가 - WAF가 실제로 막은(waf.blocked=true) 요청
+    건수로 정의했다(모듈 전체가 아니라 "차단까지 된" 것만 센다 - 탐지만 되고
+    통과된 요청은 포함 안 함)."""
     result = await opensearch_client.search(
         index=settings.attack_log_index_pattern,
         body={
@@ -148,6 +152,7 @@ async def _window_kpi(start: datetime, end: datetime) -> Dict[str, int]:
             "aggs": {
                 "by_severity": {"terms": {"field": "event.severity", "size": 4}},
                 "distinct_modules": {"cardinality": {"field": "event.module"}},
+                "blocked": {"filter": {"term": {"waf.blocked": True}}},
             },
         },
     )
@@ -156,18 +161,25 @@ async def _window_kpi(start: datetime, end: datetime) -> Dict[str, int]:
     errors = sum(count for sev, count in sev_counts.items() if sev >= 3)
     warnings = sev_counts.get(2, 0)
     sources = result["aggregations"]["distinct_modules"]["value"]
-    return {"total": total, "errors": errors, "warnings": warnings, "sources": sources}
+    blocked = result["aggregations"]["blocked"]["doc_count"]
+    return {"total": total, "errors": errors, "warnings": warnings, "sources": sources, "blocked": blocked}
 
 
 def _pct_delta(current: int, previous: int) -> Optional[float]:
+    # 2026-07-16: previous==0인데 current>0이면 예전엔 "100.0"을 고정으로
+    # 돌려줬는데, 이건 실제 증감률이 아니라 0으로 못 나누니까 대충 끼워맞춘
+    # 숫자였다 - 데모에서 "왜 맨날 정확히 100%야?"로 바로 티가 났다(피드백).
+    # 수학적으로 정의가 안 되는 구간(이전 구간에 비교할 데이터 자체가 없음)이니
+    # 억지로 숫자를 만들지 않고 None(=프론트에서 배지 자체를 안 보여줌)으로
+    # 돌린다 - "비교할 이전 데이터 없음"을 정직하게 표현.
     if previous == 0:
-        return None if current == 0 else 100.0
+        return None
     return round((current - previous) / previous * 100, 1)
 
 
 @router.get("/kpi")
 async def get_kpi(hours: float = 24) -> Dict[str, Any]:
-    """Overview 상단 KPI 카드 4개(Total/Errors/Warnings/Active Sources) - 현재
+    """Overview 상단 KPI 카드(Total/Errors/Warnings/Active Sources/Blocked) - 현재
     구간과 바로 직전 동일 길이 구간을 함께 계산해서 델타(%)도 같이 내려준다.
 
     hours가 int면 1시간 미만 RANGE_PRESETS(1분/5분/15분/30분)에서 422가 난다 -
@@ -186,6 +198,7 @@ async def get_kpi(hours: float = 24) -> Dict[str, Any]:
             "total": _pct_delta(current["total"], previous["total"]),
             "errors": _pct_delta(current["errors"], previous["errors"]),
             "warnings": _pct_delta(current["warnings"], previous["warnings"]),
+            "blocked": _pct_delta(current["blocked"], previous["blocked"]),
         },
         "sources_delta": current["sources"] - previous["sources"],
     }

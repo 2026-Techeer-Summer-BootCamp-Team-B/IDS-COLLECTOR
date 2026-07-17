@@ -105,26 +105,43 @@ async def get_timeseries(range: str = "24h") -> List[Dict[str, Any]]:
 async def get_geo(
     start: Optional[str] = None, end: Optional[str] = None, limit: int = 10
 ) -> List[Dict[str, Any]]:
-    """국가별 탐지 건수 (Infrastructure 지도용) - GeoIP 미매치('??')는 제외.
-    위경도/국가명은 프론트가 이미 가진 조회 테이블로 조인하면 되므로 코드만 준다."""
+    """도시 단위 탐지 건수 (Infrastructure 지도용) - GeoIP 미매치('??')는 제외.
+    위경도는 GeoLite2-City가 실측한 값을 그대로 내려준다(국가 중심좌표 근사가 아님) -
+    프론트(WorldMap/Globe3D)는 이 lat/lon을 그대로 찍기만 하면 된다. 같은 도시(같은
+    country_iso_code/city_name/lat/lon 조합)는 GROUP BY로 자연히 하나로 합산된다 -
+    MaxMind가 같은 도시에는 항상 같은 좌표를 돌려주므로 부동소수점 GROUP BY로도
+    안전하다.
+
+    geo_lat=0 AND geo_lon=0(Null Island)도 country_iso_code와 함께 제외한다 - 실제
+    관측 좌표가 아니라 `ALTER TABLE ... ADD COLUMN`이 기존 행에 채운 Float64
+    기본값이다(2026-07-16, GeoLite2-City 도입 전 쌓인 행은 country만 있고 좌표가
+    없었음). 안 걸러내면 그 행들이 전부 지도의 (0,0) 한 점에 겹쳐 찍힌다 - 실제
+    IP가 정확히 (0,0)으로 조회될 일은 없어(대서양 한복판) 안전한 센티널이다."""
     where, params = _time_filter(start, end)
-    where = f"{where} AND geo_country_iso_code != '??'" if where else "WHERE geo_country_iso_code != '??'"
-    params["limit"] = max(1, min(limit, 100))
+    null_island_clause = "geo_country_iso_code != '??' AND NOT (geo_lat = 0 AND geo_lon = 0)"
+    where = f"{where} AND {null_island_clause}" if where else f"WHERE {null_island_clause}"
+    params["limit"] = max(1, min(limit, 200))
 
     result = await client().query(
         f"""
-        SELECT geo_country_iso_code, count() AS cnt
+        SELECT geo_country_iso_code, geo_city_name, geo_lat, geo_lon, count() AS cnt
         FROM security_events_analytics
         {where}
-        GROUP BY geo_country_iso_code
+        GROUP BY geo_country_iso_code, geo_city_name, geo_lat, geo_lon
         ORDER BY cnt DESC
         LIMIT %(limit)s
         """,
         parameters=params,
     )
     return [
-        {"country_iso_code": code.decode("ascii", errors="replace").rstrip("\x00"), "count": cnt}
-        for code, cnt in result.result_rows
+        {
+            "country_iso_code": code.decode("ascii", errors="replace").rstrip("\x00"),
+            "city_name": city or None,
+            "lat": lat,
+            "lon": lon,
+            "count": cnt,
+        }
+        for code, city, lat, lon, cnt in result.result_rows
     ]
 
 

@@ -176,7 +176,7 @@ async def _process_body(source: str, observed_time_unix_nano: str, body: Any) ->
     # 오판해서 실제로는 emit된 적 없는 이벤트가 TTL(1h) 동안 영구 유실된다(dedupe.py
     # 의 release() 참고, 실측 확인 2026-07-15).
     try:
-        enrich(source, payload, event)
+        await enrich(source, payload, event)
 
         # exclude_none=True: 해당 없는 필드는 null로 채우지 않고 아예 생략한다.
         doc = event.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8")

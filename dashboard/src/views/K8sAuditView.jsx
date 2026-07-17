@@ -162,9 +162,9 @@ export default function K8sAuditView() {
       </div>
 
       <div className="flex flex-wrap gap-4">
-        <KpiCard label={`Total Audit Events (${preset.label})`} value={totalAuditEvents.toLocaleString()} />
-        <KpiCard label="Denied (HTTP 403)" value={deniedCount} accent="critical" />
-        <KpiCard label="Distinct Users" value={distinctUsers} />
+        <KpiCard label={`Total Audit Events (${preset.label})`} value={`${totalAuditEvents.toLocaleString()}건`} />
+        <KpiCard label="Denied (HTTP 403)" value={`${deniedCount}건`} accent="critical" />
+        <KpiCard label="Distinct Users" value={`${distinctUsers}명`} />
         <KpiCard label="Top Verb" value={topVerb ? `${topVerb.label} (${topVerb.count})` : "-"} />
       </div>
 

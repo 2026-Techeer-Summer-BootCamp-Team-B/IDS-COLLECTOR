@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     # 토큰 방식이라 "*"라도 안전).
     cors_allowed_origins: str = "*"
 
+    # 게이트웨이 시크릿(감사 S13, 2026-07-16) - Traefik이 platform-api로 라우팅하는
+    # 모든 요청에 이 값을 X-Internal-Gateway-Secret 헤더로 주입한다(servers/
+    # docker-compose.yml의 platform-api-gateway-secret 미들웨어, headers.
+    # customrequestheaders). siem-net 안에서 Traefik을 거치지 않고 platform-api:8400에
+    # 직접 붙는 요청은 이 헤더가 없으므로 app/main.py의 미들웨어(app/auth.py의
+    # verify_gateway_secret())가 403으로 거부한다 - X-Auth-*(세션 신원, forwardAuth가
+    # 실어줌)를 신뢰하기 전에 "이 요청이 정말 Traefik을 거쳐왔는가"부터 확인하는 게
+    # 목적. 이 기본값은 dev 전용 placeholder다 - 실값은 servers/docker-compose.yml의
+    # INTERNAL_GATEWAY_SECRET(env var, ${INTERNAL_GATEWAY_SECRET} 참조)이 컨테이너
+    # 기동 시 덮어쓴다.
+    internal_gateway_secret: str = "CHANGE_ME_dev"
+
     class Config:
         env_file = ".env"
 

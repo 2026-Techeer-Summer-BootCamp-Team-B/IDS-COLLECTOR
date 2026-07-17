@@ -5,6 +5,7 @@ import AttackMatrixView from "./views/AttackMatrixView";
 import InfrastructureView from "./views/InfrastructureView";
 import AdminAuditView from "./views/AdminAuditView";
 import WASView from "./views/WASView";
+import WAFView from "./views/WAFView";
 import FalcoView from "./views/FalcoView";
 import K8sAuditView from "./views/K8sAuditView";
 import LiveTicker from "./components/LiveTicker";
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
 // 계층별 상세 뷰 — 위 NAV_ITEMS와 별도 그룹으로 사이드바에 노출 (구분선으로 분리).
 const LAYER_NAV_ITEMS = [
   { key: "was", label: "WAS" },
+  { key: "waf", label: "WAF" },
   { key: "falco", label: "Falco" },
   { key: "k8s-audit", label: "K8s API" },
 ];
@@ -259,7 +261,7 @@ function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
 function ConnectionBar() {
   return (
     <div className="flex items-center justify-end px-6 py-2 border-b border-dash-surfaceAlt text-xs text-dash-muted">
-      <span>WAS · Falco · K8s-Audit 연결됨</span>
+      <span>WAS · WAF · Falco · K8s-Audit 연결됨</span>
     </div>
   );
 }
@@ -278,6 +280,16 @@ function Placeholder({ label }) {
 function AppShell() {
   const [active, setActive] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // 2026-07-16: ATT&CK 매트릭스에서 "진행중" 인시던트의 "조치하러 가기" 버튼을
+  // 누르면 Incidents 탭으로 전환하면서 그 인시던트를 바로 선택해서 보여준다.
+  // pendingIncidentId가 바뀔 때마다 IncidentsView에 새로 전달돼서(참조가 매번
+  // 바뀌도록 { id, nonce } 형태로 감쌌다 - 같은 인시던트를 연달아 눌러도 항상
+  // 다시 선택되게) useEffect가 selectedId를 그 값으로 맞춘다.
+  const [pendingIncident, setPendingIncident] = useState(null);
+  function goToIncident(incidentId) {
+    setPendingIncident({ id: incidentId, nonce: Date.now() });
+    setActive("incidents");
+  }
   const { feed, lastCritical } = useLiveAttackFeed();
 
   // Fake response actions live here (not inside IncidentsView) so they
@@ -316,11 +328,12 @@ function AppShell() {
         <ConnectionBar />
         <main className="flex-1 p-6 overflow-y-auto">
           {active === "overview" && <DashboardContent />}
-          {active === "incidents" && <IncidentsView pushToast={pushToast} />}
-          {active === "attack" && <AttackMatrixView />}
+          {active === "incidents" && <IncidentsView pushToast={pushToast} pendingIncident={pendingIncident} />}
+          {active === "attack" && <AttackMatrixView onNavigateToIncident={goToIncident} />}
           {active === "infra" && <InfrastructureView />}
           {active === "admin" && <AdminAuditView pushToast={pushToast} />}
           {active === "was" && <WASView />}
+          {active === "waf" && <WAFView />}
           {active === "falco" && <FalcoView />}
           {active === "k8s-audit" && <K8sAuditView />}
         </main>

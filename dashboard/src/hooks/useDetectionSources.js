@@ -3,9 +3,9 @@ import { apiGet, ApiError } from "../lib/authApi";
 import { usePoll } from "./usePoll";
 
 // GET /stats?start=&end= (servers/platform-api/app/stats_api.py)의 by_module을
-// 재사용 — "탐지 소스별 분포" 도넛과 WAS/Falco/K8sAudit 상세 뷰의 "Total" 카드
-// 실데이터 소스. WAF는 비활성화 상태라 by_module에 안 잡히거나 0건일 수 있음
-// (정상 — backend/ 매니페스트가 주석 처리됨). pollMs를 주면 주기적으로 재요청.
+// 재사용 — "탐지 소스별 분포" 도넛과 WAS/WAF/Falco/K8sAudit 상세 뷰의 "Total"
+// 카드 실데이터 소스. WAF는 2026-07-16부터 백엔드가 다시 붙어서 by_module에도
+// 정상적으로 잡힌다. pollMs를 주면 주기적으로 재요청.
 export function useDetectionSources({ lookbackMs, pollMs }) {
   const [byModule, setByModule] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error

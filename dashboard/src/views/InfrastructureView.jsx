@@ -1,13 +1,17 @@
-import React, { useMemo } from "react";
-import { ResponsiveContainer, Treemap } from "recharts";
-import WorldMap from "../components/WorldMap";
+import React, { useMemo, useState, Suspense, lazy } from "react";
+import GoogleGeoMap from "../components/GoogleGeoMap";
 import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
 import { useSourceHealth } from "../hooks/useSourceHealth";
-import { useK8sTargets } from "../hooks/useK8sTargets";
 import { useGeoStats } from "../hooks/useGeoStats";
 import { ModuleVolumeStackedChart } from "./LogDashboard";
+
+// 2026-07-17(6차): "구글 지도(2D)랑 기존 3D 지구본을 합쳐서 버튼으로 전환하게
+// 해달라" - Globe3D는 three.js 기반이라 무겁다(LogDashboard.jsx도 같은 이유로
+// lazy+Suspense로 분리해서 씀). 여기서도 3D를 실제로 선택했을 때만 청크를
+// 받아오도록 동일하게 지연 로드한다.
+const Globe3D = lazy(() => import("../components/Globe3D"));
 
 const STATUS_META = {
   healthy: { label: "정상 수신중" },
@@ -116,8 +120,8 @@ function PipelineHealthPanel() {
       {status !== "loading" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px]">대기 중인 로그 (컨슈머 Lag)</p>
-            <p className="text-dash-faint text-[10px] mb-2">아직 처리 못 하고 쌓여있는 로그 수 — 많을수록 처리가 밀리는 중</p>
+            <p className="text-dash-fg text-[11px] font-medium">대기 중인 로그 (컨슈머 Lag)</p>
+            <p className="text-dash-muted text-[10px] mb-2">아직 처리 못 하고 쌓여있는 로그 수</p>
             {consumerLag.length === 0 && <p className="text-dash-muted text-xs">데이터 없음</p>}
             <div className="space-y-2">
               {consumerLag.map((g) => {
@@ -135,8 +139,8 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px]">처리 실패한 로그 (DLQ)</p>
-            <p className="text-dash-faint text-[10px] mb-2">정상 처리가 안 돼서 따로 빼놓은 로그 수 — 0이 정상</p>
+            <p className="text-dash-fg text-[11px] font-medium">처리 실패한 로그 (DLQ)</p>
+            <p className="text-dash-muted text-[10px] mb-2">정상 처리가 안 돼서 따로 빼놓은 로그 수</p>
             {dlqDepth ? (
               <p
                 className="text-2xl font-semibold"
@@ -151,20 +155,20 @@ function PipelineHealthPanel() {
           </div>
 
           <div className="bg-dash-bg rounded-xl p-4">
-            <p className="text-dash-faint text-[11px]">로그 도착까지 걸린 시간</p>
-            <p className="text-dash-faint text-[10px] mb-2">로그가 발생한 순간부터 여기 수집되기까지 걸린 시간 — 짧을수록 실시간에 가까움</p>
+            <p className="text-dash-fg text-[11px] font-medium">로그 도착까지 걸린 시간</p>
+            <p className="text-dash-muted text-[10px] mb-2">로그가 발생한 순간부터 여기 수집되기까지 걸린 시간 (짧을수록 실시간에 가까움)</p>
             {clockSkew && clockSkew.sample_size > 0 ? (
               <div className="flex gap-4 text-xs">
                 <div>
-                  <p className="text-dash-faint mb-0.5">p50</p>
+                  <p className="text-dash-muted mb-0.5">p50</p>
                   <p className="text-dash-fg font-mono">{formatMs(clockSkew.p50_ms)}</p>
                 </div>
                 <div>
-                  <p className="text-dash-faint mb-0.5">p95</p>
+                  <p className="text-dash-muted mb-0.5">p95</p>
                   <p className="text-dash-fg font-mono">{formatMs(clockSkew.p95_ms)}</p>
                 </div>
                 <div>
-                  <p className="text-dash-faint mb-0.5">max</p>
+                  <p className="text-dash-muted mb-0.5">max</p>
                   <p className="text-dash-fg font-mono">{formatMs(clockSkew.max_ms)}</p>
                 </div>
               </div>
@@ -195,79 +199,36 @@ function intensityColor(count, max, C) {
   return C.surfaceAlt;
 }
 
-// DONUT_PALETTE 톤(테라코타/앰버/스틸블루)은 중간~어두운 채도라 흰 글자가 다시
-// 잘 읽힌다 - 무채색 "공격 없음" 타일만 어두운 surface 계열이라 밝은 글자.
-function intensityTextColor(count, max, C) {
-  return max && count > 0 ? "#FFFFFF" : C.fg;
-}
-
-// 2026-07-16: "클러스터 구조"가 네임스페이스 라벨 + 폰트 크기 pill을 그냥
-// flex-wrap으로 늘어놓기만 해서 밋밋하고 크기 비교도 안 된다는 피드백 -
-// 네임스페이스>파드 계층을 그대로 살리면서 "공격이 몰린 곳일수록 실제로
-// 넓게 보이는" Treemap으로 바꿨다. depth 1(네임스페이스)은 얇은 테두리
-// 컨테이너 + 좌상단 라벨만, depth 2(파드)가 실제 색칠된 셀 - intensityColor를
-// 그대로 재사용해서 위의 "Top 공격 대상" 막대와 톤이 어긋나지 않게 했다.
-function ClusterTreemapCell(props) {
-  const { x, y, width, height, depth, name, count, maxTarget, C } = props;
-
-  if (depth === 1) {
-    return (
-      <g>
-        <rect x={x} y={y} width={width} height={height} fill="none" stroke={C.surfaceAlt} strokeWidth={2} />
-        {width > 36 && height > 14 && (
-          <text x={x + 5} y={y + 13} fontSize={10} fontWeight={600} fill={C.faint}>
-            {name}
-          </text>
-        )}
-      </g>
-    );
-  }
-
-  const fill = intensityColor(count, maxTarget, C);
-  const textColor = intensityTextColor(count, maxTarget, C);
-  const showLabel = width > 46 && height > 18;
-  const showCount = width > 46 && height > 34;
-
-  return (
-    <g>
-      <rect x={x} y={y} width={width} height={height} fill={fill} stroke={C.bg} strokeWidth={1.5} rx={3} />
-      {showLabel && (
-        <text
-          x={x + width / 2}
-          y={y + height / 2 - (showCount ? 6 : 0)}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fontSize={10}
-          fill={textColor}
-        >
-          {name}
-        </text>
-      )}
-      {showCount && (
-        <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" fontSize={9} fill={textColor} opacity={0.85}>
-          {count}건
-        </text>
-      )}
-    </g>
-  );
-}
-
 // 국가별 공격 막대그래프 - GeoIP 지도는 위치 감각은 주지만 국가끼리 정확한
 // 건수 비교는 어려워서(원 크기만으로는) 순위형 막대 목록을 옆에 같이 둔다.
 // "Top 공격 대상" 패널과 같은 손그림 막대 스타일 + intensityColor로 톤을 맞춤.
+//
+// countries prop은 도시 단위(2026-07-16, GeoLite2-City 도입 이후 useGeoStats가
+// city 좌표를 그대로 내려줌) - 같은 나라의 여러 도시를 국가 하나로 합산해서
+// 순위를 매긴다(그대로 쓰면 같은 country_iso_code가 여러 행에 걸쳐 나와 React key
+// 충돌도 난다).
 function CountryAttackBarChart({ countries, status, error, C }) {
-  const max = countries[0]?.count || 1;
+  const byCountry = useMemo(() => {
+    const totals = new Map();
+    countries.forEach((c) => {
+      const prev = totals.get(c.countryCode);
+      if (prev) prev.count += c.count;
+      else totals.set(c.countryCode, { countryCode: c.countryCode, country: c.country, count: c.count });
+    });
+    return [...totals.values()].sort((a, b) => b.count - a.count);
+  }, [countries]);
+  const max = byCountry[0]?.count || 1;
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
       <h3 className="text-dash-fg text-sm font-semibold mb-1">국가별 공격 순위</h3>
       <p className="text-dash-muted text-xs mb-4">전체 기간 · 탐지 건수 기준</p>
       {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs py-2">{error}</p>}
-      {status === "ready" && countries.length === 0 && (
+      {status === "ready" && byCountry.length === 0 && (
         <p className="text-dash-muted text-xs py-2">GeoIP 데이터가 아직 없습니다.</p>
       )}
       <div className="space-y-2.5">
-        {countries.slice(0, 8).map((c, i) => (
+        {byCountry.slice(0, 8).map((c, i) => (
           <div key={c.countryCode} className="flex items-center gap-3">
             <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
             <div className="flex-1">
@@ -292,30 +253,8 @@ function CountryAttackBarChart({ countries, status, error, C }) {
 export default function InfrastructureView() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const { targets, status: targetsStatus, error: targetsError } = useK8sTargets({ limit: 20 });
-  const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 10 });
-  const maxTarget = targets[0]?.count || 1;
-
-  const byNamespace = useMemo(() => {
-    const map = {};
-    targets.forEach((t) => {
-      map[t.namespace] = map[t.namespace] || [];
-      map[t.namespace].push(t);
-    });
-    return map;
-  }, [targets]);
-
-  // "클러스터 구조" Treemap용 - 네임스페이스가 depth 1 노드, 그 안의 파드들이
-  // depth 2 리프. size=count라 공격이 몰린 파드일수록 실제로 더 넓은 박스로
-  // 그려진다.
-  const clusterTreemapData = useMemo(
-    () =>
-      Object.entries(byNamespace).map(([ns, pods]) => ({
-        name: ns,
-        children: pods.map((p) => ({ name: p.pod, size: p.count, count: p.count })),
-      })),
-    [byNamespace]
-  );
+  const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 50 });
+  const [mapMode, setMapMode] = useState("2d"); // "2d" (Google Maps) | "3d" (지구본)
 
   return (
     <div className="space-y-6">
@@ -332,72 +271,58 @@ export default function InfrastructureView() {
       <PipelineHealthPanel />
       <SourceHealthPanel />
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-dash-surface rounded-2xl p-5">
-          <h3 className="text-dash-fg text-sm font-semibold mb-1">Top 공격 대상 (Namespace / Resource)</h3>
-          <p className="text-dash-muted text-xs mb-4">전체 기간 · 공격 탐지 건수 기준 순위</p>
-          {targetsStatus === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
-          {targetsStatus === "error" && <p className="text-dash-critical text-xs py-2">{targetsError}</p>}
-          {targetsStatus === "ready" && targets.length === 0 && (
-            <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
-          )}
-          <div className="space-y-2.5">
-            {targets.slice(0, 8).map((t, i) => (
-              <div key={`${t.namespace}/${t.pod}`} className="flex items-center gap-3">
-                <span className="text-dash-muted text-xs w-4">{String(i + 1).padStart(2, "0")}</span>
-                <div className="flex-1">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-dash-fg">
-                      {t.namespace} <span className="text-dash-muted">/ {t.pod}</span>
-                    </span>
-                    <span className="text-dash-muted">{t.count}건</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-dash-surfaceAlt overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${(t.count / maxTarget) * 100}%`,
-                        backgroundColor: intensityColor(t.count, maxTarget, C),
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-dash-surface rounded-2xl p-5">
-          <h3 className="text-dash-fg text-sm font-semibold mb-1">클러스터 구조</h3>
-          <p className="text-dash-muted text-xs mb-4">
-            네임스페이스 &gt; 리소스 · 박스가 클수록, 진할수록 공격이 몰린 곳
-          </p>
-          {targetsStatus === "ready" && targets.length === 0 && (
-            <p className="text-dash-muted text-xs py-2">K8s Audit 이벤트가 아직 없습니다.</p>
-          )}
-          {targetsStatus === "ready" && targets.length > 0 && (
-            <ResponsiveContainer width="100%" height={288}>
-              <Treemap
-                data={clusterTreemapData}
-                dataKey="size"
-                stroke={C.bg}
-                isAnimationActive={false}
-                content={<ClusterTreemapCell maxTarget={maxTarget} C={C} />}
-              />
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
+      {/* 2026-07-17(5차): "클러스터 구조는 그냥 없애버리자" - 여러 차례
+          재디자인(#174/#183/#197/8차)에도 계속 "뭘 뜻하는지 모르겠다"는 반응이
+          반복돼서 패널 자체를 제거했다. K8s 타겟 랭킹이 필요하면 계층별 로그의
+          K8s Audit 상세 페이지에서 볼 수 있다. */}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-dash-surface rounded-2xl p-5">
-          <div className="mb-4">
-            <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
-            <p className="text-dash-muted text-xs mt-0.5">전체 기간 · 국가별 탐지 건수 (원 크기 = 건수)</p>
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h3 className="text-dash-fg text-sm font-semibold">공격 발원지 (GeoIP)</h3>
+              <p className="text-dash-muted text-xs mt-0.5">
+                {mapMode === "2d"
+                  ? "전체 기간 · 도시 단위 탐지 건수 (원 크기 = 건수) · 스크롤로 확대해서 지역별로 자세히 볼 수 있습니다"
+                  : "전체 기간 · 도시 단위 탐지 건수 · 드래그로 회전, 스크롤로 확대"}
+              </p>
+            </div>
+            {/* 2D(Google Maps)/3D(지구본) 전환 버튼 - RuleToggle과 같은 단순 on/off 톤 */}
+            <div className="flex items-center gap-1 shrink-0 bg-dash-surfaceAlt rounded-lg p-0.5">
+              {[
+                { key: "2d", label: "2D" },
+                { key: "3d", label: "3D" },
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setMapMode(opt.key)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                    mapMode === opt.key
+                      ? "bg-dash-fg text-dash-bg"
+                      : "text-dash-muted hover:text-dash-fg"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
           {geoStatus === "error" && <p className="text-dash-critical text-xs mb-2">{geoError}</p>}
           <div className="h-80">
-            <WorldMap points={countries} />
+            {mapMode === "2d" ? (
+              <GoogleGeoMap points={countries} />
+            ) : (
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">
+                    지구본 로딩 중...
+                  </div>
+                }
+              >
+                <Globe3D points={countries} theme={theme} />
+              </Suspense>
+            )}
           </div>
         </div>
 
