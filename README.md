@@ -264,6 +264,14 @@ PostgreSQL이 보안 운영에 필요한 메타데이터(계정/보호대상/룰
 
 ### Frontend
 
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![Tailwind_CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![Three.js](https://img.shields.io/badge/Three.js-000000?style=for-the-badge&logo=threedotjs&logoColor=white)
+![Google_Maps](https://img.shields.io/badge/Google_Maps-4285F4?style=for-the-badge&logo=googlemaps&logoColor=white)
+![Remotion](https://img.shields.io/badge/Remotion-000000?style=for-the-badge&logo=remotion&logoColor=white)
+![Vercel](https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)
+
 | 항목 | 스택 |
 | --- | --- |
 | 프레임워크 | React 18 + Vite |
@@ -277,6 +285,15 @@ PostgreSQL이 보안 운영에 필요한 메타데이터(계정/보호대상/룰
 
 ### Backend
 
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=for-the-badge&logo=pydantic&logoColor=white)
+![Apache_Kafka](https://img.shields.io/badge/Apache_Kafka-231F20?style=for-the-badge&logo=apachekafka&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)
+![OpenSearch](https://img.shields.io/badge/OpenSearch-005EB8?style=for-the-badge&logo=opensearch&logoColor=white)
+![ClickHouse](https://img.shields.io/badge/ClickHouse-FFCC01?style=for-the-badge&logo=clickhouse&logoColor=black)
+![Gemini_API](https://img.shields.io/badge/Gemini_API-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)
+
 | 항목 | 스택 |
 | --- | --- |
 | 언어/런타임 | Python 3.11 |
@@ -288,6 +305,11 @@ PostgreSQL이 보안 운영에 필요한 메타데이터(계정/보호대상/룰
 
 ### DB / Storage (Polyglot Persistence)
 
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![OpenSearch](https://img.shields.io/badge/OpenSearch-005EB8?style=for-the-badge&logo=opensearch&logoColor=white)
+![ClickHouse](https://img.shields.io/badge/ClickHouse-FFCC01?style=for-the-badge&logo=clickhouse&logoColor=black)
+![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)
+
 | 저장소 | 역할 |
 | --- | --- |
 | PostgreSQL 16 | 계정/룰/인시던트 등 관계형 메타데이터 (무결성/FK 보장) |
@@ -296,6 +318,13 @@ PostgreSQL이 보안 운영에 필요한 메타데이터(계정/보호대상/룰
 | Redis 7 | 중복 제거, 상관분석 윈도우/쿨다운 상태, 로그인 세션 |
 
 ### DevOps / Infra
+
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
+![Helm](https://img.shields.io/badge/Helm-0F1689?style=for-the-badge&logo=helm&logoColor=white)
+![Traefik](https://img.shields.io/badge/Traefik-24A1C1?style=for-the-badge&logo=traefikproxy&logoColor=white)
+![Falco](https://img.shields.io/badge/Falco-000000?style=for-the-badge&logo=falco&logoColor=white)
+![Lets_Encrypt](https://img.shields.io/badge/Lets_Encrypt-003A70?style=for-the-badge&logo=letsencrypt&logoColor=white)
 
 | 항목 | 스택 |
 | --- | --- |
@@ -306,6 +335,11 @@ PostgreSQL이 보안 운영에 필요한 메타데이터(계정/보호대상/룰
 
 ### Monitoring / Observability
 
+![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-000000?style=for-the-badge&logo=opentelemetry&logoColor=white)
+![Apache_Kafka](https://img.shields.io/badge/Apache_Kafka-231F20?style=for-the-badge&logo=apachekafka&logoColor=white)
+![Slack](https://img.shields.io/badge/Slack-4A154B?style=for-the-badge&logo=slack&logoColor=white)
+![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)
+
 | 항목 | 스택 |
 | --- | --- |
 | 로그 수집 | OpenTelemetry Collector (OTLP 수신 + `log.source` 기준 라우팅) |
@@ -314,6 +348,10 @@ PostgreSQL이 보안 운영에 필요한 메타데이터(계정/보호대상/룰
 | 알림 | Slack / Discord Webhook |
 
 ### Auth
+
+![Traefik](https://img.shields.io/badge/Traefik-24A1C1?style=for-the-badge&logo=traefikproxy&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 
 | 항목 | 방식 |
 | --- | --- |
