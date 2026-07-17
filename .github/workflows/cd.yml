@@ -1,0 +1,138 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+  # 최초 부트스트랩이나 base 이미지 CVE 패치 등으로 소스 변경 없이 전체 서비스를
+  # 강제로 재빌드해야 할 때 Actions 탭에서 수동 실행 - path filter를 무시하고
+  # 세 서비스 다 빌드한다(아래 build-push-* 잡의 if 조건 참고).
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: 2026-techeer-summer-bootcamp-team-b
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      shared: ${{ steps.filter.outputs.shared }}
+      normalizer: ${{ steps.filter.outputs.normalizer }}
+      correlation_engine: ${{ steps.filter.outputs.correlation_engine }}
+      platform_api: ${{ steps.filter.outputs.platform_api }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'servers/shared/**'
+            normalizer:
+              - 'servers/normalizer/**'
+            correlation_engine:
+              - 'servers/correlation-engine/**'
+            platform_api:
+              - 'servers/platform-api/**'
+
+  # platform-api는 CI 테스트 대상에서는 빠지지만(실제 인프라 필요, ci.yml 참고)
+  # 이미지 빌드/배포까지 제외하는 건 아니다 - 여기서는 세 서비스 다 그대로 빌드한다.
+  build-push-normalizer:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.normalizer == 'true' || needs.changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers
+          file: servers/normalizer/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-normalizer:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-normalizer:${{ github.sha }}
+          cache-from: type=gha,scope=normalizer
+          cache-to: type=gha,mode=max,scope=normalizer
+
+  build-push-correlation-engine:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.correlation_engine == 'true' || needs.changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers
+          file: servers/correlation-engine/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-correlation-engine:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-correlation-engine:${{ github.sha }}
+          cache-from: type=gha,scope=correlation-engine
+          cache-to: type=gha,mode=max,scope=correlation-engine
+
+  build-push-platform-api:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.platform_api == 'true' || needs.changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers
+          file: servers/platform-api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-platform-api:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-platform-api:${{ github.sha }}
+          cache-from: type=gha,scope=platform-api
+          cache-to: type=gha,mode=max,scope=platform-api
+
+  deploy:
+    needs: [build-push-normalizer, build-push-correlation-engine, build-push-platform-api]
+    if: always() && !contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd ${{ secrets.DEPLOY_PATH }}
+            git pull origin main
+            docker compose -f servers/docker-compose.yml pull
+            docker compose -f servers/docker-compose.yml up -d --remove-orphans
