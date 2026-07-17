@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
-import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
+import { CHART_COLORS, DONUT_PALETTE, donutPalette } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
@@ -116,7 +116,7 @@ function RuleRow({ rule, rank, onToggle }) {
 // 피드백 - 전체 목록(스크롤)은 그대로 두고 그 위에 적중 건수 상위 5개만 뽑아
 // 가로 막대로 보여준다. 룰 이름이 길어서 Y축 라벨을 잘라 보여주고, 잘린 이름은
 // Tooltip에서 전체를 다시 보여준다.
-function RuleRankingBarChart({ data, C }) {
+function RuleRankingBarChart({ data, C, theme }) {
   return (
     <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44)}>
       <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
@@ -137,10 +137,11 @@ function RuleRankingBarChart({ data, C }) {
           cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
           formatter={(value) => [`${value}건`, "적중 건수"]}
           labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+          isAnimationActive={false}
         />
         <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
           {data.map((d, i) => (
-            <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
+            <Cell key={d.id} fill={donutPalette(theme)[i % DONUT_PALETTE.length]} />
           ))}
         </Bar>
       </BarChart>
@@ -941,7 +942,7 @@ export default function AdminAuditView({ pushToast }) {
             {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
             {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
             {scenariosStatus === "ready" && top5Scenarios.length > 0 && (
-              <RuleRankingBarChart data={top5Scenarios} C={C} />
+              <RuleRankingBarChart data={top5Scenarios} C={C} theme={theme} />
             )}
             {scenariosStatus === "ready" && top5Scenarios.length === 0 && (
               <p className="text-dash-muted text-xs py-3">등록된 탐지 룰이 없습니다.</p>

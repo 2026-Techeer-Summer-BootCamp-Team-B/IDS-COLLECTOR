@@ -62,13 +62,29 @@ body {
     radial-gradient(ellipse 60% 50% at 100% 0%, rgb(var(--dash-pink) / 0.06), transparent);
   background-attachment: fixed;
   transition: background-color 0.15s ease;
-  /* 2026-07-17: 글씨체 선택 기능 제거 - Noto Sans KR로 고정 (useFontFamily.jsx/
-     FontPickerPanel 삭제, index.html의 웹폰트 링크도 Noto Sans KR만 남김). */
-  font-family: "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* 2026-07-17: 글씨체 선택 기능 제거 후 Noto Sans KR로 고정했다가, 같은 날 다시
+     Pretendard로 전면 교체 - CDN(Google Fonts) 대신 npm pretendard 패키지를 로컬
+     번들링(main.jsx에서 pretendard/dist/web/static/pretendard.css import)해서
+     오프라인 빌드에서도 깨지지 않게 함. */
+  font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
 }
 
 :root.light body {
   background-image: none;
+}
+
+/* GoogleGeoMap.jsx InfoWindow(hover 정보 패널) - 기본 닫기(X) 버튼은
+ * headerDisabled+domready 리스너에서 이미 숨기지만(components/GoogleGeoMap.jsx),
+ * Maps 자체의 여백/그림자 chrome도 우리 HoverPanel 자체 패딩과 겹쳐 이중으로
+ * 두꺼워 보여서 같이 줄인다(2026-07-17 요청 - "패널 크기를 콘텐츠에 맞게
+ * 최적화"). */
+.gm-style-iw-c {
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+.gm-style-iw-d {
+  overflow: hidden !important;
+  padding: 0 !important;
 }
 
 /* Neon glow utilities — used sparingly (brand mark, LIVE indicator, KPI

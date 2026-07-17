@@ -2,6 +2,9 @@
 // hex here because recharts (SVG stroke/fill props) and a few inline styles
 // need literal color strings, not Tailwind classes. Keep both in sync by
 // hand — if you change a value in index.css, mirror it here.
+import React from "react";
+import { RechartsHoverPanel } from "../components/HoverPanel";
+
 export const CHART_COLORS = {
   dark: {
     // 2026-07-15 피드백: 배경이 살짝 남색(블루 틴트)이 껴있어서 "찐한 블랙"으로
@@ -116,14 +119,18 @@ export function donutPalette(theme) {
 // diverge from dark mode. Dark mode is always returned untouched.
 // 차트 툴팁(Pie/Bar/Area 공통) 스타일 - 예전엔 파일마다 contentStyle만 따로
 // 정의했는데(LogDashboard.jsx/IncidentsView.jsx/SearchDiscoverView.jsx 각각),
-// Recharts는 contentStyle이 툴팁 박스(배경/테두리)만 스타일링하고 안의 라벨/항목
-// 텍스트는 itemStyle/labelStyle을 따로 안 주면 시리즈 자체 색이나 브라우저
-// 기본값으로 떨어진다 - 배경과 우연히 같은 계열이 되면(예: 다크 배경 + 검정
-// 텍스트) 글자가 안 보이는 문제가 있었다(2026-07-16). 셋 다 명시해서 항상
-// C.fg로 대비를 보장하고, 한 군데로 모아서 세 파일이 어긋나지 않게 한다.
-export function chartTooltipProps(C) {
-  const style = { background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 };
-  return { contentStyle: style, itemStyle: { color: C.fg }, labelStyle: { color: C.fg } };
+// 한 군데로 모아서 세 파일이 어긋나지 않게 한다.
+//
+// 2026-07-17: contentStyle/itemStyle/labelStyle로 다크 테마 톤(C.surfaceAlt
+// 배경 등)을 맞추던 방식에서, 항상 흰 배경+옅은 그림자인 공용 HoverPanel(3D
+// 지구본/2D 맵과 동일 컴포넌트, components/HoverPanel.jsx)로 통일 - `content`
+// render-prop을 쓰면 recharts가 contentStyle 등은 아예 무시하므로 그쪽은 제거.
+// theme.js는 .jsx가 아니라 JSX 문법을 못 쓰니 React.createElement로 대신한다.
+export function chartTooltipProps() {
+  // isAnimationActive: false - recharts는 기본적으로 툴팁이 새 위치로 400ms
+  // 애니메이션(ease)을 타면서 이동한다. 마우스를 빠르게 움직이면 툴팁이 커서를
+  // 따라오지 못하고 뒤처지는 느낌(2026-07-17 피드백) - 꺼서 즉시 이동하도록 함.
+  return { content: React.createElement(RechartsHoverPanel), isAnimationActive: false };
 }
 
 export function forTheme(hex, theme, amount = 0.15) {

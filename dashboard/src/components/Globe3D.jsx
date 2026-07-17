@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { CHART_COLORS } from "../data/theme";
 import { WORLD_COUNTRIES } from "../data/worldCountries";
+import { HoverPanel } from "./HoverPanel";
+import { countryToFlagEmoji } from "../lib/flagEmoji";
 
 /**
  * 3D rotating globe for Overview's GeoIP summary (Infrastructure tab keeps
@@ -197,8 +199,17 @@ export default function Globe3D({ points = [], theme = "dark" }) {
     // 마커 hover 툴팁 ("국가 · 도시 · N건") - 드래그 중에는 레이캐스트를 생략해서
     // 회전 중 깜빡이는 걸 막는다.
     const raycaster = new THREE.Raycaster();
-    raycaster.params.Sprite = { threshold: 0.02 };
+    // 마커 자체 크기(스프라이트 scale)는 그대로 두고 감지 반경만 넓힌다 -
+    // 기본 0.02는 작은 마커 위에서 커서를 거의 정확히 맞춰야만 hover가 잡혀서
+    // 너무 빡빡했다(2026-07-17 요청).
+    raycaster.params.Sprite = { threshold: 0.08 };
     const pointerNdc = new THREE.Vector2();
+
+    // hover 중인 마커가 있으면 자동 회전을 멈추고, hover가 끝나도 곧바로
+    // 재개하지 않고 1초 뒤에 재개한다 - 1초 안에 다른 마커로 다시 hover하면
+    // 타이머를 취소해서 계속 멈춰있게 한다(2026-07-17 요청).
+    let hoverPaused = false;
+    let hoverResumeTimer = null;
 
     function onHoverMove(e) {
       if (dragging) {
@@ -211,13 +222,27 @@ export default function Globe3D({ points = [], theme = "dark" }) {
       raycaster.setFromCamera(pointerNdc, camera);
       const hit = raycaster.intersectObjects(markerSprites)[0];
       if (hit) {
+        clearTimeout(hoverResumeTimer);
+        hoverPaused = true;
         setHover({ point: hit.object.userData.point, x: e.clientX - rect.left, y: e.clientY - rect.top });
       } else {
         setHover(null);
+        if (hoverPaused) {
+          clearTimeout(hoverResumeTimer);
+          hoverResumeTimer = setTimeout(() => {
+            hoverPaused = false;
+          }, 1000);
+        }
       }
     }
     function onHoverLeave() {
       setHover(null);
+      if (hoverPaused) {
+        clearTimeout(hoverResumeTimer);
+        hoverResumeTimer = setTimeout(() => {
+          hoverPaused = false;
+        }, 1000);
+      }
     }
     renderer.domElement.addEventListener("pointermove", onHoverMove);
     renderer.domElement.addEventListener("pointerleave", onHoverLeave);
@@ -225,7 +250,7 @@ export default function Globe3D({ points = [], theme = "dark" }) {
     let raf;
     function animate(t) {
       raf = requestAnimationFrame(animate);
-      if (!dragging && t > idleUntil) {
+      if (!dragging && !hoverPaused && t > idleUntil) {
         globeGroup.rotation.y += 0.0016;
       }
       markerSprites.forEach((s) => {
@@ -238,6 +263,7 @@ export default function Globe3D({ points = [], theme = "dark" }) {
 
     return () => {
       cancelAnimationFrame(raf);
+      clearTimeout(hoverResumeTimer);
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
@@ -263,18 +289,13 @@ export default function Globe3D({ points = [], theme = "dark" }) {
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" />
       {hover && (
-        <div
-          className="pointer-events-none absolute z-10 rounded-md px-2.5 py-1.5 text-xs font-medium shadow-lg whitespace-nowrap"
-          style={{
-            left: hover.x + 14,
-            top: hover.y + 14,
-            background: "#0B0F1AF2",
-            color: "#F2F5FF",
-            border: "1px solid #2A3350",
-          }}
-        >
-          {hover.point.country}
-          {hover.point.city ? ` · ${hover.point.city}` : ""} · {hover.point.count}건
+        <div className="pointer-events-none absolute z-10" style={{ left: hover.x + 14, top: hover.y + 14 }}>
+          <HoverPanel
+            title={hover.point.country}
+            titleFlag={countryToFlagEmoji(hover.point.countryCode, hover.point.country)}
+            subtitle={hover.point.city || undefined}
+            rows={[{ color: CHART_COLORS[theme].critical, value: `${hover.point.count}건`, label: "탐지" }]}
+          />
         </div>
       )}
     </div>

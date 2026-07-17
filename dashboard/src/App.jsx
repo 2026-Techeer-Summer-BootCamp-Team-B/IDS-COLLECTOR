@@ -267,9 +267,9 @@ function AppShell() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
   }
 
-  // font-sans를 안 쓴다(2026-07-16, 2026-07-17 Noto Sans KR 고정 이후에도 유지) -
+  // font-sans를 안 쓴다(2026-07-16, 2026-07-17 Pretendard 전환 이후에도 유지) -
   // Tailwind font-sans는 클래스 선택자라 index.css의 `body { font-family: ... }`
-  // (태그 선택자)보다 우선순위가 높아서, 여기 있으면 body에 지정한 Noto Sans KR이
+  // (태그 선택자)보다 우선순위가 높아서, 여기 있으면 body에 지정한 Pretendard가
   // 항상 Tailwind 기본 산세리프로 덮어써져 화면에 반영이 안 된다.
   return (
     <div className="flex min-h-screen bg-dash-bg">

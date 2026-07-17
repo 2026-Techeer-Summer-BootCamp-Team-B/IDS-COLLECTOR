@@ -37,6 +37,7 @@ import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
 import TimeRangePicker from "../components/TimeRangePicker";
 import GoogleGeoMap from "../components/GoogleGeoMap";
+import { RechartsHoverPanel } from "../components/HoverPanel";
 // three.js는 이 카드에서만 쓰이는데도 LogDashboard.jsx가 Card/KpiCard 등 공용
 // 프리미티브를 export하다보니 다른 뷰(WAS/Falco/K8sAudit/Incidents)들이 전부 이
 // 파일을 import한다 — 정적 import로 넣으면 그 뷰들 번들에도 300~400KB가 얹혀버려서
@@ -305,13 +306,13 @@ function LogVolumeBreakdownBody({ rangeKey }) {
 
   const defaults = useMemo(
     () => ({
-      total: DONUT_PALETTE[3],
+      total: donutPalette(theme)[3],
       was: getModuleMeta("was").color,
       waf: getModuleMeta("waf").color,
       falco: getModuleMeta("falco").color,
       k8s_audit: getModuleMeta("k8s_audit").color,
     }),
-    []
+    [theme]
   );
   const [colors, setColor, resetColors] = useLogVolumeColors(defaults);
 
@@ -387,7 +388,7 @@ function LogVolumeBreakdownBody({ rangeKey }) {
               <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
               <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
               <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip content={<RechartsHoverPanel />} isAnimationActive={false} />
               {stackSeries.map((s) => (
                 <Area
                   key={s.key}
@@ -729,7 +730,15 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
     const found = levels.find((x) => x.severity === l.severity);
     return { key: l.key, label: l.label, count: found ? found.count : 0, color: donutPalette(theme)[i % DONUT_PALETTE.length] };
   });
-  const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
+  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const targetFills = useMemo(
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
+    [data, hoveredIndex, C.faint]
+  );
+  const animatedFills = useAnimatedFills(targetFills);
 
   return (
     <Card
@@ -753,30 +762,60 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                 nameKey="label"
                 innerRadius={32}
                 outerRadius={52}
+                startAngle={90}
+                endAngle={-270}
                 stroke="none"
                 isAnimationActive
                 animationDuration={700}
                 animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
+                onMouseEnter={(_, i) => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
               >
-                {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
+                {data.map((d, i) => (
+                  <Cell key={d.key} fill={animatedFills[i]} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="flex-1 space-y-1.5 text-xs">
+          <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
+                onMouseEnter={() => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
-                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
-                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+                <span
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
+                    hoveredIndex === null
+                      ? i === activeIndex
+                        ? "text-dash-fg"
+                        : "text-dash-muted"
+                      : hoveredIndex === i
+                      ? "text-dash-fg font-bold"
+                      : "text-dash-faint"
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                  />
                   {d.label}
                 </span>
                 <span className="text-dash-fg">{d.count}</span>
@@ -934,18 +973,28 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   );
 }
 
-function tooltipStyle(C) {
-  // surfaceAlt가 순수 블랙에 가까운 다크 테마에서는 border:none이면 카드/페이지
-  // 배경과 거의 구분이 안 돼(2026-07-16 피드백: "도넛 차트에 마우스를 대면
-  // 검정색이라 잘 안 보임") - 옅은 테두리를 둬서 배경과 확실히 분리되게 한다.
-  return { background: C.surfaceAlt, border: `1px solid ${C.faint}`, borderRadius: 8, color: C.fg, fontSize: 12 };
-}
-
 // 카테고리형 데이터({key,label,count,color}[])의 막대그래프 버전 - 탐지소스/
 // 심각도/K8s네임스페이스 도넛 3개 + Log Levels 위젯이 사용자 모드에서 "막대"로
 // 전환됐을 때 공통으로 쓴다(도넛+범례 쪽은 각 위젯이 기존 JSX를 그대로 씀 -
 // 호버 자동순환(useAutoCycleIndex) 상태를 위젯마다 이미 들고 있어서 그쪽까지
 // 억지로 공용화하면 오히려 코드가 더 꼬인다).
+// 차트의 왼쪽 절반에서 hover하면 패널을 더 왼쪽으로, 오른쪽 절반이면 더
+// 오른쪽으로 밀어서 패널이 막대/커서를 가리지 않게 한다(2026-07-17 요청,
+// Log Levels 차트 - 이 함수는 막대 차트 공용이라 도넛의 "막대" 보기 전환에도
+// 함께 적용됨).
+function SideAwareTooltip(props) {
+  const { coordinate, viewBox } = props;
+  const mid = viewBox ? viewBox.x + viewBox.width / 2 : 0;
+  const offsetX = coordinate && coordinate.x < mid ? -40 : 40;
+  return (
+    <RechartsHoverPanel
+      {...props}
+      formatter={(value) => [`${Number(value).toLocaleString()}건`, "건수"]}
+      offsetX={offsetX}
+    />
+  );
+}
+
 function CategoryBarChart({ data, C, height = 160 }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -953,7 +1002,7 @@ function CategoryBarChart({ data, C, height = 160 }) {
         <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
         <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
         <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} />
-        <Tooltip {...chartTooltipProps(C)} cursor={false} />
+        <Tooltip content={<SideAwareTooltip />} isAnimationActive={false} cursor={false} />
         <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
           {data.map((d) => (
             <Cell key={d.key} fill={d.color} />
@@ -966,9 +1015,14 @@ function CategoryBarChart({ data, C, height = 160 }) {
 
 // 지구본의 자동 회전처럼, 도넛 차트도 가만히 있지 않고 조각을 하나씩 순회하며
 // 스포트라이트를 비춰준다 — 사용자가 호버하면 그 순간엔 자동 순환을 멈춘다.
-function useAutoCycleIndex(length, intervalMs = 2200) {
+// focus(i): 옆 정보 패널의 항목에 마우스를 올렸을 때 그 조각으로 즉시 점프 + 정지.
+// blur(): 정보 패널에서 마우스가 떠나도 바로 재개하지 않고 10초 대기했다가, 그때
+// 멈춰있던 조각(index)부터 이어서 자동 순환을 재개한다(2026-07-17 요청) - 처음(0)으로
+// 리셋하지 않도록 setPaused(false)만 호출하고 index는 건드리지 않는다.
+function useAutoCycleIndex(length, intervalMs = 2200, resumeDelayMs = 10000) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const resumeTimer = useRef(null);
   useEffect(() => {
     if (!length) return;
     if (index >= length) setIndex(0);
@@ -978,7 +1032,78 @@ function useAutoCycleIndex(length, intervalMs = 2200) {
     const t = setInterval(() => setIndex((i) => (i + 1) % length), intervalMs);
     return () => clearInterval(t);
   }, [length, paused, intervalMs]);
-  return [index, setPaused];
+  useEffect(() => () => clearTimeout(resumeTimer.current), []);
+  const focus = (i) => {
+    clearTimeout(resumeTimer.current);
+    setIndex(i);
+    setPaused(true);
+  };
+  const blur = () => {
+    clearTimeout(resumeTimer.current);
+    resumeTimer.current = setTimeout(() => setPaused(false), resumeDelayMs);
+  };
+  return [index, setPaused, focus, blur];
+}
+
+function hexOrRgbToRgb(input) {
+  if (input.startsWith("rgb")) {
+    const [r, g, b] = input.match(/\d+/g).map(Number);
+    return { r, g, b };
+  }
+  const n = parseInt(input.replace("#", ""), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function lerpColor(from, to, t) {
+  const a = hexOrRgbToRgb(from);
+  const b = hexOrRgbToRgb(to);
+  return `rgb(${Math.round(a.r + (b.r - a.r) * t)}, ${Math.round(a.g + (b.g - a.g) * t)}, ${Math.round(a.b + (b.b - a.b) * t)})`;
+}
+
+function easeInOutQuad(t) {
+  return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+}
+
+// 도넛 조각 hover 시 회색화를 CSS transition으로 구현했더니 순간적으로 바뀌는
+// 문제가 있었다(2026-07-17 피드백) - Playwright로 getComputedStyle(sector).fill을
+// 프레임 단위로 실측해보니, recharts Pie가 isAnimationActive일 때 hover로 인한
+// 리렌더마다 <path>(.recharts-sector)를 새 DOM 노드로 다시 그려서(react-smooth
+// Animate 래퍼 재실행) "이전 색"이 없어 CSS transition이 보간할 대상 자체가
+// 없었음 - DOM identity가 아예 유실되는 걸 확인함(마커 프로퍼티가 hover 직후
+// 사라짐). 그래서 recharts/CSS에 맡기지 않고, 매 프레임 색을 JS로 직접
+// 보간해서 fill에 완성된 rgb() 문자열로 꽂아준다 - 매 프레임 DOM이 새로
+// 만들어지더라도 그 순간의 올바른 색이 바로 찍히므로 애니메이션처럼 보인다.
+function useAnimatedFills(targetColors, durationMs = 300) {
+  const [colors, setColors] = useState(targetColors);
+  const colorsRef = useRef(targetColors);
+  const prevTargetsRef = useRef(targetColors);
+  const rafRef = useRef(null);
+
+  useEffect(() => {
+    const prevTargets = prevTargetsRef.current;
+    const changed =
+      targetColors.length !== prevTargets.length || targetColors.some((c, i) => c !== prevTargets[i]);
+    prevTargetsRef.current = targetColors;
+    if (!changed) return undefined;
+
+    const from = colorsRef.current;
+    const start = performance.now();
+    cancelAnimationFrame(rafRef.current);
+
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = easeInOutQuad(t);
+      const next = targetColors.map((c, i) => lerpColor(from[i] ?? c, c, eased));
+      colorsRef.current = next;
+      setColors(next);
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetColors.join("|"), durationMs]);
+
+  return colors;
 }
 
 // 활성 조각을 살짝 키우고 바깥에 얇은 발광 링을 둘러서 "스포트라이트가 훑고
@@ -1077,7 +1202,15 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
     [byModule, theme]
   );
   const total = data.reduce((s, d) => s + d.count, 0);
-  const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
+  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const targetFills = useMemo(
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
+    [data, hoveredIndex, C.faint]
+  );
+  const animatedFills = useAnimatedFills(targetFills);
 
   return (
     <Card
@@ -1103,30 +1236,60 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                 nameKey="label"
                 innerRadius={32}
                 outerRadius={52}
+                startAngle={90}
+                endAngle={-270}
                 stroke="none"
                 isAnimationActive
                 animationDuration={700}
                 animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
+                onMouseEnter={(_, i) => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
               >
-                {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
+                {data.map((d, i) => (
+                  <Cell key={d.key} fill={animatedFills[i]} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="flex-1 space-y-1.5 text-xs">
+          <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
+                onMouseEnter={() => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
-                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
-                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+                <span
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
+                    hoveredIndex === null
+                      ? i === activeIndex
+                        ? "text-dash-fg"
+                        : "text-dash-muted"
+                      : hoveredIndex === i
+                      ? "text-dash-fg font-bold"
+                      : "text-dash-faint"
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                  />
                   {d.label}
                 </span>
                 <span className="text-dash-fg">{d.count}</span>
@@ -1162,7 +1325,15 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
         .map((d, i) => ({ ...d, color: donutPalette(theme)[i % DONUT_PALETTE.length] })),
     [levels, theme]
   );
-  const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
+  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const targetFills = useMemo(
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
+    [data, hoveredIndex, C.faint]
+  );
+  const animatedFills = useAnimatedFills(targetFills);
 
   return (
     <Card
@@ -1188,30 +1359,60 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                 nameKey="label"
                 innerRadius={32}
                 outerRadius={52}
+                startAngle={90}
+                endAngle={-270}
                 stroke="none"
                 isAnimationActive
                 animationDuration={700}
                 animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
+                onMouseEnter={(_, i) => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
               >
-                {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
+                {data.map((d, i) => (
+                  <Cell key={d.key} fill={animatedFills[i]} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="flex-1 space-y-1.5 text-xs">
+          <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
+                onMouseEnter={() => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
-                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
-                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+                <span
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
+                    hoveredIndex === null
+                      ? i === activeIndex
+                        ? "text-dash-fg"
+                        : "text-dash-muted"
+                      : hoveredIndex === i
+                      ? "text-dash-fg font-bold"
+                      : "text-dash-faint"
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                  />
                   {d.label}
                 </span>
                 <span className="text-dash-fg">{d.count}</span>
@@ -1245,7 +1446,15 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
       .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: donutPalette(theme)[i % DONUT_PALETTE.length] }));
   }, [targets, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
-  const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
+  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const targetFills = useMemo(
+    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.faint)),
+    [data, hoveredIndex, C.faint]
+  );
+  const animatedFills = useAnimatedFills(targetFills);
 
   return (
     <Card
@@ -1275,30 +1484,60 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                 nameKey="label"
                 innerRadius={32}
                 outerRadius={52}
+                startAngle={90}
+                endAngle={-270}
                 stroke="none"
                 isAnimationActive
                 animationDuration={700}
                 animationEasing="ease-out"
                 activeIndex={activeIndex}
                 activeShape={renderGlowActiveShape}
+                onMouseEnter={(_, i) => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
               >
-                {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
+                {data.map((d, i) => (
+                  <Cell key={d.key} fill={animatedFills[i]} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="flex-1 space-y-1.5 text-xs">
+          <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors ${
+                onMouseEnter={() => {
+                  focusIndex(i);
+                  setHoveredIndex(i);
+                }}
+                onMouseLeave={() => {
+                  blurIndex();
+                  setHoveredIndex(null);
+                }}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
-                <span className={`flex items-center gap-1.5 truncate ${i === activeIndex ? "text-dash-fg" : "text-dash-muted"}`}>
-                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+                <span
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
+                    hoveredIndex === null
+                      ? i === activeIndex
+                        ? "text-dash-fg"
+                        : "text-dash-muted"
+                      : hoveredIndex === i
+                      ? "text-dash-fg font-bold"
+                      : "text-dash-faint"
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
+                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.faint : d.color }}
+                  />
                   {d.label}
                 </span>
                 <span className="text-dash-fg">{d.count}</span>
@@ -2282,9 +2521,9 @@ export function DashboardContent() {
       ) : (
         <>
           <div className="flex flex-wrap gap-4">
-            {kpiTotalWidget}
             {kpiErrorsWidget}
             {kpiWarningsWidget}
+            {kpiTotalWidget}
             {kpiSourcesWidget}
           </div>
 

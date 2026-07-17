@@ -1,6 +1,7 @@
 import React from "react";
-import { DONUT_PALETTE } from "../data/theme";
+import { DONUT_PALETTE, donutPalette } from "../data/theme";
 import { Card } from "../views/LogDashboard";
+import { useTheme } from "../hooks/useTheme";
 
 /**
  * Shared "ranked bar list" used across the per-layer detail pages (WAS Top
@@ -11,6 +12,7 @@ import { Card } from "../views/LogDashboard";
  * items: [{ label, count, sub? }] — pre-sorted, this just renders + bars.
  */
 export default function RankedList({ title, subtitle, items, limit = 8, valueSuffix = "" }) {
+  const { theme } = useTheme();
   const max = items[0]?.count || 1;
 
   return (
@@ -39,7 +41,7 @@ export default function RankedList({ title, subtitle, items, limit = 8, valueSuf
                   className="h-full rounded-full"
                   style={{
                     width: `${(item.count / max) * 100}%`,
-                    backgroundColor: DONUT_PALETTE[i % DONUT_PALETTE.length],
+                    backgroundColor: donutPalette(theme)[i % DONUT_PALETTE.length],
                   }}
                 />
               </div>

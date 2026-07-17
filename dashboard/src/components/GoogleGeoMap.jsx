@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import WorldMap from "./WorldMap";
+import { renderHoverPanelHTML } from "./HoverPanel";
+import { countryToFlagEmoji } from "../lib/flagEmoji";
 
 // 2026-07-17(5차): "city가 null이 아니라 여러 지역이 나오는데, 지도를
 // 스크롤/확대하면 지역이 자세히 보이게 해달라"는 요청 - 기존 WorldMap은
@@ -88,7 +90,15 @@ export default function GoogleGeoMap({ points, compact = false }) {
           gestureHandling: "greedy", // 스크롤만으로 바로 확대/축소 (Ctrl 안 눌러도 됨)
           backgroundColor: C.bg,
         });
-        infoWindowRef.current = new maps.InfoWindow();
+        // headerDisabled: true - hover로 뜨고 벗어나면 사라지는 패널이라 기본
+        // 닫기(X) 버튼이 불필요함(2026-07-17 요청). 그래도 일부 구버전 API에선
+        // 이 옵션이 없을 수 있어 domready 시점에 DOM에서도 한 번 더 숨긴다.
+        infoWindowRef.current = new maps.InfoWindow({ headerDisabled: true });
+        maps.event.addListener(infoWindowRef.current, "domready", () => {
+          document.querySelectorAll(".gm-ui-hover-effect, .gm-style-iw-chr").forEach((el) => {
+            el.style.display = "none";
+          });
+        });
         setStatus("ready");
       })
       .catch(() => {
@@ -149,17 +159,31 @@ export default function GoogleGeoMap({ points, compact = false }) {
         },
         zIndex: Math.round(p.count) + 1000,
       });
-
-      const content = `<div style="font: 500 12px sans-serif; padding: 2px 4px; color: #111;">
-        ${p.country}${p.city ? ` · ${p.city}` : ""} · ${p.count}건
-      </div>`;
-      marker.addListener("mouseover", () => {
-        infoWindowRef.current.setContent(content);
-        infoWindowRef.current.open({ anchor: marker, map: mapRef.current });
+      // 마커 자체(marker/coreDot)는 시각 크기 그대로 두고, 투명한 더 큰
+      // 심볼을 위에 얹어 hover 인식 범위만 넓힌다(2026-07-17 요청) - 아이콘의
+      // 클릭/hover 판정은 opacity와 무관하게 scale(도형 크기) 기준이라
+      // fillOpacity/strokeOpacity를 0으로 둬도 히트 영역은 그대로 넓게 작동한다.
+      const hitMarker = new maps.Marker({
+        position,
+        map: mapRef.current,
+        icon: { path: maps.SymbolPath.CIRCLE, scale: r + 10, fillOpacity: 0, strokeOpacity: 0 },
+        zIndex: Math.round(p.count) + 2000,
       });
-      marker.addListener("mouseout", () => infoWindowRef.current.close());
 
-      markersRef.current.push(marker, coreDot);
+      hitMarker.addListener("mouseover", async () => {
+        infoWindowRef.current.setContent(
+          await renderHoverPanelHTML({
+            title: p.country,
+            titleFlag: countryToFlagEmoji(p.countryCode, p.country),
+            subtitle: p.city || undefined,
+            rows: [{ color: C.critical, value: `${p.count}건`, label: "탐지" }],
+          })
+        );
+        infoWindowRef.current.open({ anchor: hitMarker, map: mapRef.current });
+      });
+      hitMarker.addListener("mouseout", () => infoWindowRef.current.close());
+
+      markersRef.current.push(marker, coreDot, hitMarker);
       bounds.extend(position);
     });
 

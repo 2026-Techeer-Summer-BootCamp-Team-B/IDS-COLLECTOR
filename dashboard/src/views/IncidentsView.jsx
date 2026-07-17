@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { SeverityBadge, SourceBadge, SEVERITY_META } from "../components/badges";
-import { CHART_COLORS, forTheme, DONUT_PALETTE } from "../data/theme";
+import { CHART_COLORS, forTheme, DONUT_PALETTE, donutPalette } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
 import { useIncidents } from "../hooks/useIncidents";
@@ -203,7 +203,7 @@ function SeverityDonut({ incidents }) {
       count: counts[key],
       // Overview의 도넛들(SeverityDonutCompact 등)과 같은 톤 다운 순환 팔레트로
       // 통일 - severity 배지 등 다른 곳의 의미색(빨강=critical 등)과는 별개.
-      color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+      color: donutPalette(theme)[i % DONUT_PALETTE.length],
     }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
@@ -223,7 +223,7 @@ function SeverityDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} isAnimationActive={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -257,7 +257,7 @@ function StatusDonut({ incidents }) {
         key,
         label: meta.label,
         count: counts[key],
-        color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+        color: donutPalette(theme)[i % DONUT_PALETTE.length],
       }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
@@ -277,7 +277,7 @@ function StatusDonut({ incidents }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} isAnimationActive={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -346,10 +346,11 @@ function TopAttackTypesBarChart({ scenarios }) {
               cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
               formatter={(value) => [`${value}건`, "적중 건수"]}
               labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+              isAnimationActive={false}
             />
             <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
               {data.map((d, i) => (
-                <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
+                <Cell key={d.id} fill={donutPalette(theme)[i % DONUT_PALETTE.length]} />
               ))}
             </Bar>
           </BarChart>

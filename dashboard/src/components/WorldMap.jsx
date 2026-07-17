@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { WORLD_COUNTRIES } from "../data/worldCountries";
+import { HoverPanel } from "./HoverPanel";
+import { countryToFlagEmoji } from "../lib/flagEmoji";
 
 /**
  * Real-world map (Natural Earth 110m country outlines, see
@@ -46,24 +48,29 @@ export default function WorldMap({ points, compact = false }) {
             >
               <circle cx={x} cy={y} r={r} fill={C.critical} fillOpacity="0.22" />
               <circle cx={x} cy={y} r={Math.max(2.5, r * 0.4)} fill={C.critical} />
+              {/* 마커 자체(위 두 원)는 그대로 두고, 감지 반경만 널널하게 넓히는
+                  투명 히트 영역 - 마커 시각 크기와 hover 인식 범위를 분리한다
+                  (2026-07-17 요청). */}
+              <circle cx={x} cy={y} r={r + 8} fill="transparent" pointerEvents="all" />
             </g>
           );
         })}
       </svg>
       {hover && (
         <div
-          className="pointer-events-none absolute z-10 rounded-md px-2.5 py-1.5 text-xs font-medium shadow-lg whitespace-nowrap"
+          className="pointer-events-none absolute z-10"
           style={{
             left: `${(hover.x / WIDTH) * 100}%`,
             top: `${(hover.y / HEIGHT) * 100}%`,
             transform: "translate(-50%, -130%)",
-            background: "#0B0F1AF2",
-            color: "#F2F5FF",
-            border: "1px solid #2A3350",
           }}
         >
-          {hover.point.country}
-          {hover.point.city ? ` · ${hover.point.city}` : ""} · {hover.point.count}건
+          <HoverPanel
+            title={hover.point.country}
+            titleFlag={countryToFlagEmoji(hover.point.countryCode, hover.point.country)}
+            subtitle={hover.point.city || undefined}
+            rows={[{ color: C.critical, value: `${hover.point.count}건`, label: "탐지" }]}
+          />
         </div>
       )}
     </div>
