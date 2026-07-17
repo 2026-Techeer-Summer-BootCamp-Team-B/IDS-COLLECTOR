@@ -12,11 +12,16 @@ services:
       - "--configFile=/etc/traefik/traefik.yml"
     ports:
       - "4317:4317" # otlp grpc ingress
-      - "80:80"     # http - 프론트엔드(정적 파일) + /api(platform-api) 단일 진입점
+      - "80:80"     # http - 프론트엔드(정적 파일) + /api(platform-api) 단일 진입점 + ACME HTTP-01 챌린지
+      - "443:443"   # https - Vercel(HTTPS) 프론트가 mixed-content 없이 백엔드를 호출하기 위한 TLS 진입점(2026-07-16)
       - "127.0.0.1:8080:8080" # traefik dashboard (insecure, local dev only) - 루프백 전용, 원격 접근은 SSH 터널
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      # Let's Encrypt 인증서 저장소 - 컨테이너 재생성/재시작해도 인증서를 다시 발급받지
+      # 않도록 호스트에 영속화한다. acme.json은 배포 절차에서 미리 touch + chmod 600
+      # 해둬야 함(권한이 더 열려있으면 Traefik이 기동을 거부한다).
+      - ./traefik/letsencrypt:/letsencrypt
     networks:
       - siem-net
     # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - accessLog가 요청마다 남지만 다른

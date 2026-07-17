@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      shared: ${{ steps.filter.outputs.shared }}
+      normalizer: ${{ steps.filter.outputs.normalizer }}
+      correlation_engine: ${{ steps.filter.outputs.correlation_engine }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'servers/shared/**'
+            normalizer:
+              - 'servers/normalizer/**'
+            correlation_engine:
+              - 'servers/correlation-engine/**'
+            dashboard:
+              - 'dashboard/**'
+
+  # normalizer는 인프라 없이 도는 순수 유닛 테스트 (app/normalizer.py, app/severity.py
+  # 참고 - Kafka/Redis import조차 없음). platform-api는 실제 Postgres/Redis/
+  # OpenSearch/ClickHouse/Kafka 연결이 필수인 스모크 테스트라 CI 대상에서 제외.
+  test-normalizer:
+    needs: changes
+    if: needs.changes.outputs.normalizer == 'true' || needs.changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: servers/normalizer/requirements-dev.txt
+      - name: Install dependencies
+        working-directory: servers/normalizer
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        working-directory: servers/normalizer
+        run: pytest
+
+  # correlation-engine도 fakeredis만으로 도는 순수 로직 테스트 (실제 Kafka/Postgres
+  # 불필요 - tests/conftest.py 참고).
+  test-correlation-engine:
+    needs: changes
+    if: needs.changes.outputs.correlation_engine == 'true' || needs.changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: servers/correlation-engine/requirements-dev.txt
+      - name: Install dependencies
+        working-directory: servers/correlation-engine
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        working-directory: servers/correlation-engine
+        run: pytest
+
+  # dashboard에는 아직 lint/test 스크립트가 없어(package.json 참고) 빌드 성공
+  # 여부만 검증. 실제 배포는 Vercel의 Git 연동이 담당.
+  build-check-dashboard:
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+      - name: Build
+        working-directory: dashboard
+        run: npm run build

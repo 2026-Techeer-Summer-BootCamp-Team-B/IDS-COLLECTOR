@@ -7,9 +7,15 @@
 -- sampling_rate는 저장/조회만 되고 어디에서도 읽어 집행하지 않는 죽은 컨트롤이었다
 -- (위 감사 §3.1). 둘 다 걷어내고 단일 retention_days로 정직화한다.
 --
--- 레이어 구분도 소스별(WAS/Falco/K8s Audit)에서 3등급 체계(기록/원본/파생)로
--- 바꾼다 - app/log_retention.py가 이제 event.module별이 아니라 인덱스/테이블
--- 단위로 통삭제하므로, 소스별 레이어 구분 자체가 더 이상 실행 의미를 갖지 않는다.
+-- 레이어 구분도 소스별(WAS/Falco/K8s Audit)에서 3등급 체계로 바꾼다 -
+-- app/log_retention.py가 이제 event.module별이 아니라 인덱스/테이블 단위로
+-- 통삭제하므로, 소스별 레이어 구분 자체가 더 이상 실행 의미를 갖지 않는다.
+--
+-- layer 값은 영문 키(record/raw/derived)로 둔다 - 한글(기록/원본/파생)로 처음
+-- 시드했다가 곧바로 바꿨다(2026-07-16, docs/reports/high-patch-20260716.md 항목 7).
+-- PATCH /log-policies/{layer} 경로 파라미터에 한글이 들어가면 URL 인코딩·curl
+-- 테스트·프론트 상수 관리가 성가시다는 실무 이유. 한글 라벨은
+-- app/data_policy_api.py가 응답의 display_name 필드로 별도 제공한다.
 --
 -- ⚠️ 이 마이그레이션은 022-db-hardening.sql이 sampling_rate에 건 CHECK 제약
 -- (log_policies_sampling_rate_check) 이후에 실행돼야 한다 - DROP COLUMN이 그
@@ -32,6 +38,6 @@ ALTER TABLE log_policies
 DELETE FROM log_policies;
 
 INSERT INTO log_policies (layer, retention_days, archive_enabled) VALUES
-    ('기록', 365, true),
-    ('원본', 30, true),
-    ('파생', 14, true);
+    ('record', 365, true),
+    ('raw', 30, true),
+    ('derived', 14, true);

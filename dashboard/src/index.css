@@ -37,6 +37,11 @@
 
 :root.light {
   --dash-bg: 244 245 250;
+  /* 2026-07-17(2차): 카드 배경을 F7F8FC로 낮춰서 네온 눈부심을 줄이려 했더니
+     bg(244 245 250)와 거의 안 구분되는 부작용(다크 모드와 달리 라이트는 body에
+     radial-gradient가 없어 순전히 이 델타에만 의존함, 아래 body 규칙 참고) - 순백으로
+     되돌리고, 눈부심은 카드 배경이 아니라 실제 색상(theme.js CHART_COLORS/
+     DONUT_PALETTE) 쪽에서 채도/명도로 다룬다. */
   --dash-surface: 255 255 255;
   --dash-surfaceAlt: 230 232 245;
   --dash-mint: 0 135 90;
@@ -57,6 +62,9 @@ body {
     radial-gradient(ellipse 60% 50% at 100% 0%, rgb(var(--dash-pink) / 0.06), transparent);
   background-attachment: fixed;
   transition: background-color 0.15s ease;
+  /* 2026-07-17: 글씨체 선택 기능 제거 - Noto Sans KR로 고정 (useFontFamily.jsx/
+     FontPickerPanel 삭제, index.html의 웹폰트 링크도 Noto Sans KR만 남김). */
+  font-family: "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 :root.light body {
@@ -90,3 +98,4 @@ body {
 :root.light .glow-box-critical {
   box-shadow: none;
 }
+

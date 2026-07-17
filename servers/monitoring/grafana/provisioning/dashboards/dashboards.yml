@@ -1,0 +1,17 @@
+# ./json 디렉터리에 넣어둔 대시보드 JSON을 자동 로드하는 프로바이더 설정.
+# 최초에는 대시보드 JSON이 없으므로, Grafana UI > Import에서 아래 커뮤니티
+# 대시보드 ID를 가져와 이 디렉터리에 JSON으로 export해 두면 재기동해도 유지된다.
+#   - Node Exporter Full: 1860
+#   - cAdvisor: 14282
+#   - Kafka Exporter Overview: 7589
+apiVersion: 1
+
+providers:
+  - name: "SISM Default"
+    orgId: 1
+    folder: "SISM"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

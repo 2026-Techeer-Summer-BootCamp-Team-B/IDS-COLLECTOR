@@ -40,9 +40,8 @@ function TechniqueCell({ tech, active, onClick }) {
   );
 }
 
-export default function AttackMatrixView() {
-  const { tactics, totalTechniques, detectedTechniques, status: coverageStatus, error: coverageError } =
-    useAttackCoverage();
+export default function AttackMatrixView({ onNavigateToIncident } = {}) {
+  const { tactics, status: coverageStatus, error: coverageError } = useAttackCoverage();
   const [selected, setSelected] = useState(null);
   const [expandedIdx, setExpandedIdx] = useState(null);
 
@@ -63,6 +62,14 @@ export default function AttackMatrixView() {
   const timelineIncidentId = expandedIdx !== null ? incidents[expandedIdx]?.id ?? null : null;
   const { timeline, status: timelineStatus } = useIncidentTimeline(timelineIncidentId);
 
+  // 2026-07-16(8차): "우측 상단 숫자가 30인데 실제로 세면 38개"라는 직접
+  // 피드백 - 이전엔 "고유 기법 수"(중복 제거, 30) 기준이 의도된 설계였지만
+  // (T1133/T1098처럼 전술 여러 개에 걸치는 기법이 매트릭스엔 열마다 반복
+  // 표시됨), 사용자가 실제로 매트릭스에 보이는 칸을 세는 방식(38)을
+  // 기준으로 삼길 원해서 그쪽으로 맞췄다 - tactics(전술별 기법 목록, 이미
+  // 중복 포함)의 길이 합으로 다시 계산한다.
+  const totalTechniques = tactics.reduce((sum, t) => sum + t.techniques.length, 0);
+  const detectedTechniques = tactics.reduce((sum, t) => sum + t.techniques.filter((x) => x.hits > 0).length, 0);
   const coveragePct = totalTechniques > 0 ? Math.round((detectedTechniques / totalTechniques) * 100) : 0;
 
   function selectTechnique(tech) {
@@ -90,6 +97,14 @@ export default function AttackMatrixView() {
               <span className="w-2 h-2 rounded-sm bg-dash-surfaceAlt inline-block" /> 미탐지
             </span>
           </div>
+          {/* 2026-07-16(8차): "직접 세면 38개인데 우측 상단 숫자를 바꿔야한다"는
+              피드백 - 이전엔 고유 기법 수(30, CONTAINERS_MATRIX 카탈로그 항목 수)
+              기준이었는데, 실제 매트릭스에 표시되는 칸 수(T1133/T1098처럼 전술
+              여러 개에 걸친 기법은 열마다 한 번씩 더 세짐)를 기준으로 바꿨다. */}
+          <p className="text-dash-faint text-[10px] mt-1 max-w-[220px] leading-relaxed">
+            전체 MITRE ATT&CK가 아니라 이 프로젝트가 탐지하는 컨테이너/K8s 관련 기법 {totalTechniques}개 기준
+            (매트릭스에 표시되는 칸 수 — 여러 전술에 걸친 기법은 전술마다 한 번씩 셈)
+          </p>
         </div>
       </div>
 
@@ -130,7 +145,10 @@ export default function AttackMatrixView() {
             </div>
             <span className="text-dash-muted text-xs">{incidents.length} matched incidents</span>
           </div>
-          <div className="space-y-1">
+          {/* 2026-07-17: 같은 기법으로 매칭된 인시던트가 계속 쌓이면 이 목록이
+              끝없이 늘어나서 페이지 전체가 하염없이 길어지던 문제 - IncidentsView의
+              좌측 리스트와 같은 패턴(높이 고정 + 내부 스크롤)으로 통일. */}
+          <div className="space-y-1 max-h-[520px] overflow-y-auto pr-2">
             {incidentsStatus === "loading" && <p className="text-dash-muted text-xs">인시던트를 불러오는 중...</p>}
             {incidentsStatus === "error" && <p className="text-dash-critical text-xs">{incidentsError}</p>}
             {incidentsStatus === "ready" && incidents.length === 0 && (
@@ -138,11 +156,20 @@ export default function AttackMatrixView() {
             )}
             {incidents.map((incident, i) => {
               const isOpen = expandedIdx === i;
+              const inProgress = statusDotStatus(incident.status) === "IN_PROGRESS";
               return (
                 <div key={incident.id} className="rounded-lg -mx-2 px-2">
-                  <button
+                  {/* 2026-07-16: 원래는 이 행 전체가 <button>(펼치기/접기)이었는데,
+                      "진행중" 상태에 조치 화면(Incidents)으로 이동하는 버튼을 추가
+                      하려면 버튼 안에 버튼을 넣는 꼴이 돼서(무효한 마크업 + 클릭이
+                      바깥 버튼에 먹힘) div+onClick으로 바꾸고, 새 버튼은
+                      e.stopPropagation()으로 바깥 클릭(펼치기/접기)과 분리했다. */}
+                  <div
                     onClick={() => setExpandedIdx(isOpen ? null : i)}
-                    className="w-full flex gap-3 text-xs py-1.5 text-left hover:bg-dash-surfaceAlt/50 rounded-lg"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === "Enter" && setExpandedIdx(isOpen ? null : i)}
+                    className="w-full flex gap-3 text-xs py-1.5 text-left hover:bg-dash-surfaceAlt/50 rounded-lg cursor-pointer"
                   >
                     <span className="text-dash-faint shrink-0 mt-0.5">{isOpen ? "▾" : "▸"}</span>
                     <span className="text-dash-faint whitespace-nowrap w-32 shrink-0">
@@ -157,10 +184,22 @@ export default function AttackMatrixView() {
                         {incident.correlation_key_type}={incident.correlation_key_value}
                       </p>
                     </div>
-                    <span className="shrink-0">
+                    <div className="shrink-0 flex flex-col items-end gap-1">
                       <StatusDot status={statusDotStatus(incident.status)} />
-                    </span>
-                  </button>
+                      {inProgress && onNavigateToIncident && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onNavigateToIncident(incident.id);
+                          }}
+                          className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-dash-critical/15 text-dash-critical hover:bg-dash-critical/25 transition-colors whitespace-nowrap"
+                        >
+                          조치하러 가기 →
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   {isOpen && (
                     <div className="ml-[4.75rem] mb-2 mt-1 bg-dash-bg rounded-xl p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-xs">
                       <div>
@@ -196,7 +235,10 @@ export default function AttackMatrixView() {
                         {timelineStatus === "ready" && timeline.length === 0 && (
                           <p className="text-dash-muted text-xs">연결된 원본 로그가 없습니다.</p>
                         )}
-                        <div className="space-y-1.5">
+                        {/* 인시던트 하나에 원본 로그가 많이 묶이면(브루트포스류
+                            threshold 시나리오 등) 이 안쪽 목록도 끝없이 늘어질 수
+                            있어 마찬가지로 높이를 고정하고 내부 스크롤로 막는다. */}
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                           {timelineStatus === "ready" &&
                             timeline.map((t) => (
                               <div key={t.event_id} className="bg-dash-surface rounded-lg p-2.5">

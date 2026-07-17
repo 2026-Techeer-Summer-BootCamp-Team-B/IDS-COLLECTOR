@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # severity.yaml 경로 - app 패키지 기준 상대경로 (app/severity.py에서 resolve).
     severity_config_path: str = "severity.yaml"
 
+    # GeoLite2-City .mmdb 경로. 53MB 바이너리라 이미지에 굽지 않고(severity.yaml과 달리)
+    # servers/docker-compose.yml이 read-only 볼륨으로 ./normalizer/data/GeoLite2-City.mmdb를
+    # 이 경로(WORKDIR /app 기준)에 마운트한다 - 리포에도 커밋 안 함(.gitignore 참고).
+    geoip_db_path: str = "data/GeoLite2-City.mmdb"
+
     class Config:
         env_file = ".env"
 

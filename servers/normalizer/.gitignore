@@ -1,0 +1,3 @@
+# MaxMind GeoLite2-City DB (53MB, EULA상 재배포 지양) - 로컬/배포 전에 직접 받아서
+# data/GeoLite2-City.mmdb 자리에 둘 것 (app/config.py geoip_db_path 참고).
+data/*.mmdb

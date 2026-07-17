@@ -5,6 +5,9 @@ import {
   Area,
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  ComposedChart,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -22,17 +25,18 @@ import { useLogVolume } from "../hooks/useLogVolume";
 import { useLogLevels } from "../hooks/useLogLevels";
 import { useDetectionSources } from "../hooks/useDetectionSources";
 import { useLogs } from "../hooks/useLogs";
-import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY } from "../data/realSeverity";
+import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY, getRealSeverityMeta } from "../data/realSeverity";
 import { getModuleMeta } from "../data/moduleMeta";
+import { useLiveAttackFeed } from "../hooks/useLiveFeed";
 import { ALL_LEVELS, ERROR_BAND, WARN_BAND, getLevelMeta, getDisplayTier } from "../data/logLevels";
 import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSeries";
 import { usePollInterval } from "../context/PollIntervalContext";
-import { CHART_COLORS, forTheme, DONUT_PALETTE, chartTooltipProps } from "../data/theme";
+import { CHART_COLORS, forTheme, DONUT_PALETTE, donutPalette, chartTooltipProps } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
 import TimeRangePicker from "../components/TimeRangePicker";
-import WorldMap from "../components/WorldMap";
+import GoogleGeoMap from "../components/GoogleGeoMap";
 // three.js는 이 카드에서만 쓰이는데도 LogDashboard.jsx가 Card/KpiCard 등 공용
 // 프리미티브를 export하다보니 다른 뷰(WAS/Falco/K8sAudit/Incidents)들이 전부 이
 // 파일을 import한다 — 정적 import로 넣으면 그 뷰들 번들에도 300~400KB가 얹혀버려서
@@ -241,7 +245,223 @@ function ChartTypeToggle({ options, value, onChange }) {
   );
 }
 
+// 2026-07-16: "Log Volume" 카드 선 색을 사용자가 직접 바꿀 수 있게 - localStorage에
+// 저장해서 새로고침/재방문해도 유지된다. useTheme.jsx의 STORAGE_KEY 패턴을 그대로 따름.
+const LOGVOLUME_COLOR_STORAGE_KEY = "sentinel-ops-logvolume-colors";
+
+function loadCustomLogVolumeColors(defaults) {
+  if (typeof window === "undefined") return defaults;
+  try {
+    const raw = localStorage.getItem(LOGVOLUME_COLOR_STORAGE_KEY);
+    if (!raw) return defaults;
+    return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    return defaults;
+  }
+}
+
+function useLogVolumeColors(defaults) {
+  const [colors, setColors] = useState(() => loadCustomLogVolumeColors(defaults));
+  const setColor = (key, value) => {
+    setColors((prev) => {
+      const next = { ...prev, [key]: value };
+      try {
+        localStorage.setItem(LOGVOLUME_COLOR_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* localStorage를 못 쓰는 환경이면 이번 세션에서만 반영되고 저장은 안 됨 */
+      }
+      return next;
+    });
+  };
+  const resetColors = () => {
+    setColors(defaults);
+    try {
+      localStorage.removeItem(LOGVOLUME_COLOR_STORAGE_KEY);
+    } catch {
+      /* no-op */
+    }
+  };
+  return [colors, setColor, resetColors];
+}
+
+// module을 안 넘기는 용법(Overview의 "Log Volume" 카드) 전용 - WAS/WAF/Falco/K8s
+// Audit 4개 + 전체 총량까지 5개 선으로 쪼개서 보여준다("어느 소스가 볼륨을
+// 주도하는지"가 총량 하나만으로는 안 보인다는 피드백, 2026-07-16). WAS/Falco/
+// K8sAudit 상세 뷰는 이미 module을 하나로 좁혀서 이 컴포넌트를 재사용하므로,
+// 거기서까지 이 breakdown을 켜면 이미 좁힌 모듈 하나 보겠다고 API를 4번 더
+// 부르는 낭비가 생긴다 - 그래서 module 유무로 분기해서 별도 하위 컴포넌트로
+// 뺐다(훅 호출 순서는 각 컴포넌트 인스턴스마다 고정이라 이렇게 나눠도 안전함).
+function LogVolumeBreakdownBody({ rangeKey }) {
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
+  const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
+  const { pollMs } = usePollInterval();
+
+  const total = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, pollMs });
+  const was = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "was", pollMs });
+  const waf = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "waf", pollMs });
+  const falco = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "falco", pollMs });
+  const k8s = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "k8s_audit", pollMs });
+
+  const defaults = useMemo(
+    () => ({
+      total: DONUT_PALETTE[3],
+      was: getModuleMeta("was").color,
+      waf: getModuleMeta("waf").color,
+      falco: getModuleMeta("falco").color,
+      k8s_audit: getModuleMeta("k8s_audit").color,
+    }),
+    []
+  );
+  const [colors, setColor, resetColors] = useLogVolumeColors(defaults);
+
+  const parts = [total, was, waf, falco, k8s];
+  const status = parts.some((p) => p.status === "error")
+    ? "error"
+    : parts.every((p) => p.status === "ready")
+      ? "ready"
+      : "loading";
+
+  const data = useMemo(() => {
+    const len = total.buckets.length;
+    const rows = [];
+    for (let i = 0; i < len; i++) {
+      const ts = total.buckets[i]?.ts;
+      if (ts == null) continue;
+      rows.push({
+        label: formatBucketLabel(new Date(ts), preset.bucketMs),
+        total: total.buckets[i]?.total ?? 0,
+        was: was.buckets[i]?.total ?? 0,
+        waf: waf.buckets[i]?.total ?? 0,
+        falco: falco.buckets[i]?.total ?? 0,
+        k8s_audit: k8s.buckets[i]?.total ?? 0,
+      });
+    }
+    return rows;
+  }, [total.buckets, was.buckets, waf.buckets, falco.buckets, k8s.buckets, preset.bucketMs]);
+
+  const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
+  const spikePoint = spike ? data[spike.index] : null;
+
+  // was/waf/falco/k8s_audit 4개는 Infrastructure의 "모듈별 로그량 추이"와 같은
+  // 방식으로 그라디언트 채움 + 적층(stackId)해서 보여준다. total은 그 4개의
+  // 합이라 같이 쌓으면 높이가 두 배로 왜곡되므로 스택엔 안 넣고, 위에 얇은
+  // 오버레이 선(Line)으로만 그려서 급증 배지/기준선 역할을 유지한다
+  // (2026-07-16: Infrastructure 쪽 디자인이 더 낫다는 피드백으로 LineChart 5선
+  // → ComposedChart[stacked Area 4 + overlay Line 1]로 교체).
+  const stackSeries = [
+    { key: "was", label: "WAS" },
+    { key: "waf", label: "WAF" },
+    { key: "falco", label: "Falco" },
+    { key: "k8s_audit", label: "K8s Audit" },
+  ];
+  const series = [{ key: "total", label: "전체" }, ...stackSeries];
+
+  return (
+    <Card
+      title="Log Volume"
+      subtitle={`Last ${preset.label} · ${data.length} buckets · 모듈별 구분`}
+      action={
+        spike ? (
+          <span className="text-[11px] font-medium px-2 py-1 rounded-md bg-dash-pink/15 text-dash-pink whitespace-nowrap">
+            ⚠ {spikePoint.label} 평소 대비 +{spike.pctOverBaseline}% 급증
+          </span>
+        ) : null
+      }
+      className="h-80"
+    >
+      {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs">Log Volume을 불러오지 못했습니다.</p>}
+      {status === "ready" && (
+        <>
+          <ResponsiveContainer width="100%" height="76%">
+            <ComposedChart data={data}>
+              <defs>
+                {stackSeries.map((s) => (
+                  <linearGradient key={s.key} id={`logVolumeFill-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={colors[s.key]} stopOpacity={0.55} />
+                    <stop offset="100%" stopColor={colors[s.key]} stopOpacity={0.05} />
+                  </linearGradient>
+                ))}
+              </defs>
+              <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+              <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
+              <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
+              <Tooltip contentStyle={tooltipStyle(C)} />
+              {stackSeries.map((s) => (
+                <Area
+                  key={s.key}
+                  type="monotone"
+                  dataKey={s.key}
+                  name={s.label}
+                  stackId="module"
+                  stroke={colors[s.key]}
+                  fill={`url(#logVolumeFill-${s.key})`}
+                  strokeWidth={1.5}
+                />
+              ))}
+              <Line
+                type="monotone"
+                dataKey="total"
+                name="전체"
+                stroke={colors.total}
+                strokeWidth={2.5}
+                strokeDasharray="4 3"
+                dot={false}
+                isAnimationActive={false}
+              />
+              {spikePoint && (
+                <ReferenceDot
+                  x={spikePoint.label}
+                  y={spikePoint.total}
+                  r={5}
+                  fill={C.pink}
+                  stroke={C.bg}
+                  strokeWidth={2}
+                  ifOverflow="extendDomain"
+                />
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-dash-muted mt-2">
+            {series.map((s) => (
+              <label
+                key={s.key}
+                title="클릭해서 이 선의 색을 직접 바꿀 수 있어요"
+                className="relative flex items-center gap-1.5 cursor-pointer"
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full inline-block border border-dash-surfaceAlt"
+                  style={{ backgroundColor: colors[s.key] }}
+                />
+                {s.label}
+                <input
+                  type="color"
+                  value={colors[s.key]}
+                  onChange={(e) => setColor(s.key, e.target.value)}
+                  className="w-0 h-0 opacity-0 absolute"
+                />
+              </label>
+            ))}
+            <button
+              onClick={resetColors}
+              className="text-[11px] text-dash-faint hover:text-dash-muted underline underline-offset-2 ml-auto"
+            >
+              색상 초기화
+            </button>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
+  // module 없이 호출되면(Overview) 5선 breakdown으로 위임 - 아래 기존 로직은
+  // module이 특정된 상세 뷰(WAS/Falco/K8sAudit) 전용으로 계속 쓰인다.
+  if (!module) {
+    return <LogVolumeBreakdownBody rangeKey={rangeKey} />;
+  }
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   // 2026-07-15: 형광 민트/critical 빨강이 "에러처럼 보인다"는 피드백 - Overview/
@@ -249,8 +469,8 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
   // 차분한 스틸블루, Major~Critical(중요 로그)만 도넛의 빨강(테라코타) 톤으로
   // 구분되게 유지 - 이 두 색은 WAS/Falco/K8sAudit 상세 뷰도 이 컴포넌트를
   // 그대로 재사용하므로 전체 "계층별 로그" 차트에 다 같이 적용된다.
-  const totalColor = forTheme(DONUT_PALETTE[3], theme);
-  const errorColor = forTheme(DONUT_PALETTE[0], theme);
+  const totalColor = donutPalette(theme)[3];
+  const errorColor = donutPalette(theme)[0];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const { pollMs } = usePollInterval();
   const [internalType, setInternalType] = useState(() => defaultChartTypeFor("log-volume"));
@@ -360,10 +580,12 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
   );
 }
 
-// 모듈별(WAS/Falco/K8s Audit) 로그량 추이 적층 그래프 - Log Volume 차트는 셋을
+// 모듈별(WAS/WAF/Falco/K8s Audit) 로그량 추이 적층 그래프 - Log Volume 차트는
 // 합산한 총량만 보여줘서 "지금 어느 소스가 볼륨을 주도하는지"가 안 보이던 문제.
-// /stats/volume을 module별로 3번(같은 hours/buckets로) 호출하면 서버가 같은
-// date_histogram 경계를 쓰므로 버킷 인덱스가 그대로 정렬돼 안전하게 합칠 수 있다.
+// /stats/volume을 module별로 호출하면 서버가 같은 date_histogram 경계를 쓰므로
+// 버킷 인덱스가 그대로 정렬돼 안전하게 합칠 수 있다. WAF는 2026-07-16 추가 -
+// WAF 백엔드가 실제로 트래픽을 받기 시작하면서 이 차트에서만 빠져있던 게
+// 눈에 띄어서 나머지 3개 모듈과 나란히 넣었다.
 export function ModuleVolumeStackedChart({ fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
@@ -372,39 +594,43 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
   const { pollMs } = usePollInterval();
 
   const was = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "was", pollMs });
+  const waf = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "waf", pollMs });
   const falco = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "falco", pollMs });
   const k8s = useLogVolume({ lookbackMs: preset.lookbackMs, bucketMs: preset.bucketMs, module: "k8s_audit", pollMs });
 
-  const status = [was.status, falco.status, k8s.status].includes("error")
+  const parts = [was, waf, falco, k8s];
+  const status = parts.some((p) => p.status === "error")
     ? "error"
-    : [was.status, falco.status, k8s.status].every((s) => s === "ready")
+    : parts.every((p) => p.status === "ready")
       ? "ready"
       : "loading";
 
   const data = useMemo(() => {
-    const len = Math.max(was.buckets.length, falco.buckets.length, k8s.buckets.length);
+    const len = Math.max(was.buckets.length, waf.buckets.length, falco.buckets.length, k8s.buckets.length);
     const rows = [];
     for (let i = 0; i < len; i++) {
-      const ts = was.buckets[i]?.ts ?? falco.buckets[i]?.ts ?? k8s.buckets[i]?.ts;
+      const ts = was.buckets[i]?.ts ?? waf.buckets[i]?.ts ?? falco.buckets[i]?.ts ?? k8s.buckets[i]?.ts;
       if (ts == null) continue;
       rows.push({
         label: formatBucketLabel(new Date(ts), preset.bucketMs),
         was: was.buckets[i]?.total ?? 0,
+        waf: waf.buckets[i]?.total ?? 0,
         falco: falco.buckets[i]?.total ?? 0,
         k8s_audit: k8s.buckets[i]?.total ?? 0,
       });
     }
     return rows;
-  }, [was.buckets, falco.buckets, k8s.buckets, preset.bucketMs]);
+  }, [was.buckets, waf.buckets, falco.buckets, k8s.buckets, preset.bucketMs]);
 
   const metaWas = getModuleMeta("was");
+  const metaWaf = getModuleMeta("waf");
   const metaFalco = getModuleMeta("falco");
   const metaK8s = getModuleMeta("k8s_audit");
 
   return (
     <Card
       title="모듈별 로그량 추이"
-      subtitle={`Last ${preset.label} · WAS / Falco / K8s Audit 적층`}
+      subtitle={`Last ${preset.label} · WAS / WAF / Falco / K8s Audit 적층`}
       action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
       className={fillHeight ? "min-h-80 h-full" : "h-80"}
     >
@@ -418,6 +644,10 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 <linearGradient id="moduleWasFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={metaWas.color} stopOpacity={0.55} />
                   <stop offset="100%" stopColor={metaWas.color} stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="moduleWafFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={metaWaf.color} stopOpacity={0.55} />
+                  <stop offset="100%" stopColor={metaWaf.color} stopOpacity={0.05} />
                 </linearGradient>
                 <linearGradient id="moduleFalcoFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={metaFalco.color} stopOpacity={0.55} />
@@ -443,6 +673,15 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
               />
               <Area
                 type="monotone"
+                dataKey="waf"
+                name={metaWaf.label}
+                stackId="module"
+                stroke={metaWaf.color}
+                fill="url(#moduleWafFill)"
+                strokeWidth={1.5}
+              />
+              <Area
+                type="monotone"
                 dataKey="falco"
                 name={metaFalco.label}
                 stackId="module"
@@ -462,7 +701,7 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
             </AreaChart>
           </ResponsiveContainer>
           <div className="flex gap-4 text-xs text-dash-muted mt-2">
-            {[metaWas, metaFalco, metaK8s].map((m) => (
+            {[metaWas, metaWaf, metaFalco, metaK8s].map((m) => (
               <span key={m.label} className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: m.color }} /> {m.label}
               </span>
@@ -488,7 +727,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
 
   const data = REAL_SEVERITY_LEVELS.map((l, i) => {
     const found = levels.find((x) => x.severity === l.severity);
-    return { key: l.key, label: l.label, count: found ? found.count : 0, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) };
+    return { key: l.key, label: l.label, count: found ? found.count : 0, color: donutPalette(theme)[i % DONUT_PALETTE.length] };
   });
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
 
@@ -525,7 +764,7 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} />
+              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -597,13 +836,18 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
+  // 2026-07-16: 목록 높이는 "정확히 5줄" 크기(h-48)로 고정해서 그 이상은 항상
+  // 내부 스크롤로만 보이게 한다. 이 카드는 오른쪽 컬럼(TopSources 위 +
+  // ErrorRateGauge 아래)의 flex-col 안에서 자기 내용 높이만 차지하고, 남는
+  // 세로 공간은 아래 ErrorRateGauge가 flex-1로 흡수해서 왼쪽 Recent Logs
+  // 높이와 맞춘다(아래 grid 행의 stretch + flex-col 구조 참고).
   return (
     <Card
       title="Top Source IPs"
-      subtitle={highlighted ? `전체 ${sources.length}개 IP` : "선택 구간 기준"}
+      subtitle={highlighted ? `전체 ${sources.length}개 IP · 5개 이후 스크롤` : "선택 구간 기준"}
       className={highlighted ? "glow-box-mint" : ""}
     >
-      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+      <div className="space-y-3 h-48 min-h-0 overflow-y-auto pr-1">
         {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
         {status === "error" && (
           <p className="text-dash-critical text-xs">{error || "데이터를 불러오지 못했습니다."}</p>
@@ -646,39 +890,55 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   const data = [{ value: rate }, { value: 100 - rate }];
   const displayRate = useCountUp(`${rate}%`);
 
+  // 2026-07-16: 오른쪽 컬럼(TopSources + 이 카드)이 왼쪽 Recent Logs와 같은 행에서
+  // stretch되면, 이 카드가 flex-1로 남는 세로 공간을 전부 흡수한다 - 고정 140px
+  // 차트+오버레이 블록은 그대로 두고, 그 블록을 담은 wrapper를 flex로 세로
+  // 중앙정렬해서 늘어난 공간이 위아래로 고르게 여백처럼 보이게 했다(예전처럼
+  // 카드 아래쪽에만 어색하게 빈 공간이 남지 않도록).
   return (
-    <Card title={title} subtitle={subtitle} className="relative">
-      <ResponsiveContainer width="100%" height={140}>
-        <PieChart>
-          <Pie
-            data={data}
-            startAngle={180}
-            endAngle={0}
-            innerRadius={55}
-            outerRadius={72}
-            dataKey="value"
-            stroke="none"
-            isAnimationActive
-            animationDuration={800}
-            animationEasing="ease-out"
-          >
-            <Cell fill={C.critical} />
-            <Cell fill={C.surfaceAlt} />
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="absolute inset-x-0 bottom-6 flex flex-col items-center">
-        <span
-          className={`text-dash-fg text-2xl font-semibold tabular-nums ${rate > 0 ? "animate-pulse glow-critical" : ""}`}
-        >
-          {displayRate}
-        </span>
-        <span className="text-dash-muted text-xs">
-          {errorCount} / {events.length} {unitLabel}
-        </span>
+    <Card title={title} subtitle={subtitle} className="flex-1 flex flex-col">
+      <div className="relative flex-1 flex items-center justify-center min-h-[140px]">
+        <div className="relative w-full">
+          <ResponsiveContainer width="100%" height={140}>
+            <PieChart>
+              <Pie
+                data={data}
+                startAngle={180}
+                endAngle={0}
+                innerRadius={55}
+                outerRadius={72}
+                dataKey="value"
+                stroke="none"
+                isAnimationActive
+                animationDuration={800}
+                animationEasing="ease-out"
+              >
+                <Cell fill={C.critical} />
+                <Cell fill={C.surfaceAlt} />
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="absolute inset-x-0 bottom-6 flex flex-col items-center">
+            <span
+              className={`text-dash-fg text-2xl font-semibold tabular-nums ${rate > 0 ? "animate-pulse glow-critical" : ""}`}
+            >
+              {displayRate}
+            </span>
+            <span className="text-dash-muted text-xs">
+              {errorCount} / {events.length} {unitLabel}
+            </span>
+          </div>
+        </div>
       </div>
     </Card>
   );
+}
+
+function tooltipStyle(C) {
+  // surfaceAlt가 순수 블랙에 가까운 다크 테마에서는 border:none이면 카드/페이지
+  // 배경과 거의 구분이 안 돼(2026-07-16 피드백: "도넛 차트에 마우스를 대면
+  // 검정색이라 잘 안 보임") - 옅은 테두리를 둬서 배경과 확실히 분리되게 한다.
+  return { background: C.surfaceAlt, border: `1px solid ${C.faint}`, borderRadius: 8, color: C.fg, fontSize: 12 };
 }
 
 // 카테고리형 데이터({key,label,count,color}[])의 막대그래프 버전 - 탐지소스/
@@ -757,12 +1017,21 @@ function useCountUp(rawValue, duration = 500) {
 
   useEffect(() => {
     const numeric = typeof rawValue === "number" ? rawValue : parseFloat(String(rawValue).replace(/,/g, ""));
-    const isPlainNumber = !Number.isNaN(numeric) && String(rawValue).trim() === String(rawValue).replace(/,/g, "").trim() || /^[\d,]+(\.\d+)?%?$/.test(String(rawValue).trim());
+    // 2026-07-16: "%" 말고 "ms"/"건" 같은 다른 단위 접미사가 붙은 값("42ms",
+    // "128건")도 여기 들어오는데, 예전엔 suffix를 "%"만 인식해서 애니메이션이
+    // 시작되는 순간 단위가 사라지는 버그가 있었다("42ms" -> 애니메이션 중/후
+    // "42"만 남음) - 꼬리의 숫자/콤마/마침표/공백이 아닌 문자열을 통째로
+    // 접미사로 떼어내고, 남은 부분이 순수 숫자(콤마/소수점 허용)인지만 검사하도록
+    // 일반화했다.
+    const trimmed = String(rawValue).trim();
+    const suffixMatch = trimmed.match(/[^\d,.\s]+$/);
+    const numericPart = suffixMatch ? trimmed.slice(0, -suffixMatch[0].length).trim() : trimmed;
+    const isPlainNumber = !Number.isNaN(numeric) && /^[\d,]+(\.\d+)?$/.test(numericPart);
     if (Number.isNaN(numeric) || !isPlainNumber) {
       setDisplay(rawValue);
       return;
     }
-    const suffix = String(rawValue).trim().endsWith("%") ? "%" : "";
+    const suffix = suffixMatch ? suffixMatch[0] : "";
     const hasComma = String(rawValue).includes(",");
     const start = fromRef.current;
     const startTime = performance.now();
@@ -803,7 +1072,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
         .filter((d) => d.count > 0)
         .map((d, i) => {
           const meta = getModuleMeta(d.module);
-          return { key: d.module, count: d.count, label: meta.label, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) };
+          return { key: d.module, count: d.count, label: meta.label, color: donutPalette(theme)[i % DONUT_PALETTE.length] };
         }),
     [byModule, theme]
   );
@@ -845,7 +1114,7 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} />
+              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -890,7 +1159,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
         label: l.label,
       }))
         .filter((d) => d.count > 0)
-        .map((d, i) => ({ ...d, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) })),
+        .map((d, i) => ({ ...d, color: donutPalette(theme)[i % DONUT_PALETTE.length] })),
     [levels, theme]
   );
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
@@ -930,7 +1199,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} />
+              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -973,7 +1242,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
     });
     return Object.entries(byNamespace)
       .sort((a, b) => b[1] - a[1])
-      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: forTheme(DONUT_PALETTE[i % DONUT_PALETTE.length], theme) }));
+      .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: donutPalette(theme)[i % DONUT_PALETTE.length] }));
   }, [targets, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
@@ -1017,7 +1286,7 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip {...chartTooltipProps(C)} />
+              <Tooltip {...chartTooltipProps(C)} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1047,21 +1316,59 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
 // 보여주는 쪽을 택함 — 랜딩 화면의 "화려한" 대표 비주얼 역할. 자세히 보려면
 // Infrastructure 탭으로.
 //
-// 주의: enrichment.py의 GeoIP lookup이 아직 모든 IP를 "KR/Seoul"로 고정
-// 반환하는 더미라, MaxMind DB가 붙기 전까진 지구본에 한반도 쪽 점만 두드러질
-// 수 있다 — 팀원 확인 필요(useGeoStats.js 주석 참고).
+// countries는 도시 단위 포인트라(2026-07-16, GeoLite2-City 도입) 같은 나라가 여러
+// 개 있을 수 있다 - 부제의 "N개국"은 countries.length가 아니라 countryCode
+// distinct count로 센다.
 function GeoSummaryCard() {
   const { theme } = useTheme();
-  const { countries, status, error } = useGeoStats({ limit: 10 });
+  const { countries, status, error } = useGeoStats({ limit: 50 });
   const total = countries.reduce((s, c) => s + c.count, 0);
+  const countryCount = new Set(countries.map((c) => c.countryCode)).size;
+  // 2026-07-17(7차): "Infrastructure처럼 Overview 지도도 2D/3D 토글로 바꿀 수
+  // 있게 해달라" - Infrastructure 패널과 같은 2D(Google Maps)/3D(지구본) 전환을
+  // 여기도 그대로 적용. 기본은 지금까지 써왔던 3D(지구본)를 유지해서 랜딩 화면의
+  // "화려한" 첫인상은 그대로 두고, 자세히 보고 싶을 때만 2D로 바꾸게 했다.
+  const [mapMode, setMapMode] = useState("3d");
 
   return (
-    <Card title="공격 발원지 (GeoIP) · 3D" subtitle={`전체 기간 · ${countries.length}개국 · 총 ${total}건 · 드래그로 회전`}>
+    <Card
+      title="공격 발원지 (GeoIP)"
+      subtitle={
+        mapMode === "3d"
+          ? `전체 기간 · ${countryCount}개국 · 총 ${total}건 · 드래그로 회전`
+          : `전체 기간 · ${countryCount}개국 · 총 ${total}건 · 스크롤로 확대`
+      }
+      action={
+        <div className="flex items-center gap-1 shrink-0 bg-dash-surfaceAlt rounded-lg p-0.5">
+          {[
+            { key: "2d", label: "2D" },
+            { key: "3d", label: "3D" },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setMapMode(opt.key)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                mapMode === opt.key ? "bg-dash-fg text-dash-bg" : "text-dash-muted hover:text-dash-fg"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
       {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
-      <div className="h-80">
-        <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
-          <Globe3D points={countries} theme={theme} />
-        </Suspense>
+      {/* 2026-07-16(6차): 지구본이 카드 하단에서 살짝 잘린다는 피드백 - h-80(320px)
+          에서 조금만 늘렸다. */}
+      <div className="h-[360px]">
+        {mapMode === "2d" ? (
+          <GoogleGeoMap points={countries} />
+        ) : (
+          <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-dash-faint text-xs">지구본 로딩 중...</div>}>
+            <Globe3D points={countries} theme={theme} />
+          </Suspense>
+        )}
       </div>
     </Card>
   );
@@ -1092,7 +1399,7 @@ export function LatencyStatsPanel({ events }) {
     : [];
 
   return (
-    <Card title="API Latency" subtitle={stats ? `선택 구간 · ${stats.count.toLocaleString()}건 기준` : "데이터 없음"}>
+    <Card title="API Latency" subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}>
       {stats ? (
         <div className="grid grid-cols-5 gap-2">
           {rows.map((r) => (
@@ -1141,6 +1448,7 @@ export function RecentLogsTable({ events, filterLevels, status = "ready", error 
     <Card
       title="Recent Logs"
       subtitle={`Showing ${Math.min(filtered.length, 8)} of ${filtered.length}`}
+      className="h-full"
       action={
         <div className="flex flex-wrap gap-1 max-w-md">
           <button
@@ -1656,7 +1964,10 @@ export function DashboardContent() {
   // 그 아래(= Total Logs KPI 행 위)에 놓는 전용 버튼으로도 열고 닫을 수 있게
   // 여기서 소유하고 내려보낸다.
   const [searchExpanded, setSearchExpanded] = useState(false);
-  const [searchHits, setSearchHits] = useState(0);
+  // 2026-07-16: 상단 토글 버튼에서 "N hits" 표시를 뺐으므로 이 카운트는 더 이상
+  // 화면에 안 쓰지만, onResultsCountChange 콜백 배선(SearchDiscoverView가 검색
+  // 결과 수를 부모에 알려주는 통로) 자체는 나중에 다시 쓸 수도 있어 그대로 둔다.
+  const [, setSearchHits] = useState(0);
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const hours = preset.lookbackMs / (60 * 60 * 1000);
   const { pollMs } = usePollInterval();
@@ -1737,7 +2048,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label={`Total Logs (${preset.label})`}
-            value={kpiStatus === "ready" ? kpi.current.total : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
             onClick={() => setKpiFilter("ALL")}
@@ -1748,7 +2059,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Errors (Major~Critical)"
-            value={kpiStatus === "ready" ? kpi.current.errors : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
             onClick={() => setKpiFilter("ERROR")}
@@ -1760,7 +2071,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Warnings (Minor)"
-            value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
+            value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
             onClick={() => setKpiFilter("WARNING")}
@@ -1771,7 +2082,7 @@ export function DashboardContent() {
         return (
           <KpiCard
             label="Active Sources"
-            value={kpiStatus === "ready" ? kpi.current.sources : "-"}
+            value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
             delta={
               kpiStatus === "ready" && kpi.sources_delta !== 0
                 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new`
@@ -1824,7 +2135,7 @@ export function DashboardContent() {
   const kpiTotalWidget = (
     <KpiCard
       label={`Total Logs (${preset.label})`}
-      value={kpiStatus === "ready" ? kpi.current.total : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
       onClick={() => setKpiFilter("ALL")}
@@ -1834,7 +2145,7 @@ export function DashboardContent() {
   const kpiErrorsWidget = (
     <KpiCard
       label="Errors (Major~Critical)"
-      value={kpiStatus === "ready" ? kpi.current.errors : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
       onClick={() => setKpiFilter("ERROR")}
@@ -1845,7 +2156,7 @@ export function DashboardContent() {
   const kpiWarningsWidget = (
     <KpiCard
       label="Warnings (Minor)"
-      value={kpiStatus === "ready" ? kpi.current.warnings : "-"}
+      value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
       onClick={() => setKpiFilter("WARNING")}
@@ -1855,7 +2166,7 @@ export function DashboardContent() {
   const kpiSourcesWidget = (
     <KpiCard
       label="Active Sources"
-      value={kpiStatus === "ready" ? kpi.current.sources : "-"}
+      value={kpiStatus === "ready" ? `${kpi.current.sources ?? 0}개` : "-"}
       delta={kpiStatus === "ready" && kpi.sources_delta !== 0 ? `${kpi.sources_delta > 0 ? "+" : ""}${kpi.sources_delta} new` : undefined}
       positive={kpiStatus === "ready" ? kpi.sources_delta >= 0 : true}
       onClick={() => setKpiFilter("SOURCES")}
@@ -1887,34 +2198,59 @@ export function DashboardContent() {
 
   return (
     <div className="space-y-6">
-      <SearchDiscoverView
-        rangeKey={rangeKey}
-        onRangeChange={setRangeKey}
-        expanded={searchExpanded}
-        setExpanded={setSearchExpanded}
-        onResultsCountChange={setSearchHits}
-      />
-
-      {/* 위젯 설정 메뉴 + (커스텀 대시보드 보는 중이면) 위젯 편집 버튼을 같은 행에 둔다 -
-          예전엔 위젯 편집이 CustomDashboardView 안쪽 상단에 따로 있어서 그리드가
-          한 줄 아래로 밀렸는데, 여기로 옮겨서 그 공백을 없앴다. */}
-      <div className="flex items-center gap-3">
-        <WidgetSettingsMenu
-          dashboards={dashboards}
-          activeId={activeId}
-          setActiveId={setActiveId}
-          deleteDashboard={deleteDashboard}
-          onCreateNew={openNewBuilder}
-          onEditActive={openEditBuilder}
+      {/* SearchDiscoverView + 위젯설정 행을 space-y-3(12px)짜리 별도 묶음으로
+          감싸서, 바깥 space-y-6(24px) 리듬에서 이 둘만 빼왔다(2026-07-16) -
+          한 줄짜리 얇은 행인데 위아래로 24px씩 비어 보여서 공백이 과하다는
+          피드백. 이 묶음 자체는 바깥 space-y-6의 한 항목으로 취급되니 KPI
+          카드 행과의 간격은 그대로 24px 유지됨. */}
+      <div className="space-y-3">
+        <SearchDiscoverView
+          rangeKey={rangeKey}
+          onRangeChange={setRangeKey}
+          expanded={searchExpanded}
+          setExpanded={setSearchExpanded}
+          onResultsCountChange={setSearchHits}
         />
-        {activeDashboard && (
+
+        {/* 위젯 설정 메뉴 + (커스텀 대시보드 보는 중이면) 위젯 편집 버튼 + 검색
+            결과 펼치기 토글을 한 행에 둔다. 검색 결과 펼치기는 grid-cols-3의
+            가운데 칸에 justify-self-center로 둬서 왼쪽 버튼 그룹 폭과 무관하게
+            항상 행 중앙에 오도록 했다(2026-07-16, 예전엔 ml-auto로 우측 끝에
+            붙어있었음). "N hits" 숫자는 버튼에서 뺐다 - 펼치면 패널 안에 어차피
+            다시 나오는 정보라 버튼 라벨에까지 중복으로 넣을 필요가 없었다. */}
+        <div className="grid grid-cols-3 items-center gap-3">
+          <div className="flex items-center gap-3">
+            <WidgetSettingsMenu
+              dashboards={dashboards}
+              activeId={activeId}
+              setActiveId={setActiveId}
+              deleteDashboard={deleteDashboard}
+              onCreateNew={openNewBuilder}
+              onEditActive={openEditBuilder}
+            />
+            {activeDashboard && (
+              <button
+                onClick={() => openEditBuilder(activeDashboard.id)}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
+              >
+                위젯 편집
+              </button>
+            )}
+          </div>
           <button
-            onClick={() => openEditBuilder(activeDashboard.id)}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt transition-colors"
+            onClick={() => setSearchExpanded((e) => !e)}
+            title={searchExpanded ? "검색 결과 패널 접기" : "검색 결과 패널 펼치기"}
+            className={`justify-self-center inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+              searchExpanded
+                ? "bg-dash-mint/15 text-dash-mint"
+                : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+            }`}
           >
-            위젯 편집
+            검색 결과 {searchExpanded ? "접기" : "펼치기"}
+            <span>{searchExpanded ? "▴" : "▾"}</span>
           </button>
-        )}
+          <div />
+        </div>
       </div>
 
       {kpiFilter !== "ALL" && (
@@ -1952,6 +2288,9 @@ export function DashboardContent() {
             {kpiSourcesWidget}
           </div>
 
+          {/* 2026-07-16(8차): "실시간 활동 흐름 / 상관 흐름 둘 다 별로였다"는
+              직접 피드백으로 두 위젯과 이 행 전체를 제거했다. */}
+
           <div>
             <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-3">로그 개요</p>
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -1971,9 +2310,15 @@ export function DashboardContent() {
 
           {latencyWidget}
 
+          {/* 2026-07-16: items-start를 걷어내고 기본 stretch로 되돌렸다 - 대신
+              오른쪽 컬럼을 flex-col로 바꿔서 ErrorRateGauge가 flex-1로 남는
+              세로 공간을 흡수하게 했다. 그래서 오른쪽 컬럼 전체 높이가 항상
+              왼쪽 Recent Logs 높이와 같아지고(stretch), 그 차이만큼의 여백도
+              ErrorRateGauge 카드 안에서 자연스러운 위아래 패딩으로 흡수돼서
+              카드 바깥에 어색한 빈 공간이 남지 않는다. */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2">{recentLogsWidget}</div>
-            <div className="space-y-6">
+            <div className="flex flex-col gap-6">
               {topSourcesWidget}
               {errorRateWidget}
             </div>
@@ -1989,7 +2334,7 @@ export function DashboardContent() {
 // Standalone version (own Sidebar + Topbar) — kept for running this file by itself.
 export default function LogDashboard() {
   return (
-    <div className="flex min-h-screen bg-dash-bg font-sans">
+    <div className="flex min-h-screen bg-dash-bg">
       <Sidebar />
       <div className="flex-1 flex flex-col">
         <Topbar />

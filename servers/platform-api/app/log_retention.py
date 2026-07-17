@@ -31,9 +31,9 @@ from app.config import settings
 from app.db import pool
 from app.opensearch_client import client as opensearch_client
 
-_LAYER_RECORD = "기록"
-_LAYER_RAW = "원본"
-_LAYER_DERIVED = "파생"
+_LAYER_RECORD = "record"
+_LAYER_RAW = "raw"
+_LAYER_DERIVED = "derived"
 
 _RAW_INDEX_PREFIX = "otel-logs-raw-"
 # attack-logs-* 프리픽스는 settings.attack_log_index_pattern("attack-logs-*")에서

@@ -1,0 +1,11 @@
+# Blackbox Exporter 모듈 정의.
+# prometheus.yml의 blackbox-http job이 module: [http_2xx]로 이 정의를 사용한다.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [] # 비어있으면 2xx를 성공으로 간주
+      method: GET
+      preferred_ip_protocol: "ip4"

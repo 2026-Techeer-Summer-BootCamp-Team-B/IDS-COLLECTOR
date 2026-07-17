@@ -1,0 +1,18 @@
+{
+  "name": "remotion-onboarding",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SENTINEL-OPS 로그인 페이지용 온보딩 데모 영상 - 컴포넌트로 구성하는 Remotion 프로젝트",
+  "scripts": {
+    "preview": "remotion studio src/index.js",
+    "render": "remotion render src/index.js OnboardingDemo out/onboarding-demo.mp4"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.490"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.490"
+  }
+}

@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
+import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
+import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
 import { useTargets } from "../hooks/useTargets";
 import { useAllowList } from "../hooks/useAllowList";
+import { useBannedIps } from "../hooks/useBannedIps";
 import { useScenarios } from "../hooks/useScenarios";
 import { useAlertConfigs } from "../hooks/useAlertConfigs";
 import { useLogPolicies } from "../hooks/useLogPolicies";
@@ -105,6 +109,42 @@ function RuleRow({ rule, rank, onToggle }) {
       <span className="text-dash-fg text-sm font-semibold w-14 text-right shrink-0">{rule.hits}건</span>
       <RuleToggle enabled={rule.enabled} onToggle={() => onToggle?.(rule.id)} />
     </div>
+  );
+}
+
+// 룰이 많아지면 전체 목록에서 "뭐가 제일 많이 잡혔는지"가 한눈에 안 들어온다는
+// 피드백 - 전체 목록(스크롤)은 그대로 두고 그 위에 적중 건수 상위 5개만 뽑아
+// 가로 막대로 보여준다. 룰 이름이 길어서 Y축 라벨을 잘라 보여주고, 잘린 이름은
+// Tooltip에서 전체를 다시 보여준다.
+function RuleRankingBarChart({ data, C }) {
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44)}>
+      <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
+        <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
+        <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
+        <YAxis
+          type="category"
+          dataKey="name"
+          stroke={C.muted}
+          tickLine={false}
+          axisLine={false}
+          fontSize={11}
+          width={140}
+          tickFormatter={(v) => (v.length > 16 ? `${v.slice(0, 16)}…` : v)}
+        />
+        <Tooltip
+          contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+          cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+          formatter={(value) => [`${value}건`, "적중 건수"]}
+          labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+        />
+        <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+          {data.map((d, i) => (
+            <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -256,6 +296,99 @@ function TargetsPanel({ targets, status, error, onCreate, onToggleActive, onDele
             </tbody>
           </table>
           {targets.length === 0 && <p className="text-dash-muted text-xs py-3">등록된 타깃이 없습니다.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 차단 기록(감사 트레일용, 실제 트래픽은 안 막힘 - banned_ips_api.py 주석 참고)
+// 테이블. 수동으로 IP를 추가/해제할 수 있다. 2026-07-16: Incidents 페이지에
+// 있던 걸 여기로 옮겼다 - "차단 IP 목록 관리"는 allow-list/targets/alert-configs
+// 같은 관리자용 설정이라 조사 화면(Incidents)보다 Admin/Audit이 더 어울린다는
+// 피드백. (인시던트 상세에서 바로 차단하는 "소스 IP 차단" 버튼은 조사 흐름에
+// 필요해서 IncidentsView에 그대로 남아있음 - 이 테이블은 그 전체 목록 관리용.)
+function BannedIpsTable({ bannedIps, status, error, onBan, onUnban }) {
+  const [ip, setIp] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!ip.trim()) return;
+    setSubmitting(true);
+    try {
+      await onBan(ip.trim(), reason.trim() || undefined);
+      setIp("");
+      setReason("");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+        <div>
+          <h3 className="text-dash-fg text-sm font-semibold">차단된 IP</h3>
+          <p className="text-dash-muted text-xs mt-0.5">GET /banned-ips · 감사 트레일 (실제 트래픽 차단은 아님)</p>
+        </div>
+        <form onSubmit={handleSubmit} className="flex flex-wrap gap-1.5">
+          <input
+            value={ip}
+            onChange={(e) => setIp(e.target.value)}
+            placeholder="IP / CIDR"
+            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
+          />
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="사유 (선택)"
+            className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-36"
+          />
+          <button
+            type="submit"
+            disabled={submitting || !ip.trim()}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical hover:bg-dash-critical/25 disabled:opacity-50 whitespace-nowrap"
+          >
+            차단
+          </button>
+        </form>
+      </div>
+      {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
+      {status === "ready" && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-dash-muted text-xs uppercase tracking-wide">
+                <th className="text-left font-medium pb-2">IP / CIDR</th>
+                <th className="text-left font-medium pb-2">사유</th>
+                <th className="text-left font-medium pb-2">차단 시각</th>
+                <th className="text-left font-medium pb-2">조치</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bannedIps.map((b) => (
+                <tr key={b.id} className="border-t border-dash-surfaceAlt">
+                  <td className="py-2.5 pr-3 text-dash-fg font-mono">{b.ip_or_cidr}</td>
+                  <td className="py-2.5 pr-3 text-dash-muted text-xs">{b.reason || "-"}</td>
+                  <td className="py-2.5 pr-3 text-dash-faint text-xs whitespace-nowrap">
+                    {new Date(b.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
+                  </td>
+                  <td className="py-2.5">
+                    <button
+                      onClick={() => onUnban(b.id)}
+                      className="text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
+                    >
+                      해제
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {bannedIps.length === 0 && <p className="text-dash-muted text-xs py-3">현재 차단된 IP가 없습니다.</p>}
         </div>
       )}
     </div>
@@ -617,7 +750,11 @@ export default function AdminAuditView({ pushToast }) {
     error: logPoliciesError,
     reload: reloadLogPolicies,
   } = useLogPolicies();
+  // 2026-07-16: 차단 IP 목록 관리(BannedIpsTable)를 Incidents에서 옮겨왔다.
+  const { bannedIps, status: bannedIpsStatus, error: bannedIpsError, reload: reloadBannedIps } = useBannedIps();
   const [activeTab, setActiveTab] = useState("policy");
+  const { theme } = useTheme();
+  const C = CHART_COLORS[theme];
 
   function toast(message, tone) {
     pushToast?.(message, tone);
@@ -718,6 +855,26 @@ export default function AdminAuditView({ pushToast }) {
     }
   }
 
+  async function handleBanIp(ip, reason) {
+    try {
+      await apiPost("/banned-ips", { ip_or_cidr: ip, reason });
+      toast(`${ip} 차단 처리했습니다.`, "success");
+      reloadBannedIps();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "IP 차단에 실패했습니다.", "error");
+    }
+  }
+
+  async function handleUnbanIp(bannedIpId) {
+    try {
+      await apiDelete(`/banned-ips/${bannedIpId}`);
+      toast("차단을 해제했습니다.", "success");
+      reloadBannedIps();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "차단 해제에 실패했습니다.", "error");
+    }
+  }
+
   async function handleCreateAllowListEntry(body) {
     try {
       await apiPost("/allow-list", body);
@@ -745,6 +902,9 @@ export default function AdminAuditView({ pushToast }) {
     () => scenarios.map((s) => ({ id: s.id, name: s.name, description: describeScenario(s), hits: s.hit_count, enabled: s.enabled, _raw: s })),
     [scenarios]
   );
+  // 위 rankedScenarios가 이미 hit_count 내림차순이므로 앞 5개만 잘라내면 그대로
+  // TOP 5 - 막대그래프용으로 별도 정렬 로직 불필요.
+  const top5Scenarios = useMemo(() => rankedScenarios.slice(0, 5), [rankedScenarios]);
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -774,14 +934,32 @@ export default function AdminAuditView({ pushToast }) {
           </div>
 
           <div className="bg-dash-surface rounded-2xl p-5">
-            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹</h3>
+            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹 TOP 5</h3>
+            <p className="text-dash-muted text-xs mb-3">
+              적중 건수가 가장 많은 룰 5개 — 아래 전체 목록과 같은 GET /scenarios 데이터 기준
+            </p>
+            {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+            {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
+            {scenariosStatus === "ready" && top5Scenarios.length > 0 && (
+              <RuleRankingBarChart data={top5Scenarios} C={C} />
+            )}
+            {scenariosStatus === "ready" && top5Scenarios.length === 0 && (
+              <p className="text-dash-muted text-xs py-3">등록된 탐지 룰이 없습니다.</p>
+            )}
+          </div>
+
+          <div className="bg-dash-surface rounded-2xl p-5">
+            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰 전체 목록</h3>
             <p className="text-dash-muted text-xs mb-1">
               GET /scenarios · 실제 인시던트 적중 건수 기준 · 총 {scenarios.length}개 룰 · 스위치로 켜고 끌 수 있음
             </p>
             {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
             {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
+            {/* 룰이 많아지면 목록이 끝없이 길어지던 문제(2026-07-16) - 10개
+                높이로 고정하고 그 이상은 내부 스크롤로. IncidentsView 좌측
+                목록과 같은 패턴(max-h + overflow-y-auto). */}
             {scenariosStatus === "ready" && (
-              <div>
+              <div className="max-h-[560px] overflow-y-auto pr-2">
                 {rankedScenarios.map((r, i) => (
                   <RuleRow key={r.id} rule={r} rank={i + 1} onToggle={() => handleToggleScenario(r._raw)} />
                 ))}
@@ -794,6 +972,14 @@ export default function AdminAuditView({ pushToast }) {
 
       {activeTab === "targets" && (
         <div className="space-y-6">
+          <BannedIpsTable
+            bannedIps={bannedIps}
+            status={bannedIpsStatus}
+            error={bannedIpsError}
+            onBan={handleBanIp}
+            onUnban={handleUnbanIp}
+          />
+
           <AllowListPanel
             entries={allowList}
             status={allowListStatus}
@@ -831,11 +1017,15 @@ export default function AdminAuditView({ pushToast }) {
           <p className="text-dash-muted text-xs mb-3">누가 · 언제 · 어떤 조치를 했는지 (최근 50건)</p>
           {auditStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
           {auditStatus === "error" && <p className="text-dash-critical text-xs py-3">{auditError}</p>}
+          {/* 2026-07-16: 50건이 한 화면에 그대로 다 나와서 페이지가 길어지던
+              문제 - 다른 목록들(탐지 룰 랭킹 등)과 같은 패턴으로 높이를 고정하고
+              내부 스크롤로 바꿨다. 헤더 행은 sticky로 고정해서 스크롤해도 어느
+              컬럼인지 계속 보이게. */}
           {auditStatus === "ready" && (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[480px] pr-1">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-dash-muted text-xs uppercase tracking-wide">
+                <tr className="text-dash-muted text-xs uppercase tracking-wide sticky top-0 bg-dash-surface">
                   <th className="text-left font-medium pb-2">시각</th>
                   <th className="text-left font-medium pb-2">사용자</th>
                   <th className="text-left font-medium pb-2">액션</th>

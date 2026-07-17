@@ -5,6 +5,7 @@ import AttackMatrixView from "./views/AttackMatrixView";
 import InfrastructureView from "./views/InfrastructureView";
 import AdminAuditView from "./views/AdminAuditView";
 import WASView from "./views/WASView";
+import WAFView from "./views/WAFView";
 import FalcoView from "./views/FalcoView";
 import K8sAuditView from "./views/K8sAuditView";
 import LiveTicker from "./components/LiveTicker";
@@ -37,6 +38,7 @@ const NAV_ITEMS = [
 // 계층별 상세 뷰 — 위 NAV_ITEMS와 별도 그룹으로 사이드바에 노출 (구분선으로 분리).
 const LAYER_NAV_ITEMS = [
   { key: "was", label: "WAS" },
+  { key: "waf", label: "WAF" },
   { key: "falco", label: "Falco" },
   { key: "k8s-audit", label: "K8s API" },
 ];
@@ -215,7 +217,7 @@ function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
 function ConnectionBar() {
   return (
     <div className="flex items-center justify-end px-6 py-2 border-b border-dash-surfaceAlt text-xs text-dash-muted">
-      <span>WAS · Falco · K8s-Audit 연결됨</span>
+      <span>WAS · WAF · Falco · K8s-Audit 연결됨</span>
     </div>
   );
 }
@@ -234,6 +236,16 @@ function Placeholder({ label }) {
 function AppShell() {
   const [active, setActive] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // 2026-07-16: ATT&CK 매트릭스에서 "진행중" 인시던트의 "조치하러 가기" 버튼을
+  // 누르면 Incidents 탭으로 전환하면서 그 인시던트를 바로 선택해서 보여준다.
+  // pendingIncidentId가 바뀔 때마다 IncidentsView에 새로 전달돼서(참조가 매번
+  // 바뀌도록 { id, nonce } 형태로 감쌌다 - 같은 인시던트를 연달아 눌러도 항상
+  // 다시 선택되게) useEffect가 selectedId를 그 값으로 맞춘다.
+  const [pendingIncident, setPendingIncident] = useState(null);
+  function goToIncident(incidentId) {
+    setPendingIncident({ id: incidentId, nonce: Date.now() });
+    setActive("incidents");
+  }
   const { feed, criticalEvents } = useLiveAttackFeed();
 
   // Fake response actions live here (not inside IncidentsView) so they
@@ -255,8 +267,12 @@ function AppShell() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== toastId)), 3000);
   }
 
+  // font-sans를 안 쓴다(2026-07-16, 2026-07-17 Noto Sans KR 고정 이후에도 유지) -
+  // Tailwind font-sans는 클래스 선택자라 index.css의 `body { font-family: ... }`
+  // (태그 선택자)보다 우선순위가 높아서, 여기 있으면 body에 지정한 Noto Sans KR이
+  // 항상 Tailwind 기본 산세리프로 덮어써져 화면에 반영이 안 된다.
   return (
-    <div className="flex min-h-screen bg-dash-bg font-sans">
+    <div className="flex min-h-screen bg-dash-bg">
       <Sidebar
         active={active}
         onSelect={setActive}
@@ -277,12 +293,14 @@ function AppShell() {
               pushToast={pushToast}
               focusEvent={focusIncidentEvent}
               onFocusConsumed={() => setFocusIncidentEvent(null)}
+              pendingIncident={pendingIncident}
             />
           )}
-          {active === "attack" && <AttackMatrixView />}
+          {active === "attack" && <AttackMatrixView onNavigateToIncident={goToIncident} />}
           {active === "infra" && <InfrastructureView />}
           {active === "admin" && <AdminAuditView pushToast={pushToast} />}
           {active === "was" && <WASView />}
+          {active === "waf" && <WAFView />}
           {active === "falco" && <FalcoView />}
           {active === "k8s-audit" && <K8sAuditView />}
         </main>

@@ -1,94 +1,28 @@
 import React, { useState } from "react";
-import { Shield, User, Lock, Eye, EyeOff, ArrowRight, Moon, Sun } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme";
-import NodeNetworkCanvas from "./NodeNetworkCanvas";
+import OnboardingPlayer from "./onboarding/OnboardingPlayer";
 
-// 좌우 스플릿 풀블리드 로그인 화면. 색상은 대시보드 본편의 dash-* 네온 팔레트와
-// 별개로 이 화면 전용 톤(다크=네이비/그린, 라이트=포레스트그린)을 쓴다 - 로그인은
-// 인증 전 화면이라 "SIEM 콘솔" 톤보다 차분한 브랜드 톤을 의도적으로 분리.
-const COLORS = {
-  dark: {
-    pageBg: "#0a0e17",
-    leftBg: "#0b1019",
-    rightBg: "#0e1420",
-    brandName: "#e8f0ee",
-    tagline: "#5dcaa5",
-    logoBg: "rgba(29,158,117,0.18)",
-    logoIcon: "#5dcaa5",
-    formTitle: "#f2f7f5",
-    formSubtitle: "#8fa39d",
-    label: "#a9bab5",
-    inputBg: "rgba(255,255,255,0.045)",
-    inputBorder: "rgba(93,202,165,0.16)",
-    inputText: "#e8f0ee",
-    buttonBg: "#1d9e75",
-    buttonText: "#04120d",
-    securityText: "#5c6f69",
-    glow: "rgba(29,158,117,0.16)",
-    accent: "#5dcaa5",
-  },
-  light: {
-    pageBg: "#eef1f4",
-    leftBg: "#0f6e56",
-    rightBg: "#ffffff",
-    brandName: "#ffffff",
-    tagline: "#9fe1cb",
-    logoBg: "rgba(255,255,255,0.15)",
-    logoIcon: "#ffffff",
-    formTitle: "#0f2e24",
-    formSubtitle: "#5a6b66",
-    label: "#3f5852",
-    inputBg: "rgba(15,110,86,0.04)",
-    inputBorder: "rgba(15,110,86,0.16)",
-    inputText: "#1a2b26",
-    buttonBg: "#0f6e56",
-    buttonText: "#ffffff",
-    securityText: "#9aa8a3",
-    glow: "rgba(255,255,255,0.13)",
-    accent: "#0f6e56",
-  },
-};
+// 2026-07-16: 처음 로그인하는 사용자가 "이 대시보드에 뭐가 있지?"부터 궁금할 것
+// 같다는 피드백 - App.jsx의 NAV_ITEMS/LAYER_NAV_ITEMS와 같은 5개 메인 페이지를
+// 로그인 전에 소개한다. 색상은 모노크롬 컨셉(요청받은 스타일 - white/gray/black만,
+// 파랑·네온 없음)이라 예전처럼 페이지별 accent 컬러는 안 쓰고 전부 흰색/회색 톤으로
+// 통일했다.
+//
+// 2026-07-16(2차): 온보딩 카드 5개 + 그 렌더러가 전부 이 파일 안에 있던 걸
+// components/onboarding/ 폴더로 분리했다("각 페이지마다 각 컴포넌트로" 요청).
+// 개별 카드 내용은 components/onboarding/OverviewOnboardingCard.jsx 등을 참고.
+//
+// 2026-07-17(3차): "온보딩 영상을 다 봐야 로그인 창이 나오게" 요청으로,
+// 5개를 스크롤로 훑어보는 OnboardingSection 대신 한 번에 하나씩 순서대로
+// 이어 재생하는 OnboardingPlayer를 쓴다. OnboardingSection.jsx는 코드는
+// 남아있지만 이 파일에서는 더 이상 쓰지 않는다.
 
-// 우측 상단 고정이라 항상 오른쪽(폼) 패널 배경 위에 얹힌다 - 그 배경이
-// 다크(#0e1420)/라이트(#ffffff)로 정반대라 하나의 반투명 스타일로는 한쪽에서
-// 안 보인다(라이트에서 흰 배경 위 흰 글자). 그래서 왼쪽 브랜드 패널이 아니라
-// 오른쪽 폼 패널 배경 기준으로 대비를 맞춘다.
-function ThemeToggle({ theme, toggleTheme, c }) {
-  const isLight = theme === "light";
-  return (
-    <button
-      type="button"
-      onClick={toggleTheme}
-      aria-label={isLight ? "다크 모드로 전환" : "라이트 모드로 전환"}
-      title={isLight ? "다크 모드로 전환" : "라이트 모드로 전환"}
-      className="absolute top-5 right-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium backdrop-blur-sm transition-colors"
-      style={{
-        backgroundColor: isLight ? "rgba(15,110,86,0.08)" : "rgba(255,255,255,0.1)",
-        color: isLight ? c.formTitle : c.brandName,
-        border: `1px solid ${isLight ? "rgba(15,110,86,0.2)" : "rgba(255,255,255,0.16)"}`,
-      }}
-    >
-      {isLight ? <Sun size={13} /> : <Moon size={13} />}
-      {isLight ? "Light" : "Dark"}
-    </button>
-  );
-}
-
-function FieldWrapper({ children, c, focused }) {
-  return (
-    <div
-      className="relative flex items-center rounded-[10px] transition-colors"
-      style={{
-        height: 46,
-        backgroundColor: c.inputBg,
-        border: `1px solid ${focused ? c.accent : c.inputBorder}`,
-        boxShadow: focused ? `0 0 0 3px ${c.accent}26` : "none",
-      }}
-    >
-      {children}
-    </div>
-  );
+// 상단 툴바의 마이크/카메라/화면공유/전체화면 아이콘 - 참고 스타일 프롬프트에
+// 있던 장식용 요소라 실제 동작은 없다(로그인 화면에 화상회의 컨트롤이 있을
+// 이유는 없지만, 무채색 프리미엄 SaaS 톤을 내는 장식으로만 사용).
+function ToolbarIcon({ children }) {
+  return <span className="w-4 h-4 text-white/60">{children}</span>;
 }
 
 // servers/platform-api/app/auth.py 기준 — users 테이블(pgcrypto) 실사용자 로그인.
@@ -97,13 +31,21 @@ function FieldWrapper({ children, c, focused }) {
 export default function LoginScreen() {
   const { login, error } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const isLight = theme === "light";
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [focusedField, setFocusedField] = useState(null);
-
-  const c = COLORS[theme] || COLORS.dark;
+  // 2026-07-16: 로고(public/logo.png)가 아직 안 올라와 있을 수도 있으니, 이미지
+  // 로드가 실패하면 기존의 흰 사각 아이콘으로 조용히 대체 - 깨진 이미지 아이콘이
+  // 그대로 노출되는 것보다 낫다.
+  const [logoFailed, setLogoFailed] = useState(false);
+  // 2026-07-17: "온보딩 영상 5개를 이어서 하나의 영상처럼 만들고, 다 시청해야
+  // 로그인/회원가입 창이 나오게 해달라"는 요청 - 온보딩을 다 보기 전엔
+  // onboardingDone이 false라 로그인 폼 대신 OnboardingPlayer만 보이고,
+  // 마지막 영상까지 끝나면(OnboardingPlayer의 onComplete) true로 바뀌면서
+  // 로그인 폼으로 전환된다. 새로고침하면 다시 처음부터 - 별도로 localStorage에
+  // "이미 봤음"을 저장해두진 않았다(요청에 없던 부분이라 우선 뺐다).
+  const [onboardingDone, setOnboardingDone] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -114,143 +56,196 @@ export default function LoginScreen() {
   }
 
   return (
-    <div
-      className="relative min-h-screen w-full flex overflow-hidden font-sans"
-      style={{ backgroundColor: c.pageBg }}
-    >
-      <ThemeToggle theme={theme} toggleTheme={toggleTheme} c={c} />
-
-      {/* 왼쪽 브랜드 패널 - 모바일에선 숨김 */}
+    // 2026-07-16: "화면이 짤린다"는 문제의 원인 - 바깥 컨테이너에 overflow-hidden이
+    // 걸려 있어서, 안쪽 콘텐츠(온보딩 카드들)가 한 화면 높이보다 커지면 페이지
+    // 자체가 스크롤되지 못하고 그냥 잘려나갔다. overflow-hidden을 제거하고
+    // min-h-screen만 유지 -> 콘텐츠가 넘치면 브라우저가 알아서 세로 스크롤을
+    // 만든다. 대각선 배경 조각들은 absolute inset-0라 스크롤과 무관하게 항상
+    // 뷰포트를 채운다.
+    <div className="min-h-screen relative flex items-center justify-center px-4 py-8 bg-black">
+      {/* 2026-07-16: 요청받은 스타일("모던 모노크롬 글래스모피즘, 좌 화이트/우
+          매트블랙 대각선 분할, 파랑·네온 없음")대로 배경을 다시 짰다. clip-path로
+          정확한 대각선 두 조각을 만들고, 어두운 쪽에만 미세한 격자 패턴을 얹어
+          "사이버 그리드" 느낌을 줬다. 색은 전부 흰색/회색/검정만 사용. */}
       <div
-        className="hidden md:flex relative flex-1 items-center justify-center overflow-hidden"
-        style={{ backgroundColor: c.leftBg }}
-      >
-        <div
-          className="absolute inset-0"
-          style={{ background: `radial-gradient(circle at 50% 50%, ${c.glow}, transparent 60%)` }}
-        />
-        <NodeNetworkCanvas theme={theme} />
+        className="absolute inset-0"
+        style={{
+          clipPath: "polygon(0 0, 62% 0, 38% 100%, 0 100%)",
+          background: "linear-gradient(160deg, #FFFFFF 0%, #ECEDF2 100%)",
+        }}
+      />
+      <div
+        className="absolute inset-0"
+        style={{
+          clipPath: "polygon(62% 0, 100% 0, 100% 100%, 38% 100%)",
+          background: "linear-gradient(160deg, #131316 0%, #08080A 100%)",
+        }}
+      />
+      <div
+        className="absolute inset-0 opacity-[0.06] pointer-events-none"
+        style={{
+          clipPath: "polygon(62% 0, 100% 0, 100% 100%, 38% 100%)",
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.9) 1px, transparent 1px)",
+          backgroundSize: "42px 42px",
+        }}
+      />
+      {/* 은은한 스튜디오 라이팅 - 색상 없이 흰색 bloom만 */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse 45% 35% at 22% 8%, rgb(255 255 255 / 0.35), transparent), radial-gradient(ellipse 40% 30% at 82% 95%, rgb(255 255 255 / 0.08), transparent)",
+        }}
+      />
 
-        <div className="relative z-10 flex flex-col items-center gap-4 px-6">
-          <div
-            className="flex items-center justify-center rounded-2xl"
-            style={{ width: 60, height: 60, backgroundColor: c.logoBg }}
-          >
-            <Shield size={32} color={c.logoIcon} strokeWidth={1.75} />
-          </div>
-          <p style={{ color: c.brandName, fontSize: 22, fontWeight: 500, letterSpacing: "0.06em" }}>
-            SENTINEL-OPS
-          </p>
-          <p style={{ color: c.tagline, fontSize: 12, fontWeight: 500, letterSpacing: "0.14em" }}>
-            TRIPLE-GUARD PLATFORM
-          </p>
-        </div>
+      {/* 우상단 장식 툴바 (비활성, 장식용) */}
+      <div className="absolute top-5 right-5 hidden sm:flex items-center gap-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-3.5 py-2.5 shadow-lg">
+        <ToolbarIcon>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <rect x="9" y="2" width="6" height="12" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" strokeLinecap="round" />
+          </svg>
+        </ToolbarIcon>
+        <ToolbarIcon>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <rect x="2" y="6" width="15" height="12" rx="2" />
+            <path d="M17 10l5-3v10l-5-3" strokeLinejoin="round" />
+          </svg>
+        </ToolbarIcon>
+        <ToolbarIcon>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <rect x="2" y="4" width="20" height="13" rx="2" />
+            <path d="M8 21h8M12 17v4M8 9l3 3 5-5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </ToolbarIcon>
+        <ToolbarIcon>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <path
+              d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </ToolbarIcon>
       </div>
 
-      {/* 오른쪽 로그인 폼 패널 */}
-      <div
-        className="flex-1 md:flex-[0.82] flex items-center justify-center px-6"
-        style={{ backgroundColor: c.rightBg }}
+      {/* 2026-07-16: 로그인 페이지는 지금까지 앱 테마(useTheme)와 무관하게 항상
+          같은 모노크롬 대각선 배경을 썼다 - 이건 의도적인 브랜드 스타일이라
+          그대로 두고, 대신 "로그인 후 들어갈 대시보드가 라이트/다크 중 뭘로
+          보일지"를 미리 골라둘 수 있게 토글 버튼만 추가했다. App.jsx의
+          ThemeToggle과 완전히 같은 아이콘/로직(useTheme)을 재사용 - 여기서
+          바꾼 값이 localStorage에 저장되고 로그인 후 대시보드에도 그대로
+          이어진다. */}
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label="라이트/다크 모드 전환"
+        title={isLight ? "다크 모드로 전환" : "라이트 모드로 전환"}
+        className="absolute top-5 left-5 w-9 h-9 flex items-center justify-center rounded-xl bg-black/40 backdrop-blur-md border border-white/10 text-white/70 hover:text-white shadow-lg transition-colors"
       >
-        <div className="w-full" style={{ maxWidth: 310 }}>
-          <h1 style={{ color: c.formTitle, fontSize: 21, fontWeight: 500 }}>로그인</h1>
-          <p style={{ color: c.formSubtitle, fontSize: 13 }} className="mt-1.5 mb-7">
-            계정 정보를 입력하세요.
-          </p>
+        {isLight ? (
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 1.5v2M8 12.5v2M2.6 2.6l1.4 1.4M12 12l1.4 1.4M1.5 8h2M12.5 8h2M2.6 13.4l1.4-1.4M12 4l1.4-1.4"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+            />
+            <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.3" />
+          </svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M13.5 9.6A5.8 5.8 0 1 1 6.4 2.5a4.6 4.6 0 0 0 7.1 7.1Z"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
+      </button>
 
-          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-            <div>
-              <label
-                htmlFor="login-username"
-                className="block mb-1.5"
-                style={{ color: c.label, fontSize: 12, fontWeight: 500 }}
-              >
-                아이디
-              </label>
-              <FieldWrapper c={c} focused={focusedField === "username"}>
-                <User size={17} style={{ color: c.inputText, opacity: 0.55, marginLeft: 13, flexShrink: 0 }} />
+      {/* 우하단 반짝임 장식 */}
+      <div className="absolute bottom-8 right-10 hidden sm:flex items-end gap-2.5 pointer-events-none opacity-80">
+        <span className="text-white text-base leading-none">✦</span>
+        <span className="text-white/60 text-xs leading-none mb-0.5">✦</span>
+        <span className="text-white text-xl leading-none">✦</span>
+      </div>
+
+      {/* 2026-07-17: "온보딩 영상을 다 봐야 로그인/회원가입 창이 나오게"라는
+          요청으로 구조가 다시 바뀌었다 - 이전엔 로그인 카드가 항상 위에 고정
+          노출되고 그 아래 온보딩 카드 5개가 스크롤 갤러리로 같이 떠 있었지만,
+          이제는 onboardingDone이 false인 동안은 OnboardingPlayer(영상을
+          이어붙여 순서대로 자동재생하는 컴포넌트)만 보이고, 마지막 영상까지
+          다 끝나야 로그인 카드로 화면이 바뀐다. */}
+      {/* 2026-07-16: "로그인 입력창은 작아도 되니 대시보드(온보딩) 크기를
+          1240x800 스케일로 크게 키워달라"는 요청 - 바깥 컬럼 폭을
+          max-w-xl(576px) -> max-w-[1240px]로 크게 넓혔다. 로그인 카드가 보일
+          때는 그 안에서만 max-w-sm(384px)로 좁혀서 중앙에 작게 띄운다.
+          OnboardingPlayer는 넓어진 폭 전체를 그대로 쓴다. */}
+      <div className="relative w-full max-w-[1240px] space-y-5">
+        {!onboardingDone ? (
+          <OnboardingPlayer onComplete={() => setOnboardingDone(true)} />
+        ) : (
+          <div className="max-w-sm mx-auto bg-black/50 backdrop-blur-xl rounded-2xl border border-white/15 shadow-2xl px-6 py-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              {!logoFailed ? (
+                <img
+                  src="/logo.png"
+                  alt="SENTINEL-OPS"
+                  onError={() => setLogoFailed(true)}
+                  className="w-11 h-11 rounded-xl object-cover shadow-lg shrink-0"
+                />
+              ) : (
+                <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
+                  <span className="w-4 h-4 rounded-sm bg-white" />
+                </div>
+              )}
+              <div>
+                <p className="text-white font-semibold text-base leading-none tracking-wide">SENTINEL-OPS</p>
+                <p className="text-white/60 text-[11px] mt-1.5 leading-relaxed">
+                  WAS · WAF · Falco · K8s Audit 로그를 실시간으로 수집하고 상관분석하여 공격을 하나의
+                  인시던트로 재구성해 조기에 탐지하는 보안 관제 플랫폼
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div>
+                <label className="text-white/50 text-xs block mb-1.5">아이디</label>
                 <input
-                  id="login-username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  onFocus={() => setFocusedField("username")}
-                  onBlur={() => setFocusedField(null)}
                   autoFocus
                   autoComplete="username"
-                  className="w-full h-full bg-transparent outline-none border-none text-sm"
-                  style={{ color: c.inputText, padding: "0 13px" }}
+                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
                 />
-              </FieldWrapper>
-            </div>
-
-            <div>
-              <label
-                htmlFor="login-password"
-                className="block mb-1.5"
-                style={{ color: c.label, fontSize: 12, fontWeight: 500 }}
-              >
-                비밀번호
-              </label>
-              <FieldWrapper c={c} focused={focusedField === "password"}>
-                <Lock size={17} style={{ color: c.inputText, opacity: 0.55, marginLeft: 13, flexShrink: 0 }} />
+              </div>
+              <div>
+                <label className="text-white/50 text-xs block mb-1.5">비밀번호</label>
                 <input
-                  id="login-password"
-                  type={showPassword ? "text" : "password"}
+                  type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  onFocus={() => setFocusedField("password")}
-                  onBlur={() => setFocusedField(null)}
                   autoComplete="current-password"
+                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-white/40"
                   placeholder="••••••••"
-                  className="w-full h-full bg-transparent outline-none border-none text-sm"
-                  style={{ color: c.inputText, padding: "0 13px" }}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 표시"}
-                  className="flex items-center justify-center shrink-0"
-                  style={{ color: c.inputText, opacity: 0.55, marginRight: 13 }}
-                >
-                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
-                </button>
-              </FieldWrapper>
-            </div>
-
-            {error && (
-              <div
-                className="text-xs rounded-[10px] px-3 py-2.5"
-                style={{ color: "#ff8a9a", backgroundColor: "rgba(255,31,75,0.1)", border: "1px solid rgba(255,31,75,0.25)" }}
-              >
-                {error}
               </div>
-            )}
 
-            <button
-              type="submit"
-              disabled={!username || !password || submitting}
-              className="w-full flex items-center justify-center gap-1.5 rounded-[10px] text-sm transition-transform active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
-              style={{ height: 47, backgroundColor: c.buttonBg, color: c.buttonText, fontWeight: 500 }}
-            >
-              {submitting ? (
-                "로그인 중..."
-              ) : (
-                <>
-                  로그인
-                  <ArrowRight size={16} />
-                </>
-              )}
-            </button>
-          </form>
+              {error && <p className="text-white text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-2">{error}</p>}
 
-          <div
-            className="flex items-center justify-center gap-1.5 mt-8"
-            style={{ color: c.securityText, fontSize: 11 }}
-          >
-            <Lock size={12} />
-            <span>인가된 사용자 전용</span>
+              <button
+                type="submit"
+                disabled={!username || !password || submitting}
+                className="w-full text-sm font-medium py-2 rounded-lg bg-white/90 text-black hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                {submitting ? "로그인 중..." : "로그인"}
+              </button>
+            </form>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

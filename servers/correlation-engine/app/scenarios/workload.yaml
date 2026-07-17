@@ -54,6 +54,38 @@ scenarios:
     severity: 4
     mitre_technique_id: "T1609"
 
+  # S32 (threshold, join_on=pod, threshold=1, 2026-07-17): T1059(Command and
+  # Scripting Interpreter) - falcosecurity/rules 공식 falco_rules.yaml의
+  # "Redirect STDOUT/STDIN to Network Connection in Container" 룰을 그대로 가져옴
+  # (WebFetch로 원본 재확인, tags: [..., mitre_execution, T1059]) - dup syscall로
+  # stdin/stdout을 네트워크 소켓에 연결하는 패턴을 잡는데, 전형적인 리버스 쉘/원격
+  # 코드 실행 기법이다. 스톡 룰이 실제로 이 클러스터에서도 발화 중인 걸 라이브
+  # 로그로 먼저 확인하고 추가했다(falco-fjsx7 파드 tail 300줄 중 27건, 2026-07-17
+  # 실측) - S1(exec 권한 사용 후 이상행동, T1609)과 달리 이건 k8s_audit 없이
+  # falco 단독 이벤트만으로도 이미 "리버스 쉘 의심"이라는 충분한 신호라 join_on을
+  # pod로 하는 단발성(threshold=1) 시나리오로 별도 뒀다 - S1/S5가 이미 쓰는
+  # "Terminal shell in container"와는 다른 룰이라 서로 겹치지 않는다. 원본 룰
+  # priority가 NOTICE라 개별 이벤트로는 묻히지만(falco-values.yaml의 "Terminal
+  # shell in container" priority 재정의와 같은 문제), 여기서도 그 파일을 건드리는
+  # 대신 상관분석 계층에서 severity를 4로 올려 처리한다(같은 컨벤션).
+  # ⚠️ 원본 룰 자체가 "behavior-based라 노이즈 발생 가능"이라고 명시하고 있어
+  # (user_known_stand_streams_redirect_activities로 튜닝 가능) 오탐 실측이
+  # 필요하다.
+  - id: S32
+    name: "컨테이너 내 리버스 쉘/원격 코드 실행 의심 (stdout/stdin 네트워크 리다이렉트)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 300
+    match:
+      event_module: falco
+      event_action: "Redirect STDOUT/STDIN to Network Connection in Container"
+    severity: 4
+    mitre_technique_id: "T1059"
+
   # S8 (threshold, join_on=user_or_sa, threshold=1): 네임스페이스 삭제 자체가 이미
   # 파괴적 행위라 단발성 critical로 다룬다(rbac.yaml의 S6과 같은 threshold=1 패턴).
   # 정상 운영에서 네임스페이스 삭제는 드문 이벤트라 verb/resource 조건만으로도

@@ -11,3 +11,9 @@ build/
 # mTLS - CA 발급 인증서/개인키, step-ca init 비밀번호 (커밋 금지, 1-7)
 servers/proxy/traefik/certs/
 servers/step-ca/secrets/
+
+# Traefik의 ACME(Let's Encrypt) 상태 파일 - 계정 개인키/발급된 인증서가 그대로
+# 담기는 런타임 시크릿이라 절대 커밋하면 안 된다(2026-07-17, 실수로 이미 한 번
+# 커밋됐던 걸 발견해서 추가 - 서버에서 git rm --cached로 추적 해제하고, 가능하면
+# git 히스토리에서도 제거 + Let's Encrypt 계정 키 재발급을 권장).
+servers/proxy/traefik/letsencrypt/

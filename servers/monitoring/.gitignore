@@ -1,0 +1,2 @@
+# Prometheus/Grafana 로컬 볼륨 데이터 - 배포 시 서버에 생성됨, 저장소에는 포함하지 않음
+data/

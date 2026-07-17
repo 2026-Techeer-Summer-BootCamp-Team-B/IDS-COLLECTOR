@@ -30,24 +30,23 @@ export const CHART_COLORS = {
     info: "#22D3EE",
   },
   light: {
+    // 2026-07-17 피드백: 위 critical/high/medium/low/live를 톤다운했더니 차트
+    // 전체가 칙칙해졌다는 지적 - 채도를 죽이는 대신 카드 배경(surface)을 순백에서
+    // 살짝 낮춰서 네온 색과의 눈부심/대비를 줄이는 쪽으로 방향 전환. surface만
+    // FFFFFF -> F7F8FC로, 색상 자체는 다시 dark와 동일한 풀채도로 되돌림.
     bg: "#F4F5FA",
-    surface: "#FFFFFF",
+    surface: "#F7F8FC",
     surfaceAlt: "#E6E8F5",
     mint: "#0F766E",
     pink: "#7A1FD1",
     muted: "#5B6180",
     faint: "#8388A6",
     fg: "#0B0C14",
-    // 2026-07-16: 이 4개(critical/high/medium/live)가 dark와 완전히 같은 네온
-    // 값으로 박혀있었다 - was/info는 이미 라이트용으로 톤다운돼있는데 이 넷만
-    // 빠져서, 흰 배경 위 도넛/게이지 차트(Cell fill={C.critical} 등)가 채도
-    // 높은 다크용 색 그대로 튀어 보이던 원인. index.css의 --dash-critical 등
-    // (뱃지가 쓰는 CSS 변수, 이미 올바르게 톤다운돼있었음)과 같은 값으로 맞춤.
-    critical: "#D40036",
-    high: "#CC5200",
-    medium: "#8A7600",
-    low: "#747A9A",
-    live: "#0E9F53",
+    critical: "#FF1F4B",
+    high: "#FF7A18",
+    medium: "#F5E400",
+    low: "#8890B5",
+    live: "#39FF6A",
     was: "#1D4ED8",
     info: "#0891B2",
   },
@@ -59,6 +58,55 @@ export const CHART_COLORS = {
 // 이 톤 다운된 팔레트를 인덱스 순서로 돌려쓴다. 뱃지 등 다른 곳의 의미색은
 // 그대로 유지 (예: severity 배지는 여전히 REAL_SEVERITY_LEVELS.color 사용).
 export const DONUT_PALETTE = ["#C05B4D", "#D68C3E", "#5B9A5E", "#4A7FB5", "#8890B5"];
+
+// 2026-07-17 피드백: 라이트 모드 배경/카드는 밝아졌는데 이 팔레트는 다크/라이트
+// 공용 고정값이라 차트만 안 밝아진 것처럼 보인다는 지적. 처음엔 흰색 쪽으로 RGB를
+// 섞어(lerp) 밝혔는데, 이 방식은 채도까지 같이 죽여서 "더 칙칙해 보인다"는 반대
+// 피드백을 받음 - RGB lerp-to-white는 명도(L)와 채도(S)가 함께 떨어지기 때문.
+// HSL로 바꿔 L만 올리고 S는 오히려 올려서(진하게) 파스텔이 아니라 흰 배경 위에서도
+// 또렷한 톤이 되도록 한다. donutPalette(theme)로 접근할 것 - DONUT_PALETTE를 직접
+// 인덱싱하면 다크 톤 그대로 나온다.
+function hexToHsl(hex) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l: l * 100 };
+  const d = max - min;
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  if (h < 0) h += 360;
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function hslToHex(h, s, l) {
+  s /= 100;
+  l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const toHex = (v) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function vivid(hex, { addLightness = 8, satMultiplier = 1.35, maxSat = 88, maxLightness = 62 } = {}) {
+  const { h, s, l } = hexToHsl(hex);
+  return hslToHex(h, Math.min(maxSat, s * satMultiplier), Math.min(maxLightness, l + addLightness));
+}
+
+export const DONUT_PALETTE_LIGHT = DONUT_PALETTE.map((hex) => vivid(hex));
+
+export function donutPalette(theme) {
+  return theme === "light" ? DONUT_PALETTE_LIGHT : DONUT_PALETTE;
+}
 
 // logLevels.js (9 levels) and attackEvents.js (9 attack types) each define
 // their own larger per-category palettes as pastel/neon hex tuned for the

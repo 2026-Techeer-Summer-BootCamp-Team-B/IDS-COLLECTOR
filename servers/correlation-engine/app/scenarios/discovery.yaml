@@ -24,3 +24,31 @@ scenarios:
       audit_verb: [get, list, watch]
     severity: 2
     mitre_technique_id: "T1613"
+
+  # S31 (threshold, join_on=user_or_sa, 2026-07-17): T1069(Permission Groups
+  # Discovery) - roles/clusterroles/rolebindings/clusterrolebindings에 대한
+  # get/list를 짧은 시간에 반복하면 발화. k3d-audit-policy.yaml이 이 4개 리소스를
+  # 이미 Request 레벨로 남기고 있어(RBAC 변조 탐지용 S7/S12/S13 재료로 먼저
+  # 추가됐던 정책) 새 수집기 없이 바로 쓸 수 있었다. S10(모든 get/list/watch
+  # 대량 호출, threshold=30)과 달리 이건 "RBAC 자체를 훑어보는" 훨씬 좁고 목적이
+  # 뚜렷한 패턴이라 threshold를 낮게(5) 잡았다 - 정상적인 컨트롤러/모니터링
+  # 트래픽이 매 요청마다 자기 role만 확인하는 것과 달리, 공격자의 권한 정찰은
+  # 여러 role/binding을 짧은 시간에 훑는 경향이 있다는 가정. ⚠️ S10과 마찬가지로
+  # 직접 설계한 임계값이라(falcosecurity/plugins 등 외부 근거 없음) 오탐 실측
+  # 튜닝이 필요하다 - 특히 RBAC 관리 도구(예: kubectl-who-can, rbac-lookup)를
+  # 쓰는 관리자가 우연히 걸릴 수 있음.
+  - id: S31
+    name: "RBAC 권한/역할 열거 정황"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 5
+    cooldown_seconds: 300
+    match:
+      event_module: k8s_audit
+      audit_verb: [get, list]
+      orchestrator_resource_type: [roles, clusterroles, rolebindings, clusterrolebindings]
+    severity: 2
+    mitre_technique_id: "T1069"
