@@ -1,0 +1,18 @@
+{
+  "name": "remotion-arch-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SENTINEL-OPS 아키텍처 트리 데모 영상 - 외부 접속이 WAF/WAS를 거쳐 Falco 쉘 감지까지 이어지는 과정을 CSS 도형만으로 시각화하는 Remotion 프로젝트",
+  "scripts": {
+    "preview": "remotion studio src/index.js",
+    "render": "remotion render src/index.js ArchTreeDemo out/arch-tree-demo.mp4"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.490"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.490"
+  }
+}

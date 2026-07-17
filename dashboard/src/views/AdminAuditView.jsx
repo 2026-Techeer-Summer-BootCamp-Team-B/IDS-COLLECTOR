@@ -14,7 +14,6 @@ import { useTrendReport } from "../hooks/useTrendReport";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
 import { renderMarkdownLite } from "../lib/markdownLite";
 import { usePollInterval } from "../context/PollIntervalContext";
-import { useFontFamily, FONT_OPTIONS } from "../hooks/useFontFamily";
 
 // 실시간 패널(Overview/WAS/Falco/K8sAudit + LiveTicker)이 공유하는 갱신 주기를
 // 관리자가 여기서 바꿀 수 있게 한 프리셋 - 너무 짧으면(500ms) 백엔드 집계 쿼리
@@ -54,41 +53,6 @@ function PollIntervalPanel() {
           >
             {p.label}
             {p.ms === defaultPollMs ? " (기본)" : ""}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// 2026-07-16: 글씨체를 직접 골라볼 수 있는 패널 - PollIntervalPanel과 같은
-// "프리셋 버튼 그리드" 패턴. 각 버튼은 자기 라벨을 실제 그 폰트로 렌더링해서
-// (style={{ fontFamily: f.value }}) 클릭하기 전에도 미리보기가 되고, 클릭하면
-// 전체 대시보드에 바로 적용된다(useFontFamily가 body에 즉시 반영) - 하나씩
-// 눌러가며 비교해볼 수 있게.
-function FontPickerPanel() {
-  const { fontKey, setFontKey } = useFontFamily();
-
-  return (
-    <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">글씨체</h3>
-      <p className="text-dash-muted text-xs mb-3">
-        대시보드 전체에 적용되는 글씨체 — 버튼을 눌러보면 바로 적용되니 하나씩 비교해보고 골라도 된다.
-        브라우저에 저장되며 이 브라우저에만 적용된다.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {FONT_OPTIONS.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFontKey(f.key)}
-            style={{ fontFamily: f.value }}
-            className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-              fontKey === f.key
-                ? "bg-dash-mint/15 text-dash-mint border-dash-mint/40"
-                : "bg-dash-bg text-dash-muted border-transparent hover:text-dash-fg hover:bg-dash-surfaceAlt"
-            }`}
-          >
-            {f.label}
           </button>
         ))}
       </div>
@@ -951,7 +915,6 @@ export default function AdminAuditView({ pushToast }) {
       {activeTab === "policy" && (
         <div className="space-y-6">
           <PollIntervalPanel />
-          <FontPickerPanel />
 
           <div className="bg-dash-surface rounded-2xl p-5">
             <h3 className="text-dash-fg text-sm font-semibold mb-1">데이터 정책 (보존 기간)</h3>

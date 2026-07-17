@@ -53,14 +53,27 @@ body {
     radial-gradient(ellipse 60% 50% at 100% 0%, rgb(var(--dash-pink) / 0.06), transparent);
   background-attachment: fixed;
   transition: background-color 0.15s ease;
-  /* 2026-07-16: 글씨체 선택 기능 - useFontFamily.jsx가 이 커스텀 프로퍼티를
-     선택값으로 덮어쓴다. --dash-font가 아직 안 잡힌 최초 페인트 순간엔
-     시스템 기본 폰트 스택으로 폴백. */
-  font-family: var(--dash-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  /* 2026-07-17: 글씨체 선택 기능 제거 - Noto Sans KR로 고정 (useFontFamily.jsx/
+     FontPickerPanel 삭제, index.html의 웹폰트 링크도 Noto Sans KR만 남김). */
+  font-family: "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 :root.light body {
   background-image: none;
+}
+
+/* react-grid-layout(위젯 설정 빌더 드래그) 기본 플레이스홀더 배경은 빨강이라
+   "여기 놓으면 안 된다"는 금지 신호로 읽힌다는 2026-07-17 피드백 - dash-mint
+   (초록 계열) 톤으로 덮어써서 "여기 놓을 수 있다"는 허용 신호로 바꾼다.
+   node_modules/react-grid-layout/css/styles.css의 .react-grid-placeholder
+   { background: red; opacity: 0.2; } 규칙과 동일한 우선순위(selector 특이도가
+   같음)라 두 스타일시트 중 뭐가 최종 번들에 나중에 실리는지에 따라 승패가
+   갈릴 수 있다 - main.jsx가 index.css를 먼저 import하지만 react-grid-layout의
+   styles.css는 LogDashboard.jsx(더 깊은 모듈)에서 import돼서 번들 순서가
+   보장되지 않는다. !important로 순서 의존성을 아예 없앤다. */
+.react-grid-item.react-grid-placeholder {
+  background: rgb(var(--dash-mint)) !important;
+  opacity: 0.25 !important;
 }
 
 /* Neon glow utilities — used sparingly (brand mark, LIVE indicator, KPI
@@ -89,5 +102,53 @@ body {
 :root.light .glow-box-mint,
 :root.light .glow-box-critical {
   box-shadow: none;
+}
+
+/* 2026-07-18: "실시간 탐지"(LiveActivityTree) 위젯 복원과 함께 다시 가져온
+   애니메이션 - 위험 이벤트 파동(ripple)과 신규 이벤트 반짝임(dot-blink). 원래
+   2026-07-16에 위젯 자체를 삭제하면서 같이 지웠던 규칙(34cd73d "실시간 활동
+   흐름 삭제")을 그대로 되살렸다. */
+@keyframes activity-ripple {
+  0% {
+    r: 9;
+    opacity: 0.55;
+  }
+  100% {
+    r: 24;
+    opacity: 0;
+  }
+}
+.activity-ripple-ring {
+  animation: activity-ripple 1.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes activity-dot-blink {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.7);
+  }
+  45% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.activity-dot-blink {
+  animation: activity-dot-blink 700ms ease-out;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
