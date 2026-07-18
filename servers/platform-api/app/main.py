@@ -25,7 +25,10 @@
   없으면 /health·/auth/verify를 제외한 전 요청을 403으로 거부한다.
 - 알림 채널 (P5-3): app/notifications.py - app/incident_alerts.py가 notified_at IS NULL인
   인시던트를 폴링해서 발송(트리거)
-- AI 트렌드 리포트 (P5-4): app/ai_report.py - Gemini API 미설정이면 통계만 반환
+- AI 트렌드 리포트 (P5-4): app/ai_report.py - Gemini API 미설정이면 통계만 반환.
+  POST /reports/trend/notify(아래)가 요약을 app/notifications.py의 notify_text()로
+  넘겨 Slack/Discord로도 발송 - 생성(ai_report.py)과 발송(notifications.py)은
+  이 라우트에서만 조합되고 두 모듈은 서로 import하지 않는다
 - Logs API: app/logs_api.py - attack-logs-* OpenSearch 인덱스 조회
 - Events API(개별 이벤트 티커): app/events_api.py - GET /events/recent?since=&limit=,
   attack-logs-* OpenSearch 인덱스를 since 폴링(대시보드 하단 티커/CRITICAL 팝업이 소비 -
@@ -74,11 +77,14 @@ healthcheck가 이 엔드포인트를 주기 폴링).
 """
 import asyncio
 import contextlib
+from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app import clickhouse_client, db, opensearch_client
 from app.ai_report import generate_trend_report
@@ -86,8 +92,9 @@ from app.alert_configs_api import router as alert_configs_router
 from app.analytics_api import router as analytics_router
 from app.allow_list_api import router as allow_list_router
 from app.attck_api import router as attck_router
+from app.audit import record_action
 from app.audit_logs_api import router as audit_logs_router
-from app.auth import router as auth_router, verify_gateway_secret
+from app.auth import current_user_id, router as auth_router, verify_gateway_secret
 from app.banned_ips_api import router as banned_ips_router
 from app.config import settings
 from app.data_policy_api import router_log_policies
@@ -96,6 +103,7 @@ from app.incident_alerts import poll_loop as incident_alerts_poll_loop
 from app.incidents_api import router as incidents_router
 from app.log_retention import poll_loop as log_retention_poll_loop
 from app.logs_api import router as logs_router
+from app.notifications import notify_text
 from app.pipeline_health_api import router as pipeline_health_router
 from app.poll_intervals_api import router as poll_intervals_router
 from app.scenarios_api import router as scenarios_router
@@ -132,16 +140,43 @@ app.add_middleware(
 _GATEWAY_SECRET_EXEMPT_PATHS = {"/health", "/auth/verify"}
 
 
-@app.middleware("http")
-async def enforce_gateway_secret(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path in _GATEWAY_SECRET_EXEMPT_PATHS:
-        return await call_next(request)
-    if not verify_gateway_secret(request):
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "missing or invalid internal gateway secret"},
-        )
-    return await call_next(request)
+class GatewaySecretMiddleware:
+    """CORSMiddleware와 같은 순수 ASGI 미들웨어(2026-07-18 수정).
+
+    원래 @app.middleware("http")(Starlette BaseHTTPMiddleware)로 구현돼 있었다.
+    BaseHTTPMiddleware는 call_next 이후 로직을 anyio TaskGroup의 별도 task로
+    스폰하는 걸로 알려져 있어 구조적으로 피하는 게 맞다(Starlette 자체도 가능하면
+    순수 ASGI 미들웨어를 권장 - contextvars 전파, 백그라운드 태스크 등에서 여러
+    알려진 문제가 있음) - CORSMiddleware도 같은 이유로 순수 ASGI로 구현돼 있다.
+
+    참고: platform-api 로컬 스모크 테스트(tests/)에서 로그인/CRUD 등 다수
+    엔드포인트가 asyncpg "attached to a different loop"/InterfaceError로 실패하는
+    별도 이슈가 있는데, 이 미들웨어를 완전히 제거해도 동일하게 재현됨을 확인했다
+    (2026-07-18) - 즉 이 미들웨어가 원인이 아니라 tests/conftest.py의 세션 스코프
+    event_loop 픽스처 관련 기존 버그다. 이 클래스는 그 문제를 고치지 않는다."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope["method"] == "OPTIONS"
+            or scope["path"] in _GATEWAY_SECRET_EXEMPT_PATHS
+        ):
+            await self.app(scope, receive, send)
+            return
+        if not verify_gateway_secret(Request(scope, receive)):
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": "missing or invalid internal gateway secret"},
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(GatewaySecretMiddleware)
 
 
 app.include_router(incidents_router)
@@ -213,3 +248,61 @@ def health_check():
 @app.get("/reports/trend")
 async def trend_report(days: int = 7):
     return await generate_trend_report(days)
+
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    return request.client.host if request.client else None
+
+
+def _report_header_timestamp(generated_at_iso: Optional[str]) -> str:
+    """report["generated_at"](app/ai_report.py generate_trend_report()의 반환값, 실제
+    요약이 생성/캐시된 시각의 UTC ISO 문자열)가 있으면 그 시각을, 없으면(GEMINI_API_KEY
+    미설정이나 생성 실패로 통계/안내 텍스트만 있는 경우) 현재 시각을 기준으로 삼는다.
+    Slack/Discord 알림은 팀 내부용이라 UTC가 아니라 KST로 표기한다."""
+    moment = (
+        datetime.fromisoformat(generated_at_iso) if generated_at_iso else datetime.now(timezone.utc)
+    )
+    return moment.astimezone(_KST).strftime("%Y-%m-%d %H:%M KST")
+
+
+class TrendReportNotifyIn(BaseModel):
+    days: int = 7
+
+
+@app.post("/reports/trend/notify")
+async def trend_report_notify(body: TrendReportNotifyIn, request: Request):
+    """AI 트렌드 리포트(GET /reports/trend와 동일하게 generate_trend_report()에
+    위임 - 캐시 로직도 그대로 적용됨)를 생성하고 Slack/Discord 알림 채널로도
+    발송한다. GEMINI_API_KEY 미설정 fallback 텍스트(통계 안내문)도 그대로
+    발송 대상으로 취급한다 - 별도 스킵 로직을 두지 않는다."""
+    report = await generate_trend_report(body.days)
+    header = (
+        f"📊 AI 트렌드 리포트 (최근 {body.days}일) — "
+        f"{_report_header_timestamp(report.get('generated_at'))}"
+    )
+    text = f"{header}\n{report['message']}"
+
+    # DLQ 적체 알림(app/incident_alerts.py _check_dlq_depth_alerts)과 동일하게
+    # severity=3("high") 컨벤션으로 발송 - min_severity<=3인 채널만 받는다.
+    # notify_text() 내부의 min_severity 필터/재시도 정책은 그대로 존중한다.
+    notify_result = await notify_text(3, text)
+
+    await record_action(
+        "AI_TREND_REPORT_NOTIFIED",
+        None,
+        _client_ip(request),
+        user_id=current_user_id(request),
+    )
+
+    return {
+        "days": body.days,
+        "configured": report["configured"],
+        "cached": report["cached"],
+        "generated_at": report.get("generated_at"),
+        "notify_attempted": notify_result["attempted"],
+        "notify_succeeded": notify_result["succeeded"],
+        "notify_failed": notify_result["failed"],
+    }

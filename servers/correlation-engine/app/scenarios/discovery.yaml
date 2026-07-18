@@ -52,3 +52,26 @@ scenarios:
       orchestrator_resource_type: [roles, clusterroles, rolebindings, clusterrolebindings]
     severity: 2
     mitre_technique_id: "T1069"
+
+  # S50 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어
+  # falco_rules.yaml의 "Packet socket created in container" 룰 그대로(WebFetch로
+  # 원본 재확인, 태그 mitre_credential_access/T1557.002 - Adversary-in-the-Middle:
+  # ARP Cache Poisoning, sub-technique는 이 프로젝트 컨벤션대로 부모 T1557로 기록) -
+  # raw AF_PACKET 소켓을 만들면 발화(같은 네트워크 네임스페이스의 트래픽을 스니핑/
+  # ARP 스푸핑하려는 정황). 원본 태그는 credential_access지만 실질 행위(네트워크
+  # 트래픽 도청)가 이 파일의 다른 시나리오(정찰)와 성격이 더 가까워 discovery.yaml에
+  # 둔다 - S40과 같은 실측 확인(2026-07-17)에서 발견.
+  - id: S50
+    name: "컨테이너 내 Raw 패킷 소켓 생성 (스니핑/ARP 스푸핑 정황)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Packet socket created in container"
+    severity: 3
+    mitre_technique_id: "T1557"
