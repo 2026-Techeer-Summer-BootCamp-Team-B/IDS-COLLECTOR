@@ -38,3 +38,33 @@ scenarios:
       event_action: "create serviceaccounts/token"
     severity: 3
     mitre_technique_id: "T1550"
+
+  # S57 (threshold, threshold=1, 2026-07-18): DataDog stratus-red-team의
+  # k8s.persistence.create-client-certificate 기법(CSR을 만들고 스스로 승인해서
+  # system:kube-controller-manager처럼 이미 강력한 ClusterRoleBinding을 가진
+  # 내장 신원의 클라이언트 인증서를 발급받는 지속성 확보 수법)을 실제 k3d 클러스터에
+  # 재현하며 발견한 사각지대(2026-07-18 실측 확인, 인증서 발급까지 실제로 성공함) -
+  # k3d-audit-policy.yaml의 catch-all(Metadata 레벨, 파일 최하단 규칙)이 이
+  # certificatesigningrequests 리소스도 이미 수집하고 있었지만(실측 확인 - 별도
+  # 감사정책 수정 불필요) 이 카탈로그엔 대응하는 시나리오가 하나도 없었다. 이
+  # 기법 자체의 공식 Detection 설명("look for creation and approval of CSR
+  # objects, which do not relate to standard cluster operation")을 그대로 따라
+  # CSR 생성 자체로 발화 - S25(SA 토큰 명시적 발급)와 마찬가지로 "새로운 인증
+  # 수단을 K8s API로 명시적으로 발급받는" 같은 패턴이라 T1550(Use Alternate
+  # Authentication Material) 재사용. severity 4는 S25(3)보다 위 - CSR 승인이
+  # kubelet 인증서 발급과 같은 API 경로를 타서 임의의 CommonName(예:
+  # system:kube-controller-manager)으로 발급받을 수 있어 SA 토큰보다 파급력이 크다.
+  - id: S57
+    name: "CSR 기반 클라이언트 인증서 발급 정황"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      event_action: "create certificatesigningrequests"
+    severity: 4
+    mitre_technique_id: "T1550"

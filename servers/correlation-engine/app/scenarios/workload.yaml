@@ -377,3 +377,33 @@ scenarios:
       event_action: "System user interactive"
     severity: 2
     mitre_technique_id: "T1059"
+
+  # S52 (threshold, threshold=1, 2026-07-18): falcosecurity/rules 코어 falco_rules.yaml의
+  # "Debugfs Launched in Privileged Container" 룰 그대로(WebFetch로 원본 재확인, 조건은
+  # container.privileged=true and proc.name=debugfs, 태그 mitre_privilege_escalation) -
+  # privileged 컨테이너 안에서 debugfs(파일시스템 디버거)를 실행하면 발화 - 호스트
+  # 파일시스템에 직접 접근해 컨테이너 탈출로 이어질 수 있는 정황. S16(privileged 등
+  # 이스케이프 벡터를 가진 pod "생성" 자체, k8s_audit)과는 다른 계층 - S16이 위험한
+  # 설정으로 pod가 뜨는 것 자체를 잡는다면, 이건 그 privileged 권한이 실제로 "악용되는
+  # 순간"을 잡는다는 점에서 S1/S5(WAF·exec 권한 실사용 확인)와 같은 논리.
+  #
+  # falcosecurity/event-generator + Atomic Red Team + OWASP ZAP으로 correlation-engine
+  # 전체 시나리오를 재검증하다가 발견(2026-07-18) - privileged 테스트 pod에서 debugfs를
+  # 직접 실행해 Falco가 이 룰로 정상 탐지하는 것까지 실측 확인했는데, 대응 시나리오가
+  # 없어서 원본 로그만 쌓이고 인시던트가 전혀 안 뜨고 있었다(falcosecurity/event-generator
+  # 자체 검증 시도는 이 환경의 cgroup 네임스페이스가 격리돼 있어 "컨테이너 아님"으로
+  # 오판해 스킵됐고, privileged 테스트 pod를 직접 띄워 재현해서 확인함).
+  - id: S52
+    name: "특권 컨테이너 내 Debugfs 실행 (컨테이너 이스케이프 시도)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Debugfs Launched in Privileged Container"
+    severity: 4
+    mitre_technique_id: "T1611"

@@ -205,3 +205,73 @@ scenarios:
       audit_binding_role_name: "cluster-admin"
     severity: 4
     mitre_technique_id: "T1098"
+
+  # S53 (threshold, threshold=1, 2026-07-18): S6과 같은 T1136(Create Account)이지만
+  # 다른 계층 - S6은 K8s API 레벨의 ServiceAccount 생성(k8s_audit)만 본다. 컨테이너
+  # "안에서" useradd/adduser/newusers로 OS 레벨 Linux 계정을 만드는 건 K8s 감사로그에
+  # 전혀 안 남고, falcosecurity/rules 코어 falco_rules.yaml에도 이 바이너리 계열
+  # (passwd_binaries/shadowutils_binaries 리스트는 있지만 "실행되면 알림"이라는 룰
+  # 자체가 없음 - 그 리스트들은 "Read sensitive file untrusted"류 룰의 신뢰 프로그램
+  # 예외 목록으로만 쓰인다) 대응 룰이 아예 없어서, 이 프로젝트 전용 커스텀 룰
+  # (Techeer-12th-b/backend/falco-values.yaml customRules의 rules-account-creation.yaml,
+  # 2026-07-18 추가)로 새로 만들었다 - 이 프로젝트 워크로드(Juice Shop, WAF backend)는
+  # 전부 stateless 앱이라 정상 운영 중 이 바이너리들이 실행될 이유가 없어 오탐 위험이
+  # 낮다.
+  #
+  # falcosecurity/event-generator + Atomic Red Team(T1136.001 "Create a user account
+  # on a Linux system", useradd 원본 그대로) + OWASP ZAP으로 correlation-engine 전체
+  # 시나리오를 재검증하다가 발견(2026-07-18, 실측 확인) - useradd로 컨테이너 안에
+  # 새 Linux 계정을 만들어도 Falco/correlation-engine 둘 다 완전히 무반응이었다(이중
+  # 사각지대). 커스텀 룰을 추가한 뒤에야 이 시나리오로 잡힌다.
+  - id: S53
+    name: "컨테이너 내부 OS 계정 생성 (백도어 계정 정황)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: "Account Creation Inside Container"
+    severity: 4
+    mitre_technique_id: "T1136"
+
+  # S58 (threshold, threshold=1, 2026-07-18): DataDog stratus-red-team의
+  # k8s.privilege-escalation.nodes-proxy 기법(nodes/proxy subresource 권한만 있으면
+  # 어드미션 컨트롤과 API 서버 로깅을 우회해 Kubelet API에 직접 접근할 수 있는
+  # 권한상승 벡터)을 실제 k3d 클러스터에 재현하며 발견한 사각지대(2026-07-18 실측
+  # 확인, 실제로 Kubelet 프록시 성공함).
+  #
+  # S12(위험한 권한을 가진 RBAC 룰 생성)는 이 권한을 부여하는 ClusterRole 자체를
+  # 인식하도록 설계되지 않았다 - 실측 중 이 기법의 ClusterRole(`resources:
+  # [nodes/proxy], verbs: [get, create]`)이 S12에서 우연히 걸리긴 했는데, 원인이
+  # audit_role_rule_flags_any의 write_verb 플래그가 "create" verb 하나만 있어도
+  # 반응하기 때문이지(정확히 확인함) nodes/proxy라는 리소스 자체를 인식해서가
+  # 아니다 - 공격에 실제로 필요한 최소 권한(verbs: [get]만)으로 좁히면 S12는 전혀
+  # 반응하지 않는다(실제로 이 기법의 detonate 단계는 get만 쓴다). 그래서 이
+  # 시나리오는 그 권한을 "부여하는" 시점이 아니라 "실제로 그 권한을 써서 Kubelet을
+  # 프록시한" 사용 시점 자체를 본다 - 이 기법의 공식 Detection 문서("Additionally,
+  # alerting on objectRef.resource == 'nodes' && objectRef.subresource ==
+  # 'proxy' should yield minimal false positives")를 그대로 따른다.
+  #
+  # MITRE는 이 카탈로그가 처음 쓰는 T1068(Exploitation for Privilege Escalation) -
+  # RBAC 자체의 설계상 허점(정상적으로 부여된 권한인데도 어드미션/로깅을 우회하게
+  # 되는 API 구조)을 악용한다는 점에서, 컨테이너 스펙의 이스케이프 벡터를 보는
+  # S16(T1611)이나 RBAC 오브젝트에 위험한 권한을 부여하는 S12/S13(T1098)과는 다른
+  # 각도라 별도 기법으로 잡았다.
+  - id: S58
+    name: "nodes/proxy 권한상승 악용 정황"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      event_action: "get nodes/proxy"
+    severity: 4
+    mitre_technique_id: "T1068"
