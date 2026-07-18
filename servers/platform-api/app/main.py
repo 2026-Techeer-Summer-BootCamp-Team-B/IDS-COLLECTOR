@@ -132,16 +132,43 @@ app.add_middleware(
 _GATEWAY_SECRET_EXEMPT_PATHS = {"/health", "/auth/verify"}
 
 
-@app.middleware("http")
-async def enforce_gateway_secret(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path in _GATEWAY_SECRET_EXEMPT_PATHS:
-        return await call_next(request)
-    if not verify_gateway_secret(request):
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "missing or invalid internal gateway secret"},
-        )
-    return await call_next(request)
+class GatewaySecretMiddleware:
+    """CORSMiddleware와 같은 순수 ASGI 미들웨어(2026-07-18 수정).
+
+    원래 @app.middleware("http")(Starlette BaseHTTPMiddleware)로 구현돼 있었다.
+    BaseHTTPMiddleware는 call_next 이후 로직을 anyio TaskGroup의 별도 task로
+    스폰하는 걸로 알려져 있어 구조적으로 피하는 게 맞다(Starlette 자체도 가능하면
+    순수 ASGI 미들웨어를 권장 - contextvars 전파, 백그라운드 태스크 등에서 여러
+    알려진 문제가 있음) - CORSMiddleware도 같은 이유로 순수 ASGI로 구현돼 있다.
+
+    참고: platform-api 로컬 스모크 테스트(tests/)에서 로그인/CRUD 등 다수
+    엔드포인트가 asyncpg "attached to a different loop"/InterfaceError로 실패하는
+    별도 이슈가 있는데, 이 미들웨어를 완전히 제거해도 동일하게 재현됨을 확인했다
+    (2026-07-18) - 즉 이 미들웨어가 원인이 아니라 tests/conftest.py의 세션 스코프
+    event_loop 픽스처 관련 기존 버그다. 이 클래스는 그 문제를 고치지 않는다."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope["method"] == "OPTIONS"
+            or scope["path"] in _GATEWAY_SECRET_EXEMPT_PATHS
+        ):
+            await self.app(scope, receive, send)
+            return
+        if not verify_gateway_secret(Request(scope, receive)):
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": "missing or invalid internal gateway secret"},
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(GatewaySecretMiddleware)
 
 
 app.include_router(incidents_router)
