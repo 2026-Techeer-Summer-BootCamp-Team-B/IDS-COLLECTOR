@@ -20,6 +20,18 @@ import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { PollIntervalProvider } from "./context/PollIntervalContext";
 import { OverviewLayoutProvider } from "./context/OverviewLayoutContext";
+import {
+  OverviewIcon,
+  IncidentsIcon,
+  AttackIcon,
+  InfrastructureIcon,
+  AdminIcon,
+  WasIcon,
+  WafIcon,
+  FalcoIcon,
+  K8sAuditIcon,
+  LogoMarkIcon,
+} from "./components/navIcons";
 
 /**
  * SENTINEL-OPS app shell — left sidebar switches between screens.
@@ -29,19 +41,19 @@ import { OverviewLayoutProvider } from "./context/OverviewLayoutContext";
 // "incidents" 항목의 badge는 고정값이 아니라 activeIncidents(useIncidentStats,
 // 실데이터)로 렌더 시점에 채워진다 — Sidebar가 navItems를 prop으로 받는 이유.
 const NAV_ITEMS = [
-  { key: "overview", label: "Overview" },
-  { key: "incidents", label: "Incidents" },
-  { key: "attack", label: "ATT&CK" },
-  { key: "infra", label: "Infrastructure" },
-  { key: "admin", label: "Admin / Audit" },
+  { key: "overview", label: "Overview", icon: OverviewIcon },
+  { key: "incidents", label: "Incidents", icon: IncidentsIcon },
+  { key: "attack", label: "ATT&CK", icon: AttackIcon },
+  { key: "infra", label: "Infrastructure", icon: InfrastructureIcon },
+  { key: "admin", label: "Admin / Audit", icon: AdminIcon },
 ];
 
 // 계층별 상세 뷰 — 위 NAV_ITEMS와 별도 그룹으로 사이드바에 노출 (구분선으로 분리).
 const LAYER_NAV_ITEMS = [
-  { key: "was", label: "WAS" },
-  { key: "waf", label: "WAF" },
-  { key: "falco", label: "Falco" },
-  { key: "k8s-audit", label: "K8s API" },
+  { key: "was", label: "WAS", icon: WasIcon },
+  { key: "waf", label: "WAF", icon: WafIcon },
+  { key: "falco", label: "Falco", icon: FalcoIcon },
+  { key: "k8s-audit", label: "K8s API", icon: K8sAuditIcon },
 ];
 
 // CRITICAL(severity=4) 이벤트 알림 — 예전엔 화면 우측 상단에 fixed 팝업으로
@@ -102,11 +114,11 @@ function Sidebar({ active, onSelect, open, incidentBadge, lastCritical, onInvest
       <div className="w-60 h-full flex flex-col px-5 py-6">
         <div className="flex items-center gap-2 mb-8 px-1">
           <div className="w-8 h-8 rounded-lg bg-dash-mint/20 flex items-center justify-center shrink-0 glow-box-mint">
-            <span className="w-3 h-3 rounded-sm bg-dash-mint" />
+            <LogoMarkIcon className="w-5 h-5 text-dash-mint" />
           </div>
           <div>
             <p className="text-dash-fg font-semibold text-sm leading-none tracking-wide glow-mint">SENTINEL-OPS</p>
-            <p className="text-dash-muted text-[10px] mt-1">Juice Shop 침투 시나리오</p>
+            <p className="text-dash-muted text-[10px] mt-1">K8s 기반 SIEM 플랫폼</p>
           </div>
         </div>
 
@@ -121,7 +133,10 @@ function Sidebar({ active, onSelect, open, incidentBadge, lastCritical, onInvest
                   : "border-transparent text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
               }`}
             >
-              <span>{item.label}</span>
+              <span className="flex items-center gap-2.5">
+                <item.icon className="w-4 h-4 shrink-0" />
+                <span>{item.label}</span>
+              </span>
               {item.key === "incidents" && incidentBadge ? (
                 <span className="text-[10px] bg-dash-pink/20 text-dash-pink rounded-full px-1.5 py-0.5">
                   {incidentBadge}
@@ -141,7 +156,10 @@ function Sidebar({ active, onSelect, open, incidentBadge, lastCritical, onInvest
                   : "border-transparent text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
               }`}
             >
-              <span>{item.label}</span>
+              <span className="flex items-center gap-2.5">
+                <item.icon className="w-4 h-4 shrink-0" />
+                <span>{item.label}</span>
+              </span>
             </button>
           ))}
 
