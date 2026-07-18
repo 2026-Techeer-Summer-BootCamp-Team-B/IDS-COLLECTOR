@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { countryCodeToFlagEmoji } from "../lib/flagEmoji";
 import WorldMap from "./WorldMap";
 
 // 2026-07-17(5차): "city가 null이 아니라 여러 지역이 나오는데, 지도를
@@ -165,8 +166,9 @@ export default function GoogleGeoMap({ points, compact = false }) {
         zIndex: Math.round(p.count) + 1000,
       });
 
+      const flag = countryCodeToFlagEmoji(p.countryCode);
       const content = `<div style="font: 500 12px sans-serif; padding: 2px 4px; color: #111;">
-        ${p.country}${p.city ? ` · ${p.city}` : ""} · ${p.count}건
+        ${flag ? `<span style="margin-right: 4px;">${flag}</span>` : ""}${p.country}${p.city ? ` · ${p.city}` : ""} · ${p.count}건
       </div>`;
       marker.addListener("mouseover", () => {
         infoWindowRef.current.setContent(content);
