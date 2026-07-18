@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { CHART_COLORS } from "../data/theme";
 import { WORLD_COUNTRIES } from "../data/worldCountries";
+import { countryCodeToFlagEmoji } from "../lib/flagEmoji";
 
 /**
  * 3D rotating globe for Overview's GeoIP summary (Infrastructure tab keeps
@@ -273,6 +274,9 @@ export default function Globe3D({ points = [], theme = "dark" }) {
             border: "1px solid #2A3350",
           }}
         >
+          {countryCodeToFlagEmoji(hover.point.countryCode) && (
+            <span className="mr-1">{countryCodeToFlagEmoji(hover.point.countryCode)}</span>
+          )}
           {hover.point.country}
           {hover.point.city ? ` · ${hover.point.city}` : ""} · {hover.point.count}건
         </div>

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { CHART_COLORS } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { WORLD_COUNTRIES } from "../data/worldCountries";
+import { countryCodeToFlagEmoji } from "../lib/flagEmoji";
 
 /**
  * Real-world map (Natural Earth 110m country outlines, see
@@ -62,6 +63,9 @@ export default function WorldMap({ points, compact = false }) {
             border: "1px solid #2A3350",
           }}
         >
+          {countryCodeToFlagEmoji(hover.point.countryCode) && (
+            <span className="mr-1">{countryCodeToFlagEmoji(hover.point.countryCode)}</span>
+          )}
           {hover.point.country}
           {hover.point.city ? ` · ${hover.point.city}` : ""} · {hover.point.count}건
         </div>
