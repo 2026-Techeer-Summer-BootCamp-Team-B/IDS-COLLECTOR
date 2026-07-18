@@ -73,6 +73,34 @@ body {
   background-image: none;
 }
 
+/* recharts의 Pie/Bar 조각(path)은 클릭하면 브라우저 기본 포커스 아웃라인이
+ * 뜬다 - 커스텀 onClick 로직은 없는데도(hover만 처리) 클릭 시 네모 박스로
+ * "선택된 것처럼" 보인다는 2026-07-17 피드백. hover 관련 로직은 그대로 두고
+ * 이 브라우저 기본 스타일만 지운다. */
+.recharts-wrapper *:focus,
+.recharts-wrapper *:focus-visible {
+  outline: none;
+}
+
+/* react-grid-layout(커스텀 대시보드 위젯 배치) 기본 스타일 오버라이드
+ * (2026-07-17 요청). 라이브러리 기본 CSS(node_modules/react-grid-layout/css/
+ * styles.css)는:
+ *  - 드래그/리사이즈 중 "여기로 놓일 예정" 플레이스홀더가 빨간색 - "여기 놓을
+ *    수 없다"는 경고처럼 보이지만 실제로는 겹치는 자리를 자동으로 밀어내고
+ *    놓아주는 정상 동작이라(react-grid-layout은 겹침 자체를 막지, 배치를
+ *    막지 않음) - 앱의 "가능/성공" 톤인 mint로 바꾼다.
+ *  - 리사이즈 핸들의 그립 표시(모서리 대각선 두 줄)가 rgba(0,0,0,0.4) 고정이라
+ *    이 앱의 어두운 카드 배경 위에서 사실상 안 보였다(핸들 자체는 hover시
+ *    opacity:1로 존재하는데 그 안의 시각 표시만 안 보이는 상태) - mint로
+ *    바꿔서 실제로 리사이즈할 수 있다는 게 보이게 한다. */
+.react-grid-item.react-grid-placeholder {
+  background: rgb(var(--dash-mint)) !important;
+}
+.react-grid-item > .react-resizable-handle::after {
+  border-right-color: rgb(var(--dash-mint) / 0.7);
+  border-bottom-color: rgb(var(--dash-mint) / 0.7);
+}
+
 /* GoogleGeoMap.jsx InfoWindow(hover 정보 패널) - 기본 닫기(X) 버튼은
  * headerDisabled+domready 리스너에서 이미 숨기지만(components/GoogleGeoMap.jsx),
  * Maps 자체의 여백/그림자 chrome도 우리 HoverPanel 자체 패딩과 겹쳐 이중으로

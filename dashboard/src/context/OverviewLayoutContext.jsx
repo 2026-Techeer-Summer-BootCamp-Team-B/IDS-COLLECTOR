@@ -17,16 +17,38 @@ const STORAGE_ACTIVE_KEY = "sentinelops_overview_active_v2";
 // 위젯 설정 빌더의 팔레트(왼쪽 목록)에 뜨는 전체 위젯 카탈로그. type은
 // LogDashboard.jsx의 renderWidgetContent()가 실제 컴포넌트로 매핑할 때 쓰는 키.
 // w/h는 그 위젯을 처음 캔버스에 놓을 때 기본 크기(12칸 그리드 기준).
+//
+// minW/minH(2026-07-17 요청 - "리사이즈해도 내용이 안 잘리는 최소 크기") -
+// KPI 카드는 Playwright로 실제 렌더링해서 재봤다(라벨+값+델타 3줄 내용이
+// 116~118px 밑에서는 세로로 잘림, 폭은 텍스트가 줄바꿈돼서 하드 최솟값이
+// 없어 시각적으로 봐줄만한 선으로 잡음). 나머지 차트/테이블/지도 타입은
+// 전부 Playwright로 하나하나 재기엔 조합이 너무 많아서(범례 줄바꿈, 축 라벨
+// 개수가 데이터에 따라 달라짐 등), KPI 카드 실측 비율(기본 크기 대비 약
+// 60~65%)을 기준으로 위젯 성격(차트 vs 테이블 vs 지도)에 맞게 비례 추정했다 -
+// 정확한 값이 필요하면 문제되는 위젯을 짚어주면 그것부터 다시 실측하겠다.
+//
+// selfResponsive: true(2026-07-17 버그 수정) - recharts 차트류는 이미 자기
+// 내부에서 ResponsiveContainer로 박스 크기를 따라간다(LogDashboard.jsx의
+// isControlled 분기 참고). WidgetFrame의 useContentScale(고정 크기로 렌더한
+// 뒤 transform:scale로 확대)을 여기에도 같이 적용했더니, 차트를 담은 Card의
+// CSS min-h-80(320px)이 useContentScale이 강제한 더 작은 높이를 무시하고
+// 커져버려서 그 위에 scale까지 겹쳐 두 배로 부풀어 오르는 버그가 났다
+// (Playwright로 실측: 216px로 강제하려던 게 실제로는 399px까지 커짐) -
+// 이미 반응형인 타입은 useContentScale을 아예 건너뛰어서 자체 반응형 로직만
+// 쓰게 한다.
 export const WIDGET_CATALOG = [
-  { type: "kpi-total", label: "Total Logs", w: 3, h: 6 },
-  { type: "kpi-errors", label: "Errors", w: 3, h: 6 },
-  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6 },
-  { type: "kpi-sources", label: "Active Sources", w: 3, h: 6 },
+  { type: "kpi-total", label: "Total Logs", w: 3, h: 6, minW: 2, minH: 4 },
+  { type: "kpi-errors", label: "Errors", w: 3, h: 6, minW: 2, minH: 4 },
+  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6, minW: 2, minH: 4 },
+  { type: "kpi-sources", label: "Active Sources", w: 3, h: 6, minW: 2, minH: 4 },
   {
     type: "log-volume",
     label: "Log Volume",
     w: 8,
     h: 9,
+    minW: 5,
+    minH: 6,
+    selfResponsive: true,
     chartTypeOptions: [
       { value: "area", label: "영역" },
       { value: "bar", label: "막대" },
@@ -37,6 +59,9 @@ export const WIDGET_CATALOG = [
     label: "Log Levels",
     w: 4,
     h: 9,
+    minW: 3,
+    minH: 6,
+    selfResponsive: true,
     chartTypeOptions: [
       { value: "bar", label: "막대" },
       { value: "donut", label: "도넛" },
@@ -47,6 +72,9 @@ export const WIDGET_CATALOG = [
     label: "탐지 소스별 분포",
     w: 4,
     h: 9,
+    minW: 3,
+    minH: 6,
+    selfResponsive: true,
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
       { value: "bar", label: "막대" },
@@ -57,6 +85,9 @@ export const WIDGET_CATALOG = [
     label: "심각도 분포",
     w: 4,
     h: 9,
+    minW: 3,
+    minH: 6,
+    selfResponsive: true,
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
       { value: "bar", label: "막대" },
@@ -67,17 +98,20 @@ export const WIDGET_CATALOG = [
     label: "K8s 네임스페이스 분포",
     w: 4,
     h: 9,
+    minW: 3,
+    minH: 6,
+    selfResponsive: true,
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
       { value: "bar", label: "막대" },
     ],
   },
-  { type: "latency-stats", label: "API Latency", w: 12, h: 5 },
-  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 9 },
-  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14 },
-  { type: "top-sources", label: "Top Sources", w: 4, h: 7 },
-  { type: "error-rate", label: "Error Rate", w: 4, h: 7 },
-  { type: "geo-summary", label: "지역별 분포", w: 12, h: 11 },
+  { type: "latency-stats", label: "API Latency", w: 12, h: 5, minW: 8, minH: 4 },
+  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 9, minW: 5, minH: 6, selfResponsive: true },
+  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14, minW: 5, minH: 8 },
+  { type: "top-sources", label: "Top Sources", w: 4, h: 7, minW: 3, minH: 5 },
+  { type: "error-rate", label: "Error Rate", w: 4, h: 7, minW: 3, minH: 5 },
+  { type: "geo-summary", label: "지역별 분포", w: 12, h: 11, minW: 6, minH: 7, selfResponsive: true },
 ];
 
 const CATALOG_BY_TYPE = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w]));

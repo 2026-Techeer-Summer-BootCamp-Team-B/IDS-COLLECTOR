@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { SOURCE_META } from "./badges";
 import { forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { fetchEventIncident } from "../lib/authApi";
 
 // 화면 좌측 하단 고정 CRITICAL 알림 스택. 예전엔 App.jsx의 SidebarCriticalAlert가
 // 사이드바 nav 흐름 안에 알림 1건만 꽂아뒀는데(사이드바를 접으면 같이 사라짐,
@@ -12,10 +13,24 @@ import { useTheme } from "../hooks/useTheme";
 // CRITICAL을 전부(1건만이 아니라) 오래된 순서로 누적한 큐. 여기서는 지난번에
 // 어디까지 큐를 소비했는지(마지막으로 처리한 id) 기억해뒀다가, 그 뒤에 새로
 // 붙은 항목을 전부(한 폴링 틱에 여러 건이 몰렸어도 전부) 화면 큐에 넣고
-// TOAST_LIFETIME_MS 후 소멸시키는 책임을 진다.
+// 소멸시키는 책임을 진다.
 const MAX_TOASTS = 5;
-const TOAST_LIFETIME_MS = 5000;
+// 2026-07-18: "스토리라인 보기가 활성화되기 전에 알림이 사라져서 의미가 없다"는
+// 피드백 - 자동소멸 기준을 고정 시간이 아니라 "스토리라인 보기 활성화 여부"로
+// 바꿨다. incidentId가 아직 없으면(=인시던트로 안 묶임) FALLBACK_LIFETIME_MS
+// 동안 대기하다 소멸(안 묶이는 이벤트가 화면에 무한정 쌓이는 걸 막는 안전장치),
+// incidentId가 잡히면(=버튼 활성화) 그 시점부터 ACTIVATED_LIFETIME_MS 후 소멸 -
+// 사용자가 활성화된 버튼을 볼 시간을 보장한다. MAX_TOASTS 강제 퇴장 로직이
+// 이미 있어서, 개별 토스트 수명이 늘어나도 새 CRITICAL이 화면에 못 뜨는 일은
+// 없다(가장 오래된 걸 밀어냄).
+const FALLBACK_LIFETIME_MS = 15000;
+const ACTIVATED_LIFETIME_MS = 2000;
 const EXIT_DURATION_MS = 300;
+// 카드가 떠 있는 동안 이 이벤트가 어느 인시던트로 묶였는지 짧은 주기로 확인한다
+// (2026-07-17, GET /events/{event_id}/incident - idx_incident_events_event_id
+// 인덱스로 정확히 답함). FALLBACK_LIFETIME_MS 안에서 자연히 몇 번 재시도되다가
+// 카드가 사라지면 같이 멈춘다 - 별도 타임아웃 설계가 필요 없다.
+const INCIDENT_POLL_MS = 1200;
 
 // 같은 종류의 공격(=화면에 보이는 메시지가 같음)이 짧은 시간에 몰려오면 카드를
 // 새로 쌓지 않고 기존 카드의 카운트만 올린다 - 안 그러면 시나리오 하나가
@@ -26,7 +41,7 @@ function groupKeyFor(event) {
   return `${event.module}|${event.message}`;
 }
 
-export default function CriticalToastStack({ events, onInvestigate }) {
+export default function CriticalToastStack({ events, onInvestigate, onGoToIncident }) {
   const { theme } = useTheme();
   const [toasts, setToasts] = useState([]);
   // id -> { expireTimer, removeTimer, expireAt, remainingMs }. 상태(toasts)와 별도로
@@ -34,6 +49,12 @@ export default function CriticalToastStack({ events, onInvestigate }) {
   // 실행하면 StrictMode의 이중호출에 취약해지는 걸 피하려는 것.
   const timersRef = useRef(new Map());
   const lastProcessedIdRef = useRef(null);
+  // 인시던트 바인딩 폴링용 - toasts 최신 스냅샷을 ref로도 들고 있어서(폴링
+  // interval을 마운트 시 한 번만 걸고, 매 tick마다 이 ref로 최신 목록을 읽음)
+  // toasts가 바뀔 때마다 interval을 재생성하지 않는다(그러면 잦은 갱신에
+  // 타이머가 계속 리셋되어 실제로 안 불릴 수 있음).
+  const toastsRef = useRef([]);
+  const incidentPollInFlightRef = useRef(new Set());
   const reducedMotionRef = useRef(
     typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
@@ -68,7 +89,9 @@ export default function CriticalToastStack({ events, onInvestigate }) {
         const dupIdx = next.findIndex((t) => !t.exiting && t.groupKey === key);
         if (dupIdx !== -1) {
           next = next.map((t, i) =>
-            i === dupIdx ? { ...t, event: ev, count: t.count + 1, bumpToken: t.bumpToken + 1 } : t
+            i === dupIdx
+              ? { ...t, event: ev, count: t.count + 1, bumpToken: t.bumpToken + 1, incidentId: null }
+              : t
           );
           continue;
         }
@@ -76,20 +99,26 @@ export default function CriticalToastStack({ events, onInvestigate }) {
         if (active.length >= MAX_TOASTS) {
           next = next.map((t) => (t.id === active[0].id ? { ...t, exiting: "forced" } : t));
         }
-        next = [...next, { id: ev.id, event: ev, exiting: null, count: 1, groupKey: key, bumpToken: 0 }];
+        next = [
+          ...next,
+          { id: ev.id, event: ev, exiting: null, count: 1, groupKey: key, bumpToken: 0, incidentId: null },
+        ];
       }
       return next;
     });
   }, [events]);
 
-  // toasts 변화에 맞춰 타이머를 동기화한다: 새로 들어온(타이머 없는) 항목엔 TOAST_LIFETIME_MS
-  // 만료 타이머를, exiting이 막 세팅된 항목엔 퇴장 애니메이션 끝난 뒤 실제
-  // 배열에서 제거할 타이머를 건다. bumpToken이 지난번과 달라졌으면(같은 공격이
-  // 또 와서 count가 올라간 경우) 만료 타이머를 처음부터 다시 건다 - hover로
-  // 일시정지 중이었으면(expireTimer 없이 remainingMs만 있는 상태) 타이머를 새로
-  // 걸지 않고 remainingMs만 꽉 채워서, mouseleave 시점에 그 값으로 재개되게 한다
-  // (안 그러면 bump가 hover 일시정지를 몰래 풀어버리게 됨). 그 외 이미 타이머가
-  // 걸린 항목은 안 건드려서 hover 일시정지 중인 타이머를 실수로 재설정하지 않는다.
+  // toasts 변화에 맞춰 타이머를 동기화한다. 목표 수명(targetMs)은 incidentId
+  // 유무로 갈린다(FALLBACK_LIFETIME_MS vs ACTIVATED_LIFETIME_MS, 위 상수 설명
+  // 참고) - 새로 들어온(타이머 없는) 항목엔 그 목표 수명의 만료 타이머를 건다.
+  // "phase"(hadIncident)가 바뀌었거나(=방금 스토리라인이 활성화됐거나 bump로
+  // 다시 비활성화됨) bumpToken이 바뀌었으면(같은 공격이 또 와서 count가 올라간
+  // 경우) 타이머를 새 목표 수명으로 다시 건다 - hover로 일시정지 중이었으면
+  // (expireTimer 없이 remainingMs만 있는 상태) 타이머를 새로 걸지 않고
+  // remainingMs만 새 목표 수명으로 갱신해서, mouseleave 시점에 그 값으로
+  // 재개되게 한다(안 그러면 활성화/bump가 hover 일시정지를 몰래 풀어버림).
+  // exiting이 막 세팅된 항목엔 퇴장 애니메이션 끝난 뒤 실제 배열에서 제거할
+  // 타이머를 건다.
   useEffect(() => {
     const timers = timersRef.current;
     const reduced = reducedMotionRef.current;
@@ -104,22 +133,40 @@ export default function CriticalToastStack({ events, onInvestigate }) {
           }, reduced ? 0 : EXIT_DURATION_MS);
           timers.set(t.id, { ...existing, expireTimer: null, removeTimer });
         }
-      } else if (!existing) {
-        const expireTimer = setTimeout(() => startExit(t.id, "expire"), TOAST_LIFETIME_MS);
-        timers.set(t.id, { expireTimer, expireAt: Date.now() + TOAST_LIFETIME_MS, bumpToken: t.bumpToken });
-      } else if (existing.bumpToken !== t.bumpToken) {
+        continue;
+      }
+
+      const hasIncident = !!t.incidentId;
+      const targetMs = hasIncident ? ACTIVATED_LIFETIME_MS : FALLBACK_LIFETIME_MS;
+
+      if (!existing) {
+        const expireTimer = setTimeout(() => startExit(t.id, "expire"), targetMs);
+        timers.set(t.id, {
+          expireTimer,
+          expireAt: Date.now() + targetMs,
+          bumpToken: t.bumpToken,
+          hadIncident: hasIncident,
+        });
+      } else if (existing.hadIncident !== hasIncident || existing.bumpToken !== t.bumpToken) {
         const wasPaused = !existing.expireTimer && existing.remainingMs != null;
         if (existing.expireTimer) clearTimeout(existing.expireTimer);
         if (wasPaused) {
-          timers.set(t.id, { ...existing, expireTimer: null, remainingMs: TOAST_LIFETIME_MS, bumpToken: t.bumpToken });
+          timers.set(t.id, {
+            ...existing,
+            expireTimer: null,
+            remainingMs: targetMs,
+            bumpToken: t.bumpToken,
+            hadIncident: hasIncident,
+          });
         } else {
-          const expireTimer = setTimeout(() => startExit(t.id, "expire"), TOAST_LIFETIME_MS);
+          const expireTimer = setTimeout(() => startExit(t.id, "expire"), targetMs);
           timers.set(t.id, {
             ...existing,
             expireTimer,
-            expireAt: Date.now() + TOAST_LIFETIME_MS,
+            expireAt: Date.now() + targetMs,
             remainingMs: undefined,
             bumpToken: t.bumpToken,
+            hadIncident: hasIncident,
           });
         }
       }
@@ -140,6 +187,34 @@ export default function CriticalToastStack({ events, onInvestigate }) {
       });
       timers.clear();
     };
+  }, []);
+
+  useEffect(() => {
+    toastsRef.current = toasts;
+  }, [toasts]);
+
+  // "공격 스토리라인 보기" 활성화 여부를 위한 인시던트 바인딩 폴링. 컴포넌트
+  // 마운트 시 딱 한 번 interval을 걸고(toasts 갱신마다 재생성하지 않음), 매 tick마다
+  // toastsRef의 최신 목록에서 아직 안 묶인(incidentId 없음) 활성 카드만 골라 확인한다.
+  useEffect(() => {
+    const inFlight = incidentPollInFlightRef.current;
+    const timer = setInterval(() => {
+      for (const t of toastsRef.current) {
+        if (t.exiting || t.incidentId || inFlight.has(t.id)) continue;
+        inFlight.add(t.id);
+        fetchEventIncident(t.event.id)
+          .then((res) => {
+            if (res?.incident_id) {
+              setToasts((prev) =>
+                prev.map((x) => (x.id === t.id ? { ...x, incidentId: res.incident_id } : x))
+              );
+            }
+          })
+          .catch(() => {})
+          .finally(() => inFlight.delete(t.id));
+      }
+    }, INCIDENT_POLL_MS);
+    return () => clearInterval(timer);
   }, []);
 
   const pause = useCallback((id) => {
@@ -170,7 +245,7 @@ export default function CriticalToastStack({ events, onInvestigate }) {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-6 left-5 z-50 flex flex-col gap-2 w-[200px] pointer-events-none">
+    <div className="fixed bottom-6 left-[5px] z-50 flex flex-col gap-2 w-[230px] pointer-events-none">
       {toasts.map((t) => (
         <ToastCard
           key={t.id}
@@ -182,6 +257,10 @@ export default function CriticalToastStack({ events, onInvestigate }) {
             dismiss(t.id);
             onInvestigate?.(t.event);
           }}
+          onGoToIncident={() => {
+            dismiss(t.id);
+            onGoToIncident?.(t.incidentId);
+          }}
           onMouseEnter={() => pause(t.id)}
           onMouseLeave={() => resume(t.id)}
         />
@@ -190,9 +269,18 @@ export default function CriticalToastStack({ events, onInvestigate }) {
   );
 }
 
-function ToastCard({ toast, theme, reducedMotion, onDismiss, onInvestigate, onMouseEnter, onMouseLeave }) {
+function ToastCard({
+  toast,
+  theme,
+  reducedMotion,
+  onDismiss,
+  onInvestigate,
+  onGoToIncident,
+  onMouseEnter,
+  onMouseLeave,
+}) {
   const [entered, setEntered] = useState(false);
-  const { event, exiting, count } = toast;
+  const { event, exiting, count, incidentId } = toast;
   const src = SOURCE_META[event.source] || { label: event.source, color: "#8890B5" };
 
   // 마운트 직후 한 프레임 쉬고 entered를 true로 올려서 grid-rows/opacity 트랜지션이
@@ -227,9 +315,9 @@ function ToastCard({ toast, theme, reducedMotion, onDismiss, onInvestigate, onMo
           role="alert"
           onMouseEnter={onMouseEnter}
           onMouseLeave={onMouseLeave}
-          className={`pointer-events-auto min-w-0 bg-dash-surface border border-dash-critical rounded-2xl shadow-2xl p-4 glow-box-critical ${contentTransform}`}
+          className={`pointer-events-auto min-w-0 bg-dash-surface border border-dash-critical rounded-2xl shadow-2xl p-3 glow-box-critical ${contentTransform}`}
         >
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-dash-critical/20 text-dash-critical">
                 CRITICAL
@@ -252,17 +340,32 @@ function ToastCard({ toast, theme, reducedMotion, onDismiss, onInvestigate, onMo
             </button>
           </div>
           <p className="text-dash-fg text-sm font-medium mb-1 leading-snug line-clamp-2">{event.message}</p>
-          <p className="text-dash-muted text-xs mb-3 truncate">
+          <p className="text-dash-muted text-xs mb-2 truncate">
             {event.namespace && `${event.namespace}/${event.pod} · `}
             {event.sourceIp && `${event.sourceIp} · `}
             <span style={{ color: forTheme(src.color, theme) }}>{src.label}</span>
           </p>
-          <button
-            onClick={onInvestigate}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical w-full"
-          >
-            조사하기 →
-          </button>
+          <div className="flex gap-1">
+            <button
+              onClick={onInvestigate}
+              className="text-[11px] font-medium px-2 py-1 rounded-lg bg-dash-critical/15 text-dash-critical flex-1"
+            >
+              조사하기
+            </button>
+            <button
+              onClick={onGoToIncident}
+              disabled={!incidentId}
+              title={incidentId ? undefined : "아직 인시던트로 묶이지 않았어요"}
+              className={
+                "text-[11px] font-medium px-2 py-1 rounded-lg flex-1 transition-colors " +
+                (incidentId
+                  ? "bg-dash-mint/15 text-dash-mint hover:bg-dash-mint/25 cursor-pointer"
+                  : "bg-dash-muted/10 text-dash-muted cursor-not-allowed")
+              }
+            >
+              스토리라인 보기
+            </button>
+          </div>
         </div>
       </div>
     </div>

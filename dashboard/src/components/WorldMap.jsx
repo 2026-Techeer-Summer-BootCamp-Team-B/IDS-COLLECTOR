@@ -50,8 +50,8 @@ export default function WorldMap({ points, compact = false }) {
               <circle cx={x} cy={y} r={Math.max(2.5, r * 0.4)} fill={C.critical} />
               {/* 마커 자체(위 두 원)는 그대로 두고, 감지 반경만 널널하게 넓히는
                   투명 히트 영역 - 마커 시각 크기와 hover 인식 범위를 분리한다
-                  (2026-07-17 요청). */}
-              <circle cx={x} cy={y} r={r + 8} fill="transparent" pointerEvents="all" />
+                  (2026-07-17 요청, 2026-07-18 추가 확대: +8 -> +14). */}
+              <circle cx={x} cy={y} r={r + 14} fill="transparent" pointerEvents="all" />
             </g>
           );
         })}
@@ -70,6 +70,7 @@ export default function WorldMap({ points, compact = false }) {
             titleFlag={resolveFlagCode(hover.point.countryCode, hover.point.country)}
             subtitle={hover.point.city || undefined}
             rows={[{ color: C.critical, value: `${hover.point.count}건`, label: "탐지" }]}
+            theme={theme}
           />
         </div>
       )}

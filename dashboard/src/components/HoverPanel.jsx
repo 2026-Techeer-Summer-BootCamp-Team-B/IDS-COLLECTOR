@@ -2,22 +2,32 @@ import React from "react";
 
 // 프로젝트 전체에서 차트/지도 hover 시 뜨는 정보 패널의 공용 시각 스타일
 // (2026-07-17 요청 - 이전엔 3D 지구본/2D 맵/Log Levels 등 각자 어두운 톤
-// 툴팁을 따로 구현하고 있었다). 항상 라이트(흰 배경 + 옅은 그림자)로 통일 -
-// 대시보드 자체는 다크/라이트 테마가 있지만, 이 패널은 테마와 무관하게
-// 고정된 스타일이라 CHART_COLORS(C)를 안 받는다.
+// 툴팁을 따로 구현하고 있었다). 라이트/다크 둘 다 밝은 패널이라는 큰 방향은
+// 유지하되(어두운 배경 위 각각 다른 다크 톤 툴팁을 따로 만드는 예전 방식으로는
+// 안 돌아감), 다크모드에서는 순백이 "눈이 아프다"는 2026-07-17 후속 피드백으로
+// 아주 살짝만 톤을 낮춘다(흰색 대비 명도 약 6% 다운, #FFFFFF -> #F0F0F4) -
+// 라이트모드는 순백 그대로 둔다. 이 정도 차이는 육안으로는 "그냥 흰색"처럼
+// 보이면서 다크 UI 옆에서 느껴지는 눈부심만 줄이는 수준이라, theme prop을
+// 안 넘기는 호출부는 기존처럼 라이트(흰색) 취급되게 기본값을 "light"로 둔다.
 //
 // 세 가지 방식으로 재사용된다:
 //  - <HoverPanel>: 순수 React (Globe3D, WorldMap처럼 우리 트리 안의 absolute div)
 //  - renderHoverPanelHTML(): Google Maps InfoWindow처럼 HTML 문자열만 받는 API용
 //  - <RechartsHoverPanel>: recharts <Tooltip content={...}>에 그대로 꽂는 어댑터
+// 셋 다 theme("light"|"dark")을 프롭으로 받아 그대로 HoverPanel에 넘긴다 -
+// renderHoverPanelHTML()은 react-dom/server로 React 트리 밖에서 렌더링되므로
+// useTheme() 컨텍스트를 못 읽는다(Provider가 없음) - 그래서 HoverPanel은
+// useTheme()을 직접 안 쓰고 항상 명시적 prop으로만 theme을 받는다.
 const PANEL_FONT =
   '"Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif';
+const PANEL_BG = { light: "#FFFFFF", dark: "#F0F0F4" };
 
-export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, className = "" }) {
+export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, className = "", theme = "light" }) {
   return (
     <div
-      className={`rounded-2xl bg-white px-4 py-3 ${className}`}
+      className={`rounded-2xl px-4 py-3 ${className}`}
       style={{
+        backgroundColor: PANEL_BG[theme] ?? PANEL_BG.light,
         boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
         fontFamily: PANEL_FONT,
         minWidth: 96,
@@ -56,7 +66,7 @@ export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, class
 // (formatter(value, name, entry) => [값, 이름], labelFormatter(label, payload) => node)라
 // 호출부 코드를 거의 그대로 옮겨 쓸 수 있다. offsetX는 Log Levels처럼 커서
 // 위치(coordinate)에 따라 좌/우로 추가 이동을 줄 때 쓴다.
-export function RechartsHoverPanel({ active, payload, label, formatter, labelFormatter, offsetX = 0 }) {
+export function RechartsHoverPanel({ active, payload, label, formatter, labelFormatter, offsetX = 0, theme = "light" }) {
   if (!active || !payload || !payload.length) return null;
 
   const rows = payload.map((entry) => {
@@ -81,6 +91,7 @@ export function RechartsHoverPanel({ active, payload, label, formatter, labelFor
     <HoverPanel
       title={titleText}
       rows={rows}
+      theme={theme}
       style={offsetX ? { transform: `translateX(${offsetX}px)` } : undefined}
     />
   );

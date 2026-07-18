@@ -201,13 +201,13 @@ export default function Globe3D({ points = [], theme = "dark" }) {
     const raycaster = new THREE.Raycaster();
     // 마커 자체 크기(스프라이트 scale)는 그대로 두고 감지 반경만 넓힌다 -
     // 기본 0.02는 작은 마커 위에서 커서를 거의 정확히 맞춰야만 hover가 잡혀서
-    // 너무 빡빡했다(2026-07-17 요청).
-    raycaster.params.Sprite = { threshold: 0.08 };
+    // 너무 빡빡했다(2026-07-17 요청, 2026-07-18 추가 확대: 0.08 -> 0.14).
+    raycaster.params.Sprite = { threshold: 0.14 };
     const pointerNdc = new THREE.Vector2();
 
     // hover 중인 마커가 있으면 자동 회전을 멈추고, hover가 끝나도 곧바로
-    // 재개하지 않고 1초 뒤에 재개한다 - 1초 안에 다른 마커로 다시 hover하면
-    // 타이머를 취소해서 계속 멈춰있게 한다(2026-07-17 요청).
+    // 재개하지 않고 0.5초 뒤에 재개한다(2026-07-17 요청, 1초→0.5초로 단축) -
+    // 0.5초 안에 다른 마커로 다시 hover하면 타이머를 취소해서 계속 멈춰있게 한다.
     let hoverPaused = false;
     let hoverResumeTimer = null;
 
@@ -231,7 +231,7 @@ export default function Globe3D({ points = [], theme = "dark" }) {
           clearTimeout(hoverResumeTimer);
           hoverResumeTimer = setTimeout(() => {
             hoverPaused = false;
-          }, 1000);
+          }, 500);
         }
       }
     }
@@ -241,7 +241,7 @@ export default function Globe3D({ points = [], theme = "dark" }) {
         clearTimeout(hoverResumeTimer);
         hoverResumeTimer = setTimeout(() => {
           hoverPaused = false;
-        }, 1000);
+        }, 500);
       }
     }
     renderer.domElement.addEventListener("pointermove", onHoverMove);
@@ -295,6 +295,7 @@ export default function Globe3D({ points = [], theme = "dark" }) {
             titleFlag={resolveFlagCode(hover.point.countryCode, hover.point.country)}
             subtitle={hover.point.city || undefined}
             rows={[{ color: CHART_COLORS[theme].critical, value: `${hover.point.count}건`, label: "탐지" }]}
+            theme={theme}
           />
         </div>
       )}

@@ -7,6 +7,7 @@ __pycache__/
 build/
 *.egg-info/
 .pytest_cache/
+.claude/
 
 # mTLS - CA 발급 인증서/개인키, step-ca init 비밀번호 (커밋 금지, 1-7)
 servers/proxy/traefik/certs/

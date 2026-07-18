@@ -136,3 +136,11 @@ export function fetchEventsSince(since, limit = 50) {
   if (since) qs.set("since", since);
   return apiGet(`/events/recent?${qs.toString()}`);
 }
+
+// event_id 하나가 어느 인시던트로 묶였는지 직접 조회 - idx_incident_events_event_id
+// 인덱스(2026-07-17) 덕에 correlation_key 후보 추리기 없이 정확히 답한다. 아직
+// correlation-engine이 처리 전이면 incident_id: null(에러 아님) - CRITICAL 토스트의
+// "공격 스토리라인 보기" 버튼이 짧은 주기로 이걸 폴링해서 활성화 여부를 결정한다.
+export function fetchEventIncident(eventId) {
+  return apiGet(`/events/${encodeURIComponent(eventId)}/incident`);
+}

@@ -12,7 +12,7 @@ import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
 import { getRealSeverityMeta } from "../data/realSeverity";
-import { apiGet, apiPatch, apiPost, ApiError } from "../lib/authApi";
+import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { groupSimilarIncidents } from "../lib/incidentGrouping";
 
@@ -21,63 +21,6 @@ import { groupSimilarIncidents } from "../lib/incidentGrouping";
 const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" };
 function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
-}
-
-// CriticalToastStack의 "조사하기"로 넘어온 이벤트(App.jsx의 focusEvent)를
-// correlation_key_type별로 이벤트의 해당 필드와 비교해서, 그 이벤트가 속했을
-// 인시던트를 찾는다. 이벤트 자체엔 incident_id가 없어서(정규화 이벤트와
-// 인시던트는 별개 테이블 - correlation-engine이 사후에 묶는다) 완전히 정확한
-// 매칭은 아니고, "이 키 값으로 잡힌 인시던트 중 가장 최근 것"을 최선으로 추정한다
-// - correlation_key_type 3종(source.ip/user.name/orchestrator.resource.name)은
-// servers/correlation-engine/app/scenarios/*.yaml 기준. 매칭 실패 시 null 반환
-// (호출부가 기존처럼 목록 맨 위 항목으로 폴백).
-function matchesCorrelationKey(incident, event) {
-  const key = incident.correlation_key_value;
-  if (!key) return false;
-  switch (incident.correlation_key_type) {
-    case "source.ip":
-      return event.sourceIp === key;
-    case "user.name":
-      return event.raw?.["user.name"] === key;
-    case "orchestrator.resource.name":
-      return event.pod === key;
-    default:
-      return false;
-  }
-}
-
-// 후보를 이 정도로 좁혀서 GET /incidents/{id}/events를 병렬로 쏜다 - user.name
-// 처럼 여러 인시던트가 같은 값을 공유하는 키(예: 시나리오 25개 중 20개가
-// k8s_audit이고 다 같은 인증서로 실행돼서 user.name="system:admin"이 20건 넘게
-// 몰려있음, 2026-07-16 실측)에선 correlation_key만으론 구분이 안 돼서 무한정
-// 늘리면 API 호출도 늘어난다.
-const MAX_MATCH_CANDIDATES = 8;
-
-// correlation_key_value가 같은(=같은 시나리오 계열일 가능성이 있는) 인시던트
-// 후보를 추린 뒤, 실제로 이 이벤트가 그 인시던트에 진짜 속했는지(=incident_events
-// 조인 테이블에 event_id가 있는지) GET /incidents/{id}/events로 확인해서 정확히
-// 매칭한다. correlation_key_value만으로 후보를 하나 찍으면(예전 방식) user.name처럼
-// 여러 인시던트가 같은 값을 공유하는 키에서 사실상 "그냥 최신 인시던트" 수준으로
-// 틀리기 쉬웠다(2026-07-16, 실측: 조사하기 클릭 시 엉뚱한 인시던트로 이동하는
-// 빈도가 더 높았음).
-async function findIncidentForEvent(incidents, event) {
-  if (!event) return null;
-  const candidates = incidents.filter((inc) => matchesCorrelationKey(inc, event)).slice(0, MAX_MATCH_CANDIDATES);
-  if (!candidates.length) return null;
-
-  const checks = await Promise.all(
-    candidates.map(async (inc) => {
-      try {
-        const events = await apiGet(`/incidents/${inc.id}/events`);
-        return events?.some((e) => e.event_id === event.id) ? inc : null;
-      } catch {
-        return null; // 개별 조회 실패는 그 후보만 탈락시키고 계속 진행
-      }
-    })
-  );
-  // candidates는 incidents 순서(최신 갱신순)를 그대로 유지하므로, 실제 매칭된
-  // 것 중 배열에서 가장 앞(=가장 최근)에 있는 걸 채택.
-  return checks.find((inc) => inc) || null;
 }
 
 // 2026-07-17(5차): "심각도 분포" 도넛이 REAL_SEVERITY_LEVELS 원래 라벨
@@ -479,7 +422,7 @@ function StorylineEntry({ entry, isLast }) {
  *
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
-export default function IncidentsView({ pushToast, pendingIncident, focusEvent, onFocusConsumed }) {
+export default function IncidentsView({ pushToast, pendingIncident }) {
   const { incidents, status, error, reload } = useIncidents({ limit: 200 });
   const { scenarios } = useScenarios();
   // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
@@ -517,28 +460,13 @@ export default function IncidentsView({ pushToast, pendingIncident, focusEvent, 
   // ATT&CK 매트릭스의 "조치하러 가기" 버튼으로 들어온 경우 - App.jsx가
   // pendingIncident.nonce를 매번 새 값으로 넘겨주므로(같은 인시던트를 다시
   // 눌러도 감지됨), 여기서도 바로 그 인시던트를 선택 상태로 맞춘다.
+  // ATT&CK 매트릭스의 "조치하러 가기"와 CRITICAL 토스트의 "스토리라인 보기" 둘 다
+  // 이 pendingIncident 하나를 공유한다(2026-07-17) - 후자는 GET
+  // /events/{event_id}/incident로 이미 정확한 incident_id를 들고 오므로, 여기서
+  // 별도로 이벤트→인시던트 매칭을 할 필요가 없어졌다.
   useEffect(() => {
     if (pendingIncident?.id) setSelectedId(pendingIncident.id);
   }, [pendingIncident]);
-
-  // CriticalToastStack의 "조사하기"로 들어온 경우 - focusEvent엔 incident_id가
-  // 없어서(원본 이벤트라 correlation-engine이 사후에 묶는 인시던트 테이블과
-  // 별개) findIncidentForEvent로 correlation_key 기반 비동기 매칭을 거쳐야 한다.
-  // 소비 후엔 onFocusConsumed로 비워달라고 알려준다 - 안 비우면 나중에 사이드바로
-  // 직접 Incidents를 다시 열었을 때도 예전 이벤트 기준으로 계속 자동 선택되는
-  // 부작용이 생긴다.
-  useEffect(() => {
-    if (!focusEvent) return;
-    let cancelled = false;
-    findIncidentForEvent(incidents, focusEvent).then((found) => {
-      if (cancelled) return;
-      if (found) setSelectedId(found.id);
-      onFocusConsumed?.();
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [focusEvent, incidents]);
 
   const filteredIncidents = useMemo(
     () => (statusFilter === "ALL" ? incidents : incidents.filter((i) => i.status === statusFilter)),

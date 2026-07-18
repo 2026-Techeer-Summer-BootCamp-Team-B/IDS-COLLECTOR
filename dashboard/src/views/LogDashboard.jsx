@@ -18,6 +18,20 @@ import {
   Cell,
   Sector,
 } from "recharts";
+import {
+  AreaChart as AreaChartIcon,
+  BarChart3,
+  PieChart as PieChartIcon,
+  TrendingUp,
+  Layers,
+  SlidersHorizontal,
+  Crosshair,
+  Gauge,
+  Boxes,
+  MapPin,
+  ScrollText,
+  AlertTriangle,
+} from "lucide-react";
 import { latencyStatsFor, levelDistributionFor } from "../data/mockLogs";
 import { useTopIps } from "../hooks/useTopIps";
 import { useKpi } from "../hooks/useKpi";
@@ -145,13 +159,18 @@ function Topbar() {
   );
 }
 
-export function Card({ title, subtitle, action, children, className = "" }) {
+export function Card({ title, subtitle, icon: Icon, action, children, className = "" }) {
   return (
     <div className={`bg-dash-surface rounded-2xl p-5 ${className}`}>
       {(title || action) && (
         <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
           <div>
-            {title && <h3 className="text-dash-fg text-sm font-semibold">{title}</h3>}
+            {title && (
+              <h3 className="flex items-center gap-1.5 text-dash-fg text-sm font-semibold">
+                {Icon && <Icon size={15} className="text-dash-muted shrink-0" />}
+                {title}
+              </h3>
+            )}
             {subtitle && <p className="text-dash-muted text-xs mt-0.5">{subtitle}</p>}
           </div>
           {action}
@@ -224,24 +243,34 @@ function LevelBadge({ level }) {
 // 방식대로 chartType을 props로 내려주고 있으니, 그 경우엔 여기서 또 토글을
 // 그리지 않도록 "chartType prop이 안 왔을 때만" 이 컴포넌트가 알아서 자체
 // state로 관리 + 토글을 그린다(중복 UI 방지).
+// 차트 타입 아이콘 - lucide에 도형이 그대로 있는 3종(영역/막대/도넛)이라 라벨과
+// 1:1로 맞아떨어진다(2026-07-18 아이콘 스캔 후 적용). recharts의 동명 컴포넌트
+// (AreaChart/PieChart)와 이름이 겹쳐서 import 시 별칭(AreaChartIcon/PieChartIcon)을
+// 붙였다 - 여기서만 그 별칭을 실제로 사용.
+const CHART_TYPE_ICONS = { area: AreaChartIcon, bar: BarChart3, donut: PieChartIcon };
+
 function ChartTypeToggle({ options, value, onChange }) {
   if (!options) return null;
   return (
     <div className="flex items-center gap-0.5">
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          onClick={() => onChange(opt.value)}
-          title={`${opt.label}로 표시`}
-          className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-            value === opt.value
-              ? "bg-dash-mint/25 text-dash-mint"
-              : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
-          }`}
-        >
-          {opt.label}
-        </button>
-      ))}
+      {options.map((opt) => {
+        const Icon = CHART_TYPE_ICONS[opt.value];
+        return (
+          <button
+            key={opt.value}
+            onClick={() => onChange(opt.value)}
+            title={`${opt.label}로 표시`}
+            className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+              value === opt.value
+                ? "bg-dash-mint/25 text-dash-mint"
+                : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+            }`}
+          >
+            {Icon && <Icon size={11} strokeWidth={2.5} />}
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -361,6 +390,7 @@ function LogVolumeBreakdownBody({ rangeKey }) {
   return (
     <Card
       title="Log Volume"
+      icon={TrendingUp}
       subtitle={`Last ${preset.label} · ${data.length} buckets · 모듈별 구분`}
       action={
         spike ? (
@@ -388,7 +418,7 @@ function LogVolumeBreakdownBody({ rangeKey }) {
               <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
               <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
               <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-              <Tooltip content={<RechartsHoverPanel />} isAnimationActive={false} />
+              <Tooltip content={<RechartsHoverPanel theme={theme} />} isAnimationActive={false} />
               {stackSeries.map((s) => (
                 <Area
                   key={s.key}
@@ -501,6 +531,7 @@ export function LogVolumeChart({ rangeKey, module, chartType: chartTypeProp }) {
   return (
     <Card
       title="Log Volume"
+      icon={TrendingUp}
       subtitle={`Last ${preset.label} · ${data.length} buckets`}
       action={
         <div className="flex items-center gap-2">
@@ -631,6 +662,7 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
   return (
     <Card
       title="모듈별 로그량 추이"
+      icon={Layers}
       subtitle={`Last ${preset.label} · WAS / WAF / Falco / K8s Audit 적층`}
       action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
       className={fillHeight ? "min-h-80 h-full" : "h-80"}
@@ -730,19 +762,22 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
     const found = levels.find((x) => x.severity === l.severity);
     return { key: l.key, label: l.label, count: found ? found.count : 0, color: donutPalette(theme)[i % DONUT_PALETTE.length] };
   });
-  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
-  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
-  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
-  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(
+    chartType === "donut" ? data.length : 0
+  );
+  // highlighting(hover 중이거나 mouseleave 후 1초 유예 안)일 때만 나머지 조각을
+  // 회색으로 죽인다 - 자동 순환 스포트라이트 자체는 색을 안 죽인다.
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
-    [data, hoveredIndex, C.donutDim]
+    () => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)),
+    [data, highlighting, activeIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
+  const growth = useGrowPulse(activeIndex);
 
   return (
     <Card
       title="Log Levels"
+      icon={SlidersHorizontal}
       subtitle={status === "ready" ? `선택 구간 · ${total}건` : "불러오는 중..."}
       action={
         !isControlled && (
@@ -754,8 +789,36 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status !== "error" && chartType === "donut" && (
         <div className="flex items-center gap-4 h-[88%]">
-          <ResponsiveContainer width={132} height={132}>
-            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+          {isControlled ? (
+            // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 고정 132px이 아니라
+            // ResponsiveContainer로 박스 크기에 맞춰 커지고 작아지게 한다(2026-07-17
+            // 요청 - "박스 리사이즈해도 내부 도넛이 안 따라온다"). 기본(고정 레이아웃)
+            // 모드는 계속 고정 132px 그대로 둬서 이전에 잡은 "ResponsiveContainer가
+            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다.
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                <Pie
+                  data={data}
+                  dataKey="count"
+                  nameKey="label"
+                  innerRadius={32}
+                  outerRadius={52}
+                  startAngle={90}
+                  endAngle={-270}
+                  stroke="none"
+                  activeIndex={activeIndex}
+                  activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                  onMouseEnter={(_, i) => focusIndex(i)}
+                  onMouseLeave={blurIndex}
+                >
+                  {data.map((d, i) => (
+                    <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
                 dataKey="count"
@@ -766,56 +829,44 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
                 endAngle={-270}
                 stroke="none"
                 activeIndex={activeIndex}
-                activeShape={renderGlowActiveShape}
-                onMouseEnter={(_, i) => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
+                activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                onMouseEnter={(_, i) => focusIndex(i)}
+                onMouseLeave={blurIndex}
               >
                 {data.map((d, i) => (
-                  <Cell key={d.key} fill={animatedFills[i]} />
+                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
                 ))}
               </Pie>
             </PieChart>
-          </ResponsiveContainer>
+          )}
           <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                onMouseEnter={() => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
+                onMouseEnter={() => focusIndex(i)}
+                onMouseLeave={blurIndex}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
                 <span
-                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
-                    hoveredIndex === null
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
+                    !highlighting
                       ? i === activeIndex
                         ? "text-dash-fg"
                         : "text-dash-muted"
-                      : hoveredIndex === i
+                      : i === activeIndex
                       ? "text-dash-fg font-bold"
                       : ""
                   }`}
                   // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
                   // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
                   // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
-                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
+                  style={highlighting && i !== activeIndex ? { color: C.donutDim } : undefined}
                 >
                   <span
-                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-200 ease-in-out"
+                    style={{ backgroundColor: highlighting && i !== activeIndex ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
@@ -825,7 +876,9 @@ export function RealLevelDistributionChart({ hours, module, chartType: chartType
           </div>
         </div>
       )}
-      {status !== "error" && chartType !== "donut" && <CategoryBarChart data={data} C={C} height={220} />}
+      {status !== "error" && chartType !== "donut" && (
+        <CategoryBarChart data={data} C={C} height={isControlled ? "100%" : 220} theme={theme} />
+      )}
     </Card>
   );
 }
@@ -842,7 +895,7 @@ export function LevelDistributionChart({ events }) {
   }));
 
   return (
-    <Card title="Log Levels" subtitle={`선택 구간 · ${events.length}건`} className="h-80">
+    <Card title="Log Levels" icon={SlidersHorizontal} subtitle={`선택 구간 · ${events.length}건`} className="h-80">
       <ResponsiveContainer width="100%" height="88%">
         <BarChart data={data} margin={{ bottom: 16 }}>
           <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
@@ -884,6 +937,7 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   return (
     <Card
       title="Top Source IPs"
+      icon={Crosshair}
       subtitle={highlighted ? `전체 ${sources.length}개 IP · 5개 이후 스크롤` : "선택 구간 기준"}
       className={highlighted ? "glow-box-mint" : ""}
     >
@@ -936,7 +990,7 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   // 중앙정렬해서 늘어난 공간이 위아래로 고르게 여백처럼 보이게 했다(예전처럼
   // 카드 아래쪽에만 어색하게 빈 공간이 남지 않도록).
   return (
-    <Card title={title} subtitle={subtitle} className="flex-1 flex flex-col">
+    <Card title={title} icon={Gauge} subtitle={subtitle} className="flex-1 flex flex-col">
       <div className="relative flex-1 flex items-center justify-center min-h-[140px]">
         <div className="relative w-full">
           <ResponsiveContainer width="100%" height={140}>
@@ -979,32 +1033,55 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
 // 전환됐을 때 공통으로 쓴다(도넛+범례 쪽은 각 위젯이 기존 JSX를 그대로 씀 -
 // 호버 자동순환(useAutoCycleIndex) 상태를 위젯마다 이미 들고 있어서 그쪽까지
 // 억지로 공용화하면 오히려 코드가 더 꼬인다).
-// 차트의 왼쪽 절반에서 hover하면 패널을 더 왼쪽으로, 오른쪽 절반이면 더
-// 오른쪽으로 밀어서 패널이 막대/커서를 가리지 않게 한다(2026-07-17 요청,
-// Log Levels 차트 - 이 함수는 막대 차트 공용이라 도넛의 "막대" 보기 전환에도
-// 함께 적용됨).
-function SideAwareTooltip(props) {
-  const { coordinate, viewBox } = props;
+
+// 막대 hover 시 "카테고리 / count : 숫자" 한 줄만 보여주는 미니멀 툴팁
+// (2026-07-17 요청) - 공용 HoverPanel(점+큰 그림자)은 지도/도넛엔 맞지만
+// 여기선 더 가벼운 스타일을 원해서 별도로 둔다.
+// 차트 왼쪽 절반에서 hover하면 툴팁을 더 왼쪽으로, 오른쪽 절반이면 더
+// 오른쪽으로 밀어서 커서/막대를 안 가리게 한다(예전 SideAwareTooltip 로직 -
+// 미니멀 툴팁으로 바꾸면서 빠졌던 걸 다시 붙임, 유지하기로 확정).
+function MinimalBarTooltip({ active, payload, coordinate, viewBox }) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0];
   const mid = viewBox ? viewBox.x + viewBox.width / 2 : 0;
   const offsetX = coordinate && coordinate.x < mid ? -40 : 40;
   return (
-    <RechartsHoverPanel
-      {...props}
-      formatter={(value) => [`${Number(value).toLocaleString()}건`, "건수"]}
-      offsetX={offsetX}
-    />
+    <div
+      className="rounded-md bg-white px-2.5 py-1.5 text-xs text-gray-800 shadow-sm whitespace-nowrap"
+      style={{ transform: `translateX(${offsetX}px)` }}
+    >
+      {p.payload.label} / count : {Number(p.value).toLocaleString()}
+    </div>
   );
 }
 
-function CategoryBarChart({ data, C, height = 160 }) {
+// 2026-07-17(재작업): hover 시 나머지를 회색으로 죽이던 걸 없애고, 카테고리마다
+// hover 여부와 무관하게 항상 자기 색(d.color)을 유지하도록 되돌렸다(참고 이미지
+// 기준 - "hover된 막대만 강조색이고 나머지는 무채색"이던 걸 "전부 항상 고유
+// 색상"으로). 대신 hover된 막대 뒤에 세로 컬럼 하이라이트(회색, Tooltip의
+// cursor)와, Y축 그리드+파란 눈금, 플롯 배경을 추가해서 하이라이트 방식 자체를
+// "막대 색 죽이기"에서 "배경에 컬럼 강조"로 바꿨다.
+function CategoryBarChart({ data, C, height = 160, theme }) {
+  const plotBg = theme === "light" ? "#FFFFFF" : C.surfaceAlt;
+  const tickBlue = donutPalette(theme)[3];
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ bottom: 8 }}>
-        <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+        <CartesianGrid stroke={C.surfaceAlt} vertical={false} fill={plotBg} />
         <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
-        <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} />
-        <Tooltip content={<SideAwareTooltip />} isAnimationActive={false} cursor={false} />
-        <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+        <YAxis stroke={tickBlue} tick={{ fill: tickBlue }} tickLine={false} axisLine={false} fontSize={11} />
+        <Tooltip
+          content={<MinimalBarTooltip />}
+          isAnimationActive={false}
+          cursor={{ fill: C.muted, opacity: 0.15 }}
+          // 2026-07-17 요청: 세로(Y) 위치가 마우스 Y를 따라 움직여서 거슬린다 -
+          // position에 y만 고정으로 주면(x는 안 줘서 그대로 커서/막대를 따라감)
+          // recharts가 세로는 항상 이 값으로 고정하고 가로만 반응형으로 둔다.
+          // 플롯 상단에 가깝게 고정해서 막대 크기와 무관하게 항상 같은 높이에 뜸.
+          position={{ y: 4 }}
+        />
+        <Bar dataKey="count" radius={[6, 6, 0, 0]}>
           {data.map((d) => (
             <Cell key={d.key} fill={d.color} />
           ))}
@@ -1017,12 +1094,22 @@ function CategoryBarChart({ data, C, height = 160 }) {
 // 지구본의 자동 회전처럼, 도넛 차트도 가만히 있지 않고 조각을 하나씩 순회하며
 // 스포트라이트를 비춰준다 — 사용자가 호버하면 그 순간엔 자동 순환을 멈춘다.
 // focus(i): 옆 정보 패널의 항목에 마우스를 올렸을 때 그 조각으로 즉시 점프 + 정지.
-// blur(): 정보 패널에서 마우스가 떠나도 바로 재개하지 않고 10초 대기했다가, 그때
-// 멈춰있던 조각(index)부터 이어서 자동 순환을 재개한다(2026-07-17 요청) - 처음(0)으로
-// 리셋하지 않도록 setPaused(false)만 호출하고 index는 건드리지 않는다.
-function useAutoCycleIndex(length, intervalMs = 2200, resumeDelayMs = 10000) {
+// blur(): 정보 패널에서 마우스가 떠나도 바로 재개하지 않고 대기했다가, 그때
+// 멈춰있던 조각(index)부터 이어서 자동 순환을 재개한다 - 처음(0)으로 리셋하지
+// 않도록 setPaused(false)만 호출하고 index는 건드리지 않는다.
+//
+// 2026-07-17(재정리): 확대(activeIndex/enlarge)와 색상 회색화(예전엔 별도
+// hoveredIndex state)가 서로 다른 지연시간(10초 vs 즉시)으로 따로 놀아서
+// 두 애니메이션 타이밍이 어긋난다는 피드백 - highlighting 플래그를 여기서
+// 같이 관리해서 "hover로 강조 중인가"를 하나의 상태/하나의 타이머로 통일한다.
+// focus()에서 true, blur()의 지연(resumeDelayMs, 이제 1초)이 끝날 때 false로
+// 같이 떨어지므로, 호출부는 highlighting && i !== activeIndex로 색상/확대를
+// 항상 같은 순간에 켜고 끌 수 있다. 자동 순환 스포트라이트 자체(hover 없을 때
+// activeIndex가 계속 도는 것)는 이 변경과 무관하게 그대로 유지됨.
+function useAutoCycleIndex(length, intervalMs = 2200, resumeDelayMs = 1000) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [highlighting, setHighlighting] = useState(false);
   const resumeTimer = useRef(null);
   useEffect(() => {
     if (!length) return;
@@ -1038,12 +1125,24 @@ function useAutoCycleIndex(length, intervalMs = 2200, resumeDelayMs = 10000) {
     clearTimeout(resumeTimer.current);
     setIndex(i);
     setPaused(true);
+    setHighlighting(true);
   };
   const blur = () => {
     clearTimeout(resumeTimer.current);
-    resumeTimer.current = setTimeout(() => setPaused(false), resumeDelayMs);
+    resumeTimer.current = setTimeout(() => {
+      // 2026-07-17 요청: "회색이 컬러로 돌아오는 시점"과 "스포트라이트가 다음
+      // 조각으로 넘어가는 시점"을 동시에 맞춰달라 - paused=false만 하면 자동
+      // 순환 setInterval이 그때부터 새로 intervalMs(2.2초)를 기다렸다가에서야
+      // 다음 조각으로 넘어가서, 색은 여기서 바로 복귀하는데 스포트라이트는
+      // 한참 뒤에야 움직이는 어긋남이 있었다. 여기서 인덱스를 직접 한 칸
+      // 넘겨서 "회색→컬러 복귀"와 "다음 조각으로 이동"이 정확히 같은 순간에
+      // 일어나게 한다.
+      if (length) setIndex((i) => (i + 1) % length);
+      setPaused(false);
+      setHighlighting(false);
+    }, resumeDelayMs);
   };
-  return [index, setPaused, focus, blur];
+  return [index, setPaused, focus, blur, highlighting];
 }
 
 function hexOrRgbToRgb(input) {
@@ -1065,6 +1164,10 @@ function easeInOutQuad(t) {
   return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 }
 
+function easeOutQuad(t) {
+  return 1 - (1 - t) ** 2;
+}
+
 // 도넛 조각 hover 시 회색화를 CSS transition으로 구현했더니 순간적으로 바뀌는
 // 문제가 있었다(2026-07-17 피드백) - Playwright로 getComputedStyle(sector).fill을
 // 프레임 단위로 실측해보니, recharts Pie가 isAnimationActive일 때 hover로 인한
@@ -1083,10 +1186,16 @@ function easeInOutQuad(t) {
 // activeIndex가 안 바뀌니(useAutoCycleIndex의 blur는 인덱스를 유지) 이 fill
 // 트윈만 단독으로 돌아서 상대적으로 더 빨라 보였다. Pie 쪽 isAnimationActive를
 // 꺼서(각 Pie의 activeShape/activeIndex 자체는 그대로 유지 - 확대 로직 불변)
-// 이 fill 트윈만 색상 전환을 전담하게 해서 양방향이 동일한 300ms로 대칭적으로
-// 느껴지도록 했다(범례 텍스트/배경박스/점의 CSS transition도 전부 동일하게
-// duration-300으로 맞춰서 조각과 어긋나지 않게 함).
-function useAnimatedFills(targetColors, durationMs = 300) {
+// 이 fill 트윈만 색상 전환을 전담하게 해서 양방향이 대칭적으로 느껴지도록
+// 했다(범례 텍스트/배경박스/점의 CSS transition도 전부 동일한 duration으로
+// 맞춰서 조각과 어긋나지 않게 함).
+//
+// 2026-07-17(속도 조정 + 확대 동기화): "색 전환이 느리다"는 피드백으로
+// 200ms로 단축 - 동시에 조각 확대 애니메이션(useGrowPulse, renderGlowActiveShape)도
+// 같은 200ms를 쓰게 해서 "커지는 모션"과 "색 변화"가 정확히 같은 순간에
+// 시작하고 끝난다(둘 다 activeIndex/highlighting이 바뀌는 같은 이벤트에서
+// 트리거되므로, duration만 맞추면 동기화됨).
+function useAnimatedFills(targetColors, durationMs = 200) {
   const [colors, setColors] = useState(targetColors);
   const colorsRef = useRef(targetColors);
   const prevTargetsRef = useRef(targetColors);
@@ -1119,26 +1228,71 @@ function useAnimatedFills(targetColors, durationMs = 300) {
   return colors;
 }
 
+// activeIndex가 바뀔 때마다(hover로 옮겨가거나 자동 순환이 다음 조각으로
+// 넘어갈 때) 0→1로 다시 출발하는 진행률 - renderGlowActiveShape가 이 값으로
+// 확대 폭(+5/+7~+10)을 0부터 서서히 키워서 "즉각 커짐" 대신 부드러운 pop
+// 효과를 낸다(2026-07-17 요청, 0.2~0.3s ease-out). useAnimatedFills와 같은
+// RAF 방식 - recharts의 isAnimationActive는 이미 hover 시 DOM을 새로 그려서
+// 못 쓰는 걸 앞서 확인했으므로(위 useAnimatedFills 주석 참고) 여기서도 같은
+// 이유로 자체 구현한다.
+function useGrowPulse(trigger, durationMs = 200) {
+  const [progress, setProgress] = useState(1);
+  const rafRef = useRef(null);
+  useEffect(() => {
+    const start = performance.now();
+    cancelAnimationFrame(rafRef.current);
+    setProgress(0);
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      setProgress(t);
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trigger, durationMs]);
+  return progress;
+}
+
 // 활성 조각을 살짝 키우고 바깥에 얇은 발광 링을 둘러서 "스포트라이트가 훑고
 // 지나간다"는 느낌을 준다. outerRadius+10까지 부풀리므로, 이걸 쓰는 Pie를 담은
 // ResponsiveContainer는 반드시 (outerRadius+10)*2보다 여유 있게 잡아야 한다 -
 // 안 그러면 SVG 뷰포트 경계에서 강조된 조각 끝이 잘린다(2026-07-16 실측 버그,
 // outerRadius=52인 도넛 4개가 110×110 컨테이너에 담겨있어서 62 > 55(절반)로
 // 잘렸었음 - 132×132로 키워서 고침).
-function renderGlowActiveShape(props) {
-  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
+// growth(0~1, useGrowPulse)만큼 확대 폭 자체를 스케일해서 "커지는 중"인
+// 애니메이션을 표현한다 - 기본값 1은 growth를 안 넘기는 다른 호출부 대비용.
+// 2026-07-17 버그 수정 - "도넛에 마우스 대고 움직이면 가끔 멈춘다"의 원인.
+// 이 함수는 activeIndex(확대 중인 조각)를 recharts가 기본 <Sector> 대신
+// 그릴 때 쓰는 렌더러다. props에서 cx/cy/... 도형 값만 꺼내 쓰고
+// onMouseEnter/onMouseLeave는 안 넘겨줬더니, 어떤 조각이 활성화(확대)되는
+// 순간 그 조각의 실제 DOM이 이벤트 핸들러가 아예 없는 이 도형으로 바뀌어서 -
+// 마우스가 그 위에 있는 동안 더 이상 leave 이벤트가 안 잡히고(핸들러 자체가
+// 없으니까) blurIndex()가 영영 안 불려서 hover가 그 조각에 낀 채 멈췄다.
+// props에 원래 들어있는 핸들러를 <g>에 그대로 물려줘서 고친다.
+function renderGlowActiveShape(props, growth = 1) {
+  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, onMouseEnter, onMouseLeave } = props;
+  const eased = easeOutQuad(growth);
   return (
-    <g>
-      <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 5} startAngle={startAngle} endAngle={endAngle} fill={fill} />
+    <g onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       <Sector
         cx={cx}
         cy={cy}
-        innerRadius={outerRadius + 7}
-        outerRadius={outerRadius + 10}
+        innerRadius={innerRadius}
+        outerRadius={outerRadius + 5 * eased}
         startAngle={startAngle}
         endAngle={endAngle}
         fill={fill}
-        opacity={0.35}
+      />
+      <Sector
+        cx={cx}
+        cy={cy}
+        innerRadius={outerRadius + 7 * eased}
+        outerRadius={outerRadius + 10 * eased}
+        startAngle={startAngle}
+        endAngle={endAngle}
+        fill={fill}
+        opacity={0.35 * eased}
       />
     </g>
   );
@@ -1215,19 +1369,22 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
     [byModule, theme]
   );
   const total = data.reduce((s, d) => s + d.count, 0);
-  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
-  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
-  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
-  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(
+    chartType === "donut" ? data.length : 0
+  );
+  // highlighting(hover 중이거나 mouseleave 후 1초 유예 안)일 때만 나머지 조각을
+  // 회색으로 죽인다 - 자동 순환 스포트라이트 자체는 색을 안 죽인다.
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
-    [data, hoveredIndex, C.donutDim]
+    () => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)),
+    [data, highlighting, activeIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
+  const growth = useGrowPulse(activeIndex);
 
   return (
     <Card
       title="탐지 소스별 분포"
+      icon={Layers}
       subtitle={status === "ready" ? `WAS / Falco / K8s Audit · 총 ${total}건` : "불러오는 중..."}
       action={
         !isControlled && (
@@ -1238,11 +1395,41 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
-      {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
+      {data.length > 0 && chartType === "bar" && (
+        <CategoryBarChart data={data} C={C} height={isControlled ? "100%" : 150} theme={theme} />
+      )}
       {data.length > 0 && chartType === "donut" && (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={132} height={132}>
-            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+          {isControlled ? (
+            // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 고정 132px이 아니라
+            // ResponsiveContainer로 박스 크기에 맞춰 커지고 작아지게 한다(2026-07-17
+            // 요청 - "박스 리사이즈해도 내부 도넛이 안 따라온다"). 기본(고정 레이아웃)
+            // 모드는 계속 고정 132px 그대로 둬서 이전에 잡은 "ResponsiveContainer가
+            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다.
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                <Pie
+                  data={data}
+                  dataKey="count"
+                  nameKey="label"
+                  innerRadius={32}
+                  outerRadius={52}
+                  startAngle={90}
+                  endAngle={-270}
+                  stroke="none"
+                  activeIndex={activeIndex}
+                  activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                  onMouseEnter={(_, i) => focusIndex(i)}
+                  onMouseLeave={blurIndex}
+                >
+                  {data.map((d, i) => (
+                    <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
                 dataKey="count"
@@ -1253,56 +1440,44 @@ function DetectionSourceDonutCompact({ lookbackMs, chartType: chartTypeProp }) {
                 endAngle={-270}
                 stroke="none"
                 activeIndex={activeIndex}
-                activeShape={renderGlowActiveShape}
-                onMouseEnter={(_, i) => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
+                activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                onMouseEnter={(_, i) => focusIndex(i)}
+                onMouseLeave={blurIndex}
               >
                 {data.map((d, i) => (
-                  <Cell key={d.key} fill={animatedFills[i]} />
+                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
                 ))}
               </Pie>
             </PieChart>
-          </ResponsiveContainer>
+          )}
           <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                onMouseEnter={() => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
+                onMouseEnter={() => focusIndex(i)}
+                onMouseLeave={blurIndex}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
                 <span
-                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
-                    hoveredIndex === null
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
+                    !highlighting
                       ? i === activeIndex
                         ? "text-dash-fg"
                         : "text-dash-muted"
-                      : hoveredIndex === i
+                      : i === activeIndex
                       ? "text-dash-fg font-bold"
                       : ""
                   }`}
                   // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
                   // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
                   // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
-                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
+                  style={highlighting && i !== activeIndex ? { color: C.donutDim } : undefined}
                 >
                   <span
-                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-200 ease-in-out"
+                    style={{ backgroundColor: highlighting && i !== activeIndex ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
@@ -1339,19 +1514,22 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
         .map((d, i) => ({ ...d, color: donutPalette(theme)[i % DONUT_PALETTE.length] })),
     [levels, theme]
   );
-  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
-  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
-  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
-  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(
+    chartType === "donut" ? data.length : 0
+  );
+  // highlighting(hover 중이거나 mouseleave 후 1초 유예 안)일 때만 나머지 조각을
+  // 회색으로 죽인다 - 자동 순환 스포트라이트 자체는 색을 안 죽인다.
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
-    [data, hoveredIndex, C.donutDim]
+    () => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)),
+    [data, highlighting, activeIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
+  const growth = useGrowPulse(activeIndex);
 
   return (
     <Card
       title="심각도 분포"
+      icon={AlertTriangle}
       subtitle={status === "ready" ? `선택 구간 · 총 ${total}건` : "불러오는 중..."}
       action={
         !isControlled && (
@@ -1362,11 +1540,41 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
-      {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
+      {data.length > 0 && chartType === "bar" && (
+        <CategoryBarChart data={data} C={C} height={isControlled ? "100%" : 150} theme={theme} />
+      )}
       {data.length > 0 && chartType === "donut" && (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={132} height={132}>
-            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+          {isControlled ? (
+            // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 고정 132px이 아니라
+            // ResponsiveContainer로 박스 크기에 맞춰 커지고 작아지게 한다(2026-07-17
+            // 요청 - "박스 리사이즈해도 내부 도넛이 안 따라온다"). 기본(고정 레이아웃)
+            // 모드는 계속 고정 132px 그대로 둬서 이전에 잡은 "ResponsiveContainer가
+            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다.
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                <Pie
+                  data={data}
+                  dataKey="count"
+                  nameKey="label"
+                  innerRadius={32}
+                  outerRadius={52}
+                  startAngle={90}
+                  endAngle={-270}
+                  stroke="none"
+                  activeIndex={activeIndex}
+                  activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                  onMouseEnter={(_, i) => focusIndex(i)}
+                  onMouseLeave={blurIndex}
+                >
+                  {data.map((d, i) => (
+                    <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
                 dataKey="count"
@@ -1377,56 +1585,44 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                 endAngle={-270}
                 stroke="none"
                 activeIndex={activeIndex}
-                activeShape={renderGlowActiveShape}
-                onMouseEnter={(_, i) => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
+                activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                onMouseEnter={(_, i) => focusIndex(i)}
+                onMouseLeave={blurIndex}
               >
                 {data.map((d, i) => (
-                  <Cell key={d.key} fill={animatedFills[i]} />
+                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
                 ))}
               </Pie>
             </PieChart>
-          </ResponsiveContainer>
+          )}
           <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                onMouseEnter={() => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
+                onMouseEnter={() => focusIndex(i)}
+                onMouseLeave={blurIndex}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
                 <span
-                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
-                    hoveredIndex === null
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
+                    !highlighting
                       ? i === activeIndex
                         ? "text-dash-fg"
                         : "text-dash-muted"
-                      : hoveredIndex === i
+                      : i === activeIndex
                       ? "text-dash-fg font-bold"
                       : ""
                   }`}
                   // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
                   // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
                   // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
-                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
+                  style={highlighting && i !== activeIndex ? { color: C.donutDim } : undefined}
                 >
                   <span
-                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-200 ease-in-out"
+                    style={{ backgroundColor: highlighting && i !== activeIndex ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
@@ -1461,19 +1657,22 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
       .map(([namespace, count], i) => ({ key: namespace, label: namespace, count, color: donutPalette(theme)[i % DONUT_PALETTE.length] }));
   }, [targets, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
-  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
-  // 범례/조각 hover 중에만 나머지 조각을 회색으로 죽인다 - 자동 순환 스포트라이트(activeIndex)와는
-  // 별개 state라, hover를 떼면 10초 지연 없이 색이 즉시 원복된다(2026-07-17 요청).
-  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(
+    chartType === "donut" ? data.length : 0
+  );
+  // highlighting(hover 중이거나 mouseleave 후 1초 유예 안)일 때만 나머지 조각을
+  // 회색으로 죽인다 - 자동 순환 스포트라이트 자체는 색을 안 죽인다.
   const targetFills = useMemo(
-    () => data.map((d, i) => (hoveredIndex === null || hoveredIndex === i ? d.color : C.donutDim)),
-    [data, hoveredIndex, C.donutDim]
+    () => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)),
+    [data, highlighting, activeIndex, C.donutDim]
   );
   const animatedFills = useAnimatedFills(targetFills);
+  const growth = useGrowPulse(activeIndex);
 
   return (
     <Card
       title="K8s 네임스페이스별 분포"
+      icon={Boxes}
       subtitle={status === "ready" ? `전체 기간 · 총 ${total}건` : "불러오는 중..."}
       action={
         !isControlled && (
@@ -1488,11 +1687,41 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">데이터가 없습니다.</p>}
-      {data.length > 0 && chartType === "bar" && <CategoryBarChart data={data} C={C} height={150} />}
+      {data.length > 0 && chartType === "bar" && (
+        <CategoryBarChart data={data} C={C} height={isControlled ? "100%" : 150} theme={theme} />
+      )}
       {data.length > 0 && chartType === "donut" && (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={132} height={132}>
-            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+          {isControlled ? (
+            // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 고정 132px이 아니라
+            // ResponsiveContainer로 박스 크기에 맞춰 커지고 작아지게 한다(2026-07-17
+            // 요청 - "박스 리사이즈해도 내부 도넛이 안 따라온다"). 기본(고정 레이아웃)
+            // 모드는 계속 고정 132px 그대로 둬서 이전에 잡은 "ResponsiveContainer가
+            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다.
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                <Pie
+                  data={data}
+                  dataKey="count"
+                  nameKey="label"
+                  innerRadius={32}
+                  outerRadius={52}
+                  startAngle={90}
+                  endAngle={-270}
+                  stroke="none"
+                  activeIndex={activeIndex}
+                  activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                  onMouseEnter={(_, i) => focusIndex(i)}
+                  onMouseLeave={blurIndex}
+                >
+                  {data.map((d, i) => (
+                    <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
                 data={data}
                 dataKey="count"
@@ -1503,56 +1732,44 @@ function K8sNamespaceDonutCompact({ chartType: chartTypeProp }) {
                 endAngle={-270}
                 stroke="none"
                 activeIndex={activeIndex}
-                activeShape={renderGlowActiveShape}
-                onMouseEnter={(_, i) => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
+                activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                onMouseEnter={(_, i) => focusIndex(i)}
+                onMouseLeave={blurIndex}
               >
                 {data.map((d, i) => (
-                  <Cell key={d.key} fill={animatedFills[i]} />
+                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
                 ))}
               </Pie>
             </PieChart>
-          </ResponsiveContainer>
+          )}
           <div className="flex-1 text-sm">
             {data.map((d, i) => (
               <div
                 key={d.key}
-                onMouseEnter={() => {
-                  focusIndex(i);
-                  setHoveredIndex(i);
-                }}
-                onMouseLeave={() => {
-                  blurIndex();
-                  setHoveredIndex(null);
-                }}
-                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-300 ease-in-out ${
+                onMouseEnter={() => focusIndex(i)}
+                onMouseLeave={blurIndex}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
               >
                 <span
-                  className={`flex items-center gap-1.5 truncate transition-colors duration-300 ease-in-out ${
-                    hoveredIndex === null
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
+                    !highlighting
                       ? i === activeIndex
                         ? "text-dash-fg"
                         : "text-dash-muted"
-                      : hoveredIndex === i
+                      : i === activeIndex
                       ? "text-dash-fg font-bold"
                       : ""
                   }`}
                   // text-dash-faint(전역 muted 텍스트 색, 여러 곳에서 재사용)로 죽이면
                   // 도넛 조각(C.donutDim)보다 밝아서 라벨/조각 색이 어긋났다 - 이 상태만
                   // 인라인으로 C.donutDim을 직접 써서 조각과 라벨이 항상 같은 회색이 되게 한다.
-                  style={hoveredIndex !== null && hoveredIndex !== i ? { color: C.donutDim } : undefined}
+                  style={highlighting && i !== activeIndex ? { color: C.donutDim } : undefined}
                 >
                   <span
-                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-300 ease-in-out"
-                    style={{ backgroundColor: hoveredIndex !== null && hoveredIndex !== i ? C.donutDim : d.color }}
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-200 ease-in-out"
+                    style={{ backgroundColor: highlighting && i !== activeIndex ? C.donutDim : d.color }}
                   />
                   {d.label}
                 </span>
@@ -1588,6 +1805,7 @@ function GeoSummaryCard() {
   return (
     <Card
       title="공격 발원지 (GeoIP)"
+      icon={MapPin}
       subtitle={
         mapMode === "3d"
           ? `전체 기간 · ${countryCount}개국 · 총 ${total}건 · 드래그로 회전`
@@ -1654,7 +1872,7 @@ export function LatencyStatsPanel({ events }) {
     : [];
 
   return (
-    <Card title="API Latency" subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}>
+    <Card title="API Latency" icon={Gauge} subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}>
       {stats ? (
         <div className="grid grid-cols-5 gap-2">
           {rows.map((r) => (
@@ -1702,6 +1920,7 @@ export function RecentLogsTable({ events, filterLevels, status = "ready", error 
   return (
     <Card
       title="Recent Logs"
+      icon={ScrollText}
       subtitle={`Showing ${Math.min(filtered.length, 8)} of ${filtered.length}`}
       className="h-full"
       action={
@@ -1884,17 +2103,99 @@ const KPI_MIN_SEVERITY = {
 // 위젯 자체(Card/KpiCard 등이 이미 갖고 있는 배경/테두리)만 보이게 하고, 드래그
 // 핸들/차트타입 버튼/제거 버튼은 마우스를 올렸을 때만 우상단에 작은 플로팅
 // 툴바로 뜨도록 바꿨다 - 평소엔 기본 모드와 완전히 똑같이 보인다.
+// 2026-07-17(재작업) - 박스 크기와 내부 콘텐츠를 완전히 동기화하는 공용 훅.
+//
+// 실측 없이 "그리드 컬럼 하나가 대략 몇 px"라고 상수로 가정했던 첫 버전은
+// 실제 컬럼 폭(캔버스 폭에 따라 달라짐 - Playwright로 재보니 이 화면에서
+// 58px, 처음 가정한 43px과 전혀 다름)과 어긋나서 "박스를 키워도 내용은 작게
+// 몰려있고 나머지가 텅 빔" / "최소 크기로 줄이면 스크롤 생김" 두 버그가 났다.
+//
+// 그 다음 시도(자연 크기를 DOM에서 직접 재는 버전)는 KpiCard 등이 전부
+// `w-full h-full`(부모를 꽉 채우는) 구조라는 걸 놓쳤다 - shrink-to-fit
+// 컨테이너(inline-block) 안에 w-full 자식을 넣으면 크기가 서로를 참조하는
+// 순환이 생겨서 자연 크기를 제대로 못 쟀다.
+//
+// 최종 방식: "박스가 처음 나타났을 때의 크기"를 기준선(scale=1)으로 한 번만
+// 캡처해두고, 그 이후 리사이즈되는 만큼만 비례해서 scale을 계산한다. 콘텐츠는
+// 항상 이 기준선 픽셀 크기로 고정 렌더링(그 안에서는 w-full/h-full이 정상
+// 동작 - 고정된 부모니까)하고 transform:scale로만 확대/축소한다. 그리드 단위
+// 환산이나 DOM 자연-크기 추정이 전혀 필요 없어서 두 버그의 원인 자체가 없다.
+function useAutoFitBox(enabled) {
+  const outerRef = useRef(null);
+  const baselineRef = useRef(null); // 처음 측정된 { w, h } - 이후 안 바뀜
+  const [scale, setScale] = useState(1);
+  const [baseline, setBaseline] = useState(null);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const el = outerRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(([e]) => {
+      const w = e.contentRect.width;
+      const h = e.contentRect.height;
+      if (w <= 0 || h <= 0) return;
+      if (!baselineRef.current) {
+        baselineRef.current = { w, h };
+        setBaseline({ w, h });
+        setScale(1);
+        return;
+      }
+      const b = baselineRef.current;
+      const ratio = Math.min(w / b.w, h / b.h);
+      // 위쪽은 2.4배까지만(그 이상은 폰트가 과도하게 커져 어색함 - 남는 공간은
+      // outerRef의 flex 중앙 정렬로 처리). 아래쪽은 사실상 무제한으로 계속
+      // 줄어들게 둔다 - "스크롤은 절대 생기면 안 된다"가 최우선이라, 그리드
+      // 자체의 minW/minH가 허용하는 한 콘텐츠는 항상 그 크기에 맞춰 줄어들어야
+      // 한다(여기서 하한을 따로 걸면 그 하한보다 그리드가 더 작게 허용할 때
+      // 다시 넘친다 - 실제로 겪은 버그).
+      setScale(Math.min(ratio, 2.4));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [enabled]);
+
+  return { outerRef, scale, baseline };
+}
+
 function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove, children }) {
   const options = chartTypeOptionsFor(widgetType);
+  const entry = catalogEntry(widgetType);
+  // 차트류(recharts ResponsiveContainer)는 이미 자체적으로 박스 크기에 반응하므로
+  // 건너뛴다 - 같이 적용하면 Card의 min-h-80과 겹쳐서 두 배로 부풀어 오르는
+  // 버그가 있었다(카탈로그 selfResponsive 주석 참고).
+  const autoFitEnabled = Boolean(entry) && !entry.selfResponsive;
+  const { outerRef, scale, baseline } = useAutoFitBox(autoFitEnabled);
 
   return (
     <div className="group relative h-full w-full">
-      <div className="h-full w-full overflow-auto">{children}</div>
+      <div ref={outerRef} className="h-full w-full overflow-hidden flex items-center justify-center">
+        {autoFitEnabled && baseline ? (
+          <div
+            style={{
+              width: baseline.w,
+              height: baseline.h,
+              transform: `scale(${scale})`,
+              transformOrigin: "center center",
+              flexShrink: 0,
+            }}
+          >
+            {children}
+          </div>
+        ) : (
+          children
+        )}
+      </div>
+      {/* 2026-07-17 요청: "윈도우/맥OS 창처럼 타이틀 바 전체를 잡아서 이동" -
+          예전엔 우상단의 작은 알약 모양(⠿⠿ + 제목)만 draggableHandle이라
+          정확히 그 위에서만 드래그가 시작됐다. 이제 위쪽 가장자리 전체(top-0
+          left-0 right-0)가 핸들이라 제목 위든 빈 여백이든 상단 어디를 잡아도
+          이동된다 - 평소엔 안 보이다가 hover해야 나타나는 느낌은 그대로 유지
+          (absolute + opacity-0 오버레이라 안 보일 때도 차트 레이아웃을 안 밀어냄). */}
       <div
-        className="widget-drag-handle cursor-move absolute top-1.5 right-1.5 z-10 flex items-center gap-1.5 max-w-[92%] px-2 py-1 rounded-lg bg-dash-bg/95 border border-dash-mint/25 shadow-lg text-dash-muted text-[10px] uppercase tracking-wide select-none opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
+        className="widget-drag-handle cursor-move absolute top-0 left-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 bg-dash-bg/95 border-b border-dash-mint/25 shadow-lg text-dash-muted text-[10px] uppercase tracking-wide select-none opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
       >
         <span className="opacity-70 tracking-tighter shrink-0">⠿⠿</span>
-        <span className="truncate">{title}</span>
+        <span className="truncate flex-1">{title}</span>
         {options && onChartTypeChange && (
           <div
             className="flex items-center gap-0.5 shrink-0 normal-case tracking-normal cursor-default"
@@ -1981,7 +2282,10 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   const setWidgetChartType = (uid, type) =>
     setWidgets((prev) => prev.map((w) => (w.uid === uid ? { ...w, chartType: type } : w)));
 
-  const gridLayout = widgets.map((w) => ({ i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h }));
+  const gridLayout = widgets.map((w) => {
+    const entry = catalogEntry(w.type);
+    return { i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h, minW: entry?.minW, minH: entry?.minH };
+  });
   const dropEntry = draggingType ? catalogEntry(draggingType) : null;
   const canSave = widgets.length > 0 && name.trim().length > 0;
 
@@ -2050,10 +2354,21 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
             rowHeight={20}
             margin={[16, 16]}
             draggableHandle=".widget-drag-handle"
-            compactType="vertical"
+            // compactType={null} - 2026-07-17 요청: 위젯을 그리드가 아니라 자유로운
+            // 위치에 놓을 수 있게. "vertical"이면 드래그를 끝낼 때마다 위쪽으로
+            // 자동 압축(gravity)돼서 원하는 자리에 그대로 안 있었다. null이어도
+            // react-grid-layout은 겹치는 자리로 드래그하면 그 자리의 다른 위젯을
+            // 밀어내는 충돌 방지는 그대로 동작한다(allowOverlap 기본값 false).
+            compactType={null}
             isDroppable
             onDrop={handleDrop}
-            droppingItem={{ i: "__dropping__", w: dropEntry?.w ?? 4, h: dropEntry?.h ?? 6 }}
+            droppingItem={{
+              i: "__dropping__",
+              w: dropEntry?.w ?? 4,
+              h: dropEntry?.h ?? 6,
+              minW: dropEntry?.minW,
+              minH: dropEntry?.minH,
+            }}
             style={{ minHeight: widgets.length === 0 ? 220 : undefined }}
           >
             {widgets.map((w) => (
@@ -2080,7 +2395,10 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
 // ("위젯 편집" 없이도 배치만 다듬는 건 즉시 반영), 위젯을 추가/제거하려면
 // "위젯 편집" 버튼으로 DashboardBuilder를 연다.
 function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, onChartTypeCommit }) {
-  const gridLayout = dashboard.widgets.map((w) => ({ i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h }));
+  const gridLayout = dashboard.widgets.map((w) => {
+    const entry = catalogEntry(w.type);
+    return { i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h, minW: entry?.minW, minH: entry?.minH };
+  });
 
   const handleLayoutChange = (newLayout) => {
     const next = applyLayoutToWidgets(dashboard.widgets, newLayout);
@@ -2106,7 +2424,7 @@ function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, o
           rowHeight={20}
           margin={[16, 16]}
           draggableHandle=".widget-drag-handle"
-          compactType="vertical"
+          compactType={null}
         >
           {dashboard.widgets.map((w) => (
             <div key={w.uid}>

@@ -14,6 +14,17 @@ const JSPDF_OPTIONAL_EXTERNALS = ["html2canvas", "canvg", "dompurify", "fast-png
 
 export default defineConfig({
   plugins: [react()],
+  // react-grid-layout(커스텀 대시보드 위젯 드래그/리사이즈)가 내부적으로
+  // `process.env.NODE_ENV`를 직접 참조하는데(node_modules/react-grid-layout/
+  // dist/legacy.js), Vite는 webpack과 달리 클라이언트 번들에 Node의 `process`를
+  // 자동으로 폴리필하지 않는다 - 그래서 위젯을 드래그/리사이즈하려고 mousedown하는
+  // 순간 DraggableCore의 디버그 로그 분기(`if (process.env.NODE_ENV !== "production")`)에서
+  // "process is not defined"가 즉시 throw되어 드래그/리사이즈 자체가 시작도
+  // 못 하고 죽었다(2026-07-17 발견 - "커스텀 리사이즈가 막혀있다"는 증상의
+  // 실제 원인). 빌드 타임에 리터럴 문자열로 치환해서 해결한다.
+  define: {
+    "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV || "development"),
+  },
   server: {
     port: 5173,
     // 브라우저가 vite dev 서버(5173)까지만 열려있고 Traefik(80)은 못 여는

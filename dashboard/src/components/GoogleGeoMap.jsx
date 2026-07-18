@@ -160,13 +160,14 @@ export default function GoogleGeoMap({ points, compact = false }) {
         zIndex: Math.round(p.count) + 1000,
       });
       // 마커 자체(marker/coreDot)는 시각 크기 그대로 두고, 투명한 더 큰
-      // 심볼을 위에 얹어 hover 인식 범위만 넓힌다(2026-07-17 요청) - 아이콘의
-      // 클릭/hover 판정은 opacity와 무관하게 scale(도형 크기) 기준이라
-      // fillOpacity/strokeOpacity를 0으로 둬도 히트 영역은 그대로 넓게 작동한다.
+      // 심볼을 위에 얹어 hover 인식 범위만 넓힌다(2026-07-17 요청, 2026-07-18
+      // 추가 확대: +10 -> +16) - 아이콘의 클릭/hover 판정은 opacity와 무관하게
+      // scale(도형 크기) 기준이라 fillOpacity/strokeOpacity를 0으로 둬도 히트
+      // 영역은 그대로 넓게 작동한다.
       const hitMarker = new maps.Marker({
         position,
         map: mapRef.current,
-        icon: { path: maps.SymbolPath.CIRCLE, scale: r + 10, fillOpacity: 0, strokeOpacity: 0 },
+        icon: { path: maps.SymbolPath.CIRCLE, scale: r + 16, fillOpacity: 0, strokeOpacity: 0 },
         zIndex: Math.round(p.count) + 2000,
       });
 
@@ -177,6 +178,7 @@ export default function GoogleGeoMap({ points, compact = false }) {
             titleFlag: resolveFlagCode(p.countryCode, p.country),
             subtitle: p.city || undefined,
             rows: [{ color: C.critical, value: `${p.count}건`, label: "탐지" }],
+            theme,
           })
         );
         infoWindowRef.current.open({ anchor: hitMarker, map: mapRef.current });

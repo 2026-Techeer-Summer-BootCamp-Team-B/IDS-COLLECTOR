@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { LayoutDashboard, AlertTriangle, Target, Server, ShieldCheck, Globe, Shield, Eye, Boxes, ArrowUp, Radar, Bell, Ban } from "lucide-react";
 import { DashboardContent } from "./views/LogDashboard";
 import IncidentsView from "./views/IncidentsView";
 import AttackMatrixView from "./views/AttackMatrixView";
@@ -28,19 +29,19 @@ import { OverviewLayoutProvider } from "./context/OverviewLayoutContext";
 // "incidents" 항목의 badge는 고정값이 아니라 activeIncidents(useIncidentStats,
 // 실데이터)로 렌더 시점에 채워진다 — Sidebar가 navItems를 prop으로 받는 이유.
 const NAV_ITEMS = [
-  { key: "overview", label: "Overview" },
-  { key: "incidents", label: "Incidents" },
-  { key: "attack", label: "ATT&CK" },
-  { key: "infra", label: "Infrastructure" },
-  { key: "admin", label: "Admin / Audit" },
+  { key: "overview", label: "Overview", icon: LayoutDashboard },
+  { key: "incidents", label: "Incidents", icon: AlertTriangle },
+  { key: "attack", label: "ATT&CK", icon: Target },
+  { key: "infra", label: "Infrastructure", icon: Server },
+  { key: "admin", label: "Admin / Audit", icon: ShieldCheck },
 ];
 
 // 계층별 상세 뷰 — 위 NAV_ITEMS와 별도 그룹으로 사이드바에 노출 (구분선으로 분리).
 const LAYER_NAV_ITEMS = [
-  { key: "was", label: "WAS" },
-  { key: "waf", label: "WAF" },
-  { key: "falco", label: "Falco" },
-  { key: "k8s-audit", label: "K8s API" },
+  { key: "was", label: "WAS", icon: Globe },
+  { key: "waf", label: "WAF", icon: Shield },
+  { key: "falco", label: "Falco", icon: Eye },
+  { key: "k8s-audit", label: "K8s API", icon: Boxes },
 ];
 
 // Fixed-width inner wrapper + shrinking outer <aside> is what makes the
@@ -81,7 +82,10 @@ function Sidebar({ active, onSelect, open, incidentBadge }) {
                   : "border-transparent text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
               }`}
             >
-              <span>{item.label}</span>
+              <span className="flex items-center gap-2 min-w-0">
+                <item.icon className="w-4 h-4 shrink-0" strokeWidth={2} />
+                <span className="truncate">{item.label}</span>
+              </span>
               {item.key === "incidents" && incidentBadge ? (
                 <span className="text-[10px] bg-dash-pink/20 text-dash-pink rounded-full px-1.5 py-0.5">
                   {incidentBadge}
@@ -101,7 +105,10 @@ function Sidebar({ active, onSelect, open, incidentBadge }) {
                   : "border-transparent text-dash-muted hover:bg-dash-surface/60 hover:text-dash-fg"
               }`}
             >
-              <span>{item.label}</span>
+              <span className="flex items-center gap-2 min-w-0">
+                <item.icon className="w-4 h-4 shrink-0" strokeWidth={2} />
+                <span className="truncate">{item.label}</span>
+              </span>
             </button>
           ))}
         </nav>
@@ -110,10 +117,44 @@ function Sidebar({ active, onSelect, open, incidentBadge }) {
   );
 }
 
-function StatBlock({ label, value, valueClassName = "text-dash-fg" }) {
+// 페이지(<main>, AppShell 참고)를 아래로 스크롤하면 나타나는 플로팅 "맨 위로"
+// 버튼(2026-07-17 요청) - main 자체가 스크롤 컨테이너(overflow-y-auto)라
+// window가 아니라 그 요소의 scrollTop을 직접 구독한다. 배경(bg-dash-surface)/
+// 테두리(border-dash-surfaceAlt)는 이미 다크/라이트 각각 정의돼 있는 테마
+// 토큰이라 여기서 별도로 명도를 고민할 필요 없이 두 모드 다 배경과 자연스럽게
+// 구분된다.
+function ScrollToTopButton({ scrollRef }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    const onScroll = () => setVisible(el.scrollTop > 400);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [scrollRef]);
+
+  if (!visible) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+      aria-label="맨 위로 이동"
+      className="fixed bottom-6 right-6 z-30 w-10 h-10 rounded-full flex items-center justify-center bg-dash-surface border border-dash-surfaceAlt text-dash-fg shadow-lg hover:bg-dash-surfaceAlt transition-colors"
+    >
+      <ArrowUp className="w-5 h-5" strokeWidth={2} />
+    </button>
+  );
+}
+
+function StatBlock({ label, value, valueClassName = "text-dash-fg", icon: Icon }) {
   return (
     <div>
-      <p className="text-dash-muted text-[10px]">{label}</p>
+      <p className="text-dash-muted text-[10px] flex items-center gap-1">
+        {Icon && <Icon className="w-3 h-3" />}
+        {label}
+      </p>
       <p className={`text-sm font-semibold ${valueClassName}`}>{value}</p>
     </div>
   );
@@ -185,10 +226,10 @@ function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
   return (
     <header className="flex flex-wrap items-center gap-x-8 gap-y-2 px-6 py-4 border-b border-dash-surfaceAlt">
       <SidebarToggle open={sidebarOpen} onToggle={onToggleSidebar} />
-      <StatBlock label="진행중 INCIDENT" value={incidentStats.activeIncidents} valueClassName="text-dash-pink" />
-      <StatBlock label="총 DETECTED" value={incidentStats.totalDetected.toLocaleString()} />
-      <StatBlock label="오픈 ALERT" value={incidentStats.openAlerts} valueClassName="text-dash-mint" />
-      <StatBlock label="총 BLOCKED" value={incidentStats.totalBlocked} />
+      <StatBlock label="진행중 INCIDENT" value={incidentStats.activeIncidents} valueClassName="text-dash-pink" icon={AlertTriangle} />
+      <StatBlock label="총 DETECTED" value={incidentStats.totalDetected.toLocaleString()} icon={Radar} />
+      <StatBlock label="오픈 ALERT" value={incidentStats.openAlerts} valueClassName="text-dash-mint" icon={Bell} />
+      <StatBlock label="총 BLOCKED" value={incidentStats.totalBlocked} icon={Ban} />
 
       <div className="ml-auto flex items-center gap-3 text-xs text-dash-muted">
         <span className="flex items-center gap-1.5 text-dash-mint font-medium glow-mint">
@@ -236,11 +277,15 @@ function Placeholder({ label }) {
 function AppShell() {
   const [active, setActive] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const mainRef = useRef(null);
   // 2026-07-16: ATT&CK 매트릭스에서 "진행중" 인시던트의 "조치하러 가기" 버튼을
   // 누르면 Incidents 탭으로 전환하면서 그 인시던트를 바로 선택해서 보여준다.
   // pendingIncidentId가 바뀔 때마다 IncidentsView에 새로 전달돼서(참조가 매번
   // 바뀌도록 { id, nonce } 형태로 감쌌다 - 같은 인시던트를 연달아 눌러도 항상
   // 다시 선택되게) useEffect가 selectedId를 그 값으로 맞춘다.
+  // 2026-07-17: CRITICAL 토스트의 "스토리라인 보기" 버튼도 이 함수를 그대로
+  // 재사용한다 - GET /events/{event_id}/incident로 이미 정확한 incidentId를
+  // 들고 있는 상태라 IncidentsView 쪽 이벤트 매칭 로직이 더 필요 없어졌다.
   const [pendingIncident, setPendingIncident] = useState(null);
   function goToIncident(incidentId) {
     setPendingIncident({ id: incidentId, nonce: Date.now() });
@@ -253,13 +298,6 @@ function AppShell() {
   // so anything stored only in its local state would reset.
   const [toasts, setToasts] = useState([]);
   const { stats: incidentStats } = useIncidentStats();
-
-  // CRITICAL 토스트의 "조사하기" -> Incidents 탭으로 넘어간 직후, 목록에서 직접
-  // 찾아 누르지 않아도 그 이벤트에 해당하는 인시던트가 바로 선택되어 있게 하려고
-  // 넘겨주는 값. IncidentsView가 마운트 시 한 번 소비하고 onFocusConsumed로
-  // 비워달라고 알려준다 - 안 비우면 나중에 사이드바로 직접 Incidents를 다시
-  // 열었을 때도 예전 이벤트 기준으로 계속 자동 선택되는 부작용이 생긴다.
-  const [focusIncidentEvent, setFocusIncidentEvent] = useState(null);
 
   function pushToast(message, tone = "success") {
     const toastId = Date.now() + Math.random();
@@ -286,15 +324,10 @@ function AppShell() {
           incidentStats={incidentStats}
         />
         <ConnectionBar />
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main ref={mainRef} className="flex-1 p-6 overflow-y-auto">
           {active === "overview" && <DashboardContent />}
           {active === "incidents" && (
-            <IncidentsView
-              pushToast={pushToast}
-              focusEvent={focusIncidentEvent}
-              onFocusConsumed={() => setFocusIncidentEvent(null)}
-              pendingIncident={pendingIncident}
-            />
+            <IncidentsView pushToast={pushToast} pendingIncident={pendingIncident} />
           )}
           {active === "attack" && <AttackMatrixView onNavigateToIncident={goToIncident} />}
           {active === "infra" && <InfrastructureView />}
@@ -306,13 +339,12 @@ function AppShell() {
         </main>
         <LiveTicker feed={feed} />
       </div>
+      <ScrollToTopButton scrollRef={mainRef} />
       <ToastStack toasts={toasts} />
       <CriticalToastStack
         events={criticalEvents}
-        onInvestigate={(event) => {
-          setFocusIncidentEvent(event);
-          setActive("incidents");
-        }}
+        onInvestigate={() => setActive("incidents")}
+        onGoToIncident={goToIncident}
       />
     </div>
   );
