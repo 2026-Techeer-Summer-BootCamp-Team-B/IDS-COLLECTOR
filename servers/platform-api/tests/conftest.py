@@ -95,7 +95,7 @@ os.environ.setdefault("INTERNAL_GATEWAY_SECRET", "_smoketest-gateway-secret")
 
 import httpx  # noqa: E402  (env 세팅 이후 import 필수)
 
-from app import clickhouse_client, db, opensearch_client  # noqa: E402
+from app import clickhouse_client, db, opensearch_client, pipeline_health_api  # noqa: E402
 from app.main import app  # noqa: E402
 
 TEST_ADMIN_USERNAME = "_smoketest_admin"
@@ -104,12 +104,18 @@ TEST_ADMIN_PASSWORD = "smoketest-admin-pw-1"
 
 @pytest.fixture(scope="session", autouse=True)
 async def datastore_clients() -> AsyncIterator[None]:
-    """라우트 핸들러가 쓰는 db/clickhouse/opensearch 클라이언트만 기동한다 - 모듈
-    docstring 참고(백그라운드 폴링 태스크는 일부러 안 띄움)."""
+    """라우트 핸들러가 쓰는 db/clickhouse/opensearch/pipeline_health(Kafka) 클라이언트만
+    기동한다 - 모듈 docstring 참고(백그라운드 폴링 태스크는 일부러 안 띄움).
+    pipeline_health_api는 2026-07-18 API latency 개선으로 요청마다 새 Kafka
+    클라이언트를 만들던 걸 앱 기동 시 한 번만 만들어 재사용하는 방식으로 바뀌어서,
+    이 fixture도 db/clickhouse/opensearch와 동일하게 명시적으로 start() 해줘야
+    /stats/consumer-lag 등 4개 엔드포인트가 동작한다."""
     await db.start()
     await clickhouse_client.start()
     await opensearch_client.start()
+    await pipeline_health_api.start()
     yield
+    await pipeline_health_api.stop()
     await clickhouse_client.stop()
     await db.stop()
 

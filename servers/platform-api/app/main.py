@@ -80,7 +80,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import clickhouse_client, db, opensearch_client
+from app import clickhouse_client, db, opensearch_client, pipeline_health_api
 from app.ai_report import generate_trend_report
 from app.alert_configs_api import router as alert_configs_router
 from app.analytics_api import router as analytics_router
@@ -199,6 +199,7 @@ async def on_startup():
     await db.start()
     await clickhouse_client.start()
     await opensearch_client.start()
+    await pipeline_health_api.start()
     _alert_poll_task = asyncio.create_task(incident_alerts_poll_loop())
     _log_retention_task = asyncio.create_task(log_retention_poll_loop())
 
@@ -210,6 +211,7 @@ async def on_shutdown():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+    await pipeline_health_api.stop()
     await clickhouse_client.stop()
     await db.stop()
 
