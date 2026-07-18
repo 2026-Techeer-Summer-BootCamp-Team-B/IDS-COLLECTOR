@@ -8,6 +8,13 @@ import {
   BREACH_HEIGHT,
   BREACH_TOTAL_FRAMES,
 } from "./BreachPatternIntro";
+import {
+  ArchAnalogyVideo,
+  ARCH_FPS,
+  ARCH_WIDTH,
+  ARCH_HEIGHT,
+  ARCH_TOTAL_FRAMES,
+} from "./ArchAnalogyVideo";
 
 export const RemotionRoot = () => {
   return (
@@ -27,6 +34,14 @@ export const RemotionRoot = () => {
         fps={BREACH_FPS}
         width={BREACH_WIDTH}
         height={BREACH_HEIGHT}
+      />
+      <Composition
+        id="ArchAnalogyVideo"
+        component={ArchAnalogyVideo}
+        durationInFrames={ARCH_TOTAL_FRAMES}
+        fps={ARCH_FPS}
+        width={ARCH_WIDTH}
+        height={ARCH_HEIGHT}
       />
     </>
   );

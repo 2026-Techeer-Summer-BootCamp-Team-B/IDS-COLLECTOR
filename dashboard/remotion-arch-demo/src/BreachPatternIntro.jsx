@@ -13,11 +13,14 @@ import { AbsoluteFill, interpolate, spring, useCurrentFrame } from "remotion";
 //  뒤 다음 카드로 넘어가기 전 정지 구간을 약 1.5초로 단축. 결론 장면("빠르게
 //  찾아 방어하는 것입니다")은 "우리가 주목하는 건" 바로 다음에 이어지도록
 //  당기고, 문구가 다 뜬 뒤엔 페이드아웃 전 1초 정도 붙잡아둠 - 총 길이도
-//  그만큼 줄어듦.)
+//  그만큼 줄어듦.
+//  2026-07-18 7차: 카드 4개 합쳐 25초가량이던 걸 20초로(카드당 5초) 추가 단축.
+//  결론 장면(아이콘+텍스트)을 더 키우고, 마지막 SENTINEL-OPS 로고가 영상이
+//  끝나는 순간 확대되며 페이드아웃되도록 엔딩 연출 추가.)
 export const BREACH_FPS = 30;
 export const BREACH_WIDTH = 1920;
 export const BREACH_HEIGHT = 1080;
-export const BREACH_TOTAL_FRAMES = 1270; // 약 42초
+export const BREACH_TOTAL_FRAMES = 1090; // 약 36초
 
 // ---- 컬러 팔레트 ----
 const COLORS = {
@@ -369,11 +372,14 @@ function MessageCard({ frame, startFrame, target, dwell, org }) {
 
   const cardPop = spring({ frame: local, fps: BREACH_FPS, config: { damping: 16, mass: 0.75, stiffness: 150 } });
   const orgP = spring({ frame: local - 6, fps: BREACH_FPS, config: { damping: 15, mass: 0.6, stiffness: 150 } });
-  const tagP = spring({ frame: local - 20, fps: BREACH_FPS, config: { damping: 14, mass: 0.55, stiffness: 160 } });
-  const dwellP = spring({ frame: local - 108, fps: BREACH_FPS, config: { damping: 14, mass: 0.55, stiffness: 160 } });
+  const tagP = spring({ frame: local - 18, fps: BREACH_FPS, config: { damping: 14, mass: 0.55, stiffness: 160 } });
+  // 카드 노출 시간을 195→150프레임(5초)으로 줄이면서, 마지막 줄(체류 기간)도
+  // 그만큼 앞당겨서 슬라이드 아웃 전에 자리잡을 시간을 확보 (108 → 80).
+  const dwellP = spring({ frame: local - 80, fps: BREACH_FPS, config: { damping: 14, mass: 0.55, stiffness: 160 } });
 
-  const COUNT_START = 36;
-  const COUNT_DUR = 58;
+  // 카운트업 구간도 비례해서 단축 (36~94 → 26~66).
+  const COUNT_START = 26;
+  const COUNT_DUR = 40;
   const display = local >= COUNT_START ? useCountValue(frame, startFrame + COUNT_START, COUNT_DUR, target) : 0;
   const countP = spring({ frame: local - COUNT_START, fps: BREACH_FPS, config: { damping: 11, mass: 0.5, stiffness: 170 } });
 
@@ -890,16 +896,17 @@ function ConclusionScene({ frame, startFrame, duration }) {
         style={{
           opacity: clamp01(iconPop),
           transform: `scale(${interpolate(clamp01(iconPop), [0, 1], [0.7, 1])})`,
-          marginBottom: 26,
+          marginBottom: 32,
         }}
       >
-        <RadarCaptureIcon local={local} />
+        {/* 결론 장면부터는 아이콘/텍스트를 한 단계 키움 (230 → 290) */}
+        <RadarCaptureIcon size={290} local={local} />
       </div>
 
       <div
         style={{
           fontFamily: SANS,
-          fontSize: 28,
+          fontSize: 34,
           color: COLORS.textDim,
           opacity: clamp01(introP),
           transform: `translateY(${interpolate(clamp01(introP), [0, 1], [10, 0])}px)`,
@@ -909,12 +916,12 @@ function ConclusionScene({ frame, startFrame, duration }) {
       </div>
       <div
         style={{
-          marginTop: 12,
+          marginTop: 14,
           fontFamily: SANS,
-          fontSize: 46,
+          fontSize: 58,
           fontWeight: 800,
           color: COLORS.was,
-          textShadow: `0 0 26px ${COLORS.was}77`,
+          textShadow: `0 0 30px ${COLORS.was}77`,
           opacity: clamp01(mainP),
           transform: `translateY(${interpolate(clamp01(mainP), [0, 1], [14, 0])}px)`,
         }}
@@ -926,7 +933,10 @@ function ConclusionScene({ frame, startFrame, duration }) {
 }
 
 // ---- 마지막 로고 리빌 (블루 계열 + 파동 링) ----
-function FinalReveal({ frame, startFrame }) {
+// 7차: 영상이 끝나기 직전, SENTINEL-OPS 워드마크가 커지면서 페이드아웃되고
+// 그대로 영상이 종료되는 엔딩 연출 추가. endFrame(=BREACH_TOTAL_FRAMES)을
+// 받아서 "끝까지 남은 프레임"을 계산해 OUT_DUR 구간 동안 확대+페이드.
+function FinalReveal({ frame, startFrame, endFrame }) {
   const local = frame - startFrame;
   if (local < -10) return null;
 
@@ -934,8 +944,13 @@ function FinalReveal({ frame, startFrame }) {
   const taglineP = progressBetween(local, 26, 56);
   const ringCycle = 46;
 
+  const OUT_DUR = 34;
+  const outP = endFrame != null ? progressBetween(frame, endFrame - OUT_DUR, endFrame) : 0;
+  const outScale = interpolate(outP, [0, 1], [1, 1.4]);
+  const outOpacity = interpolate(outP, [0, 1], [1, 0]);
+
   return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", opacity: outOpacity }}>
       {local >= 0 &&
         [0, 15, 30].map((phase, i) => {
           const t = (local + phase) % ringCycle;
@@ -959,7 +974,7 @@ function FinalReveal({ frame, startFrame }) {
       <div
         style={{
           textAlign: "center",
-          transform: `scale(${interpolate(clamp01(logoPop), [0, 1], [0.85, 1])})`,
+          transform: `scale(${interpolate(clamp01(logoPop), [0, 1], [0.85, 1]) * outScale})`,
           opacity: clamp01(logoPop),
         }}
       >
@@ -982,7 +997,7 @@ function FinalReveal({ frame, startFrame }) {
             fontSize: 30,
             fontWeight: 500,
             color: COLORS.text,
-            opacity: clamp01(taglineP),
+            opacity: clamp01(taglineP) * (1 - outP),
             transform: `translateY(${interpolate(clamp01(taglineP), [0, 1], [12, 0])}px)`,
           }}
         >
@@ -996,12 +1011,11 @@ function FinalReveal({ frame, startFrame }) {
 export function BreachPatternIntro() {
   const frame = useCurrentFrame();
 
-  // 6차 피드백: "국내 대형 통신사" 카드 내용이 다 뜨고 나서 다음 카드로
-  // 넘어가기까지 정지 시간이 3초 정도로 길게 느껴진다 - 카드당 노출 시간을
-  // 225프레임(7.5초)에서 195프레임(6.5초)으로 줄여, 마지막 항목(체류 기간)이
-  // 다 뜬 뒤 슬라이드 아웃까지의 정지 구간을 약 1.5초로 단축.
-  const CARD_DURATION = 195;
-  const CARD_STARTS = [10, 205, 400, 595];
+  // 7차 피드백: 카드 4개 합쳐서 총 25초가량 나오는데(카드 하나당 6.5초),
+  // 이걸 20초로 줄여달라 - 카드당 150프레임(5초)으로, 뒤이어 CARD_STARTS도
+  // 150프레임 간격으로 다시 이어붙임.
+  const CARD_DURATION = 150;
+  const CARD_STARTS = [10, 160, 310, 460];
   const SHELL_START = CARD_STARTS[0] - 15;
   const SHELL_END = CARD_STARTS[3] + CARD_DURATION + 15;
 
@@ -1046,7 +1060,7 @@ export function BreachPatternIntro() {
       <ProblemScene frame={frame} startFrame={PROBLEM_START} duration={PROBLEM_DURATION} />
       <CorrelationScene frame={frame} startFrame={CORR_START} duration={CORR_DURATION} />
       <ConclusionScene frame={frame} startFrame={CONCLUSION_START} duration={CONCLUSION_DURATION} />
-      <FinalReveal frame={frame} startFrame={FINAL_START} />
+      <FinalReveal frame={frame} startFrame={FINAL_START} endFrame={BREACH_TOTAL_FRAMES} />
     </AbsoluteFill>
   );
 }
