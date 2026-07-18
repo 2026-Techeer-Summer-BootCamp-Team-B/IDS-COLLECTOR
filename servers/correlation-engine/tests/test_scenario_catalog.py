@@ -1,9 +1,12 @@
 """app/scenarios/*.yaml 카탈로그 자체의 무결성 - _load_scenarios()가 이미 강제하는
 id 중복 검사(assert)에 더해, db_id 결정성과 필수 키 존재를 확인한다. YAML 오타/누락
 필드는 여기서 잡히지, 프로덕션에서 evaluate()가 KeyError를 던지고 나서 잡히면 안 된다."""
+import re
 import uuid
 
 from app.main import _load_scenarios
+
+_STAGE_KEY_RE = re.compile(r"^stage(\d+)$")
 
 _REQUIRED_KEYS = {"id", "name", "type", "join_on", "correlation_key_type", "required_modules"}
 
@@ -48,6 +51,20 @@ def test_sequence_scenarios_have_both_stages(all_scenarios):
             assert "stage1" in s, s["id"]
             assert "stage2" in s, s["id"]
             assert "window_seconds" in s, s["id"]
+
+
+def test_sequence_scenarios_do_not_skip_stage_numbers(all_scenarios):
+    """rules.py의 _stage_patterns()는 stageN 키를 숫자 순서로만 정렬하지, 번호가
+    연속인지는 확인하지 않는다(2026-07-19, 단계 수 제한을 없애면서 그 검증 책임을
+    여기 카탈로그 무결성 테스트로 옮김) - stage3 없이 stage4만 있으면 실제로는
+    2단계(stage1->stage2)인데 stage4가 "3번째 자리"에 잘못 끼어들어가 의도치 않게
+    3단계 시퀀스로 평가된다. 번호가 1부터 빈 자리 없이 연속인지 여기서 강제한다."""
+    for s in all_scenarios:
+        if s["type"] == "sequence":
+            numbers = sorted(int(m.group(1)) for key in s if (m := _STAGE_KEY_RE.match(key)))
+            assert numbers == list(range(1, len(numbers) + 1)), (
+                f"{s['id']}: stage 번호가 1부터 연속이 아님: {numbers}"
+            )
 
 
 def test_join_on_is_a_known_value(all_scenarios):

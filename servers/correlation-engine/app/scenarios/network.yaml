@@ -426,3 +426,78 @@ scenarios:
       min_severity: 4
     severity: 3
     mitre_technique_id: "T1190"
+
+  # S59 (sequence, 5단계, 2026-07-19): WAF/WAS/Falco/k8s_audit 4개 로그 소스를 전부
+  # 하나의 체인으로 잇는 첫 시나리오 - "여러 계층 로그를 종합 분석한다"고 하기엔
+  # 이 카탈로그가 사실상 S1/S5(그마저 2단계뿐) 말고는 전부 단일 소스 threshold라는
+  # 걸 대화 중 실측 점검하며 확인한 뒤, N단계 sequence 엔진 일반화(rules.py의
+  # _stage_patterns())와 actor_identity 브릿지(schemas.py/enrichment.py) 두 가지를
+  # 먼저 만들고 나서야 쓸 수 있었던 시나리오.
+  #
+  # 단계별 근거 - 뭐가 진짜 인과관계고 뭐가 시뮬레이션인지 S5와 같은 정직성 원칙으로
+  # 명시한다(가짜를 진짜인 척 안 함):
+  #   stage1(waf, min_severity=4): 공개 웹앱(Juice Shop)에 대한 CRITICAL 등급 공격
+  #     (SQLi/XSS/커맨드 인젝션 등, S4/S5와 동일 재료) - 실제 침입 성공 여부와
+  #     무관하게 WAF가 확정 판정한 신호.
+  #   stage2(falco, "Terminal shell in container"/"Contact K8S API Server From
+  #     Container"/"Run shell untrusted"): 그 침입이 실제로 컨테이너 안 발판
+  #     확보로 이어졌다는 확인 - S1/S5의 stage2 재사용. ⚠️ S5와 같은 한계: Juice
+  #     Shop 자체엔 실제 RCE가 없어(OWASP Top10 로직 취약점 위주 교육용 앱) stage1이
+  #     진짜로 stage2를 유발하지 않는다 - 이 두 단계의 연결은 여전히 재현
+  #     스크립트(scenarios.py)가 같은 시간대에 각각 만들어주는 시뮬레이션이다.
+  #   stage3(falco, "ServiceAccount Token File Read", S56 재료): stage2부터는
+  #     진짜 인과관계다 - 컨테이너 안에 발판을 확보한 공격자가 다음으로 할 만한
+  #     가장 자연스러운 행동이 자기 pod에 마운트된 SA 토큰을 훔치는 것(T1552,
+  #     stratus-red-team의 k8s.credential-access.steal-serviceaccount-token과
+  #     동일 기법 - 이 프로젝트가 실측으로 검증한 실제 공격 패턴).
+  #   stage4(k8s_audit, "create serviceaccounts/token", S25 재료): 훔친 신원으로
+  #     실제로 K8s API를 호출해 장기 토큰을 발급받는 정황 - 이 이벤트의
+  #     kubernetes.audit.user.name은 kube-apiserver가 실제로 인증한 신원 그대로라
+  #     (조작 아님) enrichment.py가 stage1~3에 채워 넣은 actor_identity와 여기서
+  #     자연스럽게 일치한다.
+  #   stage5(k8s_audit, (cluster)rolebinding 생성 시도, S13류): 그 신원으로 클러스터
+  #     권한 확보를 시도 - 외부 웹 공격 하나가 결국 권한상승 시도까지 이어졌다는 이
+  #     시나리오의 결론. ⚠️ 실측으로 발견한 한계(2026-07-19): S13처럼
+  #     audit_binding_role_name(requestObject.roleRef.name 파싱)으로 "cluster-admin
+  #     롤인지"까지 정교하게 보고 싶었으나, RBAC이 요청 자체를 403으로 거부하면
+  #     kube-apiserver 감사로그에 requestObject 필드 자체가 안 남는다(k3d-audit-
+  #     policy.yaml이 RequestResponse 레벨을 요청해도 마찬가지 - 인가 단계에서
+  #     막히면 본문 파싱 단계까지 못 감, 실제 클러스터로 재현해서 확인함). 이
+  #     시나리오가 재현하는 SA(기본 권한 없음)는 이 시도가 항상 403으로 막히므로,
+  #     stage5는 audit_binding_role_name 없이 "(cluster)rolebinding을 만들려는
+  #     시도 자체"만 본다 - 오히려 실패한 권한상승 시도까지 놓치지 않는다는 점에서
+  #     더 넓은 신호(S9의 "성공 여부와 무관하게 시도 자체를 본다"는 원칙과 동일선상).
+  #
+  # join_on=user_or_sa: rules.py의 _join_key()가 actor_identity(있으면 우선) ->
+  # user_name 순으로 본다. stage1~3(waf/falco)은 enrichment.py가 대상 pod(juice-shop/
+  # juice-shop-2)에 정적으로 매핑해둔 actor_identity로 join되고, stage4~5(k8s_audit)는
+  # 실제 인증된 user_name으로 join된다 - 둘 다 같은 문자열
+  # (system:serviceaccount:default:default)을 가리키므로 자연히 이어진다(위 stage4
+  # 설명 참고). window_seconds=300은 S3/S7(RBAC 관련 2단계 시퀀스)과 동일 예산 -
+  # 5단계라 넉넉히 잡되 무한정 열어두지 않는다. mitre_technique_id는 S4/S5와 같은
+  # T1190 - 이 체인 전체의 시작점(공개 웹앱 익스플로잇)을 기준으로 분류한다.
+  - id: S59
+    name: "공개 웹앱 공격이 SA 토큰 탈취를 거쳐 클러스터 관리자 권한 탈취로 이어지는 정황"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [waf, falco, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: waf
+      min_severity: 4
+    stage2:
+      event_module: falco
+      event_action: ["Terminal shell in container", "Contact K8S API Server From Container", "Run shell untrusted"]
+    stage3:
+      event_module: falco
+      event_action: "ServiceAccount Token File Read"
+    stage4:
+      event_module: k8s_audit
+      event_action: "create serviceaccounts/token"
+    stage5:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: [rolebindings, clusterrolebindings]
+    severity: 4
+    mitre_technique_id: "T1190"

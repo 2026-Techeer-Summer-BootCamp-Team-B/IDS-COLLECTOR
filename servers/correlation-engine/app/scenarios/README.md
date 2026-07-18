@@ -12,7 +12,7 @@
 | `rbac.yaml` | RBAC 변경/권한 상승/백도어 계정 | S3, S6, S7, S9, S11, S12, S13, S53, S58 |
 | `workload.yaml` | Pod/워크로드 생명주기 및 컨테이너 이스케이프 | S1, S8, S14, S15, S16, S20, S21, S34, S35, S40, S41, S42, S43, S52 |
 | `credentials.yaml` | 자격증명 접근/노출 | S2, S18, S38, S39, S45, S46, S47, S48, S49, S56 |
-| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55 |
+| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55, S59 |
 | `discovery.yaml` | 정찰(reconnaissance) | S10, S31, S50 |
 | `resource_abuse.yaml` | 컨테이너 런타임 리소스 남용(크립토마이닝) | S22 |
 | `defense_evasion.yaml` | 컨테이너 내 흔적 인멸 | S23, S36, S37, S44 |

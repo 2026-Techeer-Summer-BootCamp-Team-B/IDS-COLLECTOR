@@ -41,5 +41,33 @@ services:
       timeout: 5s
       retries: 10
 
+  # init/(docker-entrypoint-initdb.d)는 데이터 디렉터리가 이미 있으면 통째로
+  # 건너뛰어서(실측 확인) 이미 떠 있는 배포에는 새 컬럼/뷰가 반영되지 않는다 -
+  # 이 서비스가 migrations/*.sql을 `docker compose up`마다 매번(컨테이너가
+  # 처음이 아니어도) 순서대로 실행해서 그 간극을 메운다. 스크립트 자체가 멱등
+  # (ADD COLUMN IF NOT EXISTS 등)하도록 작성하는 게 원칙 - 그래야 몇 번을 다시
+  # 실행해도 안전하다(migrations/002-actor-identity.sql 참고).
+  clickhouse-migrate:
+    image: clickhouse/clickhouse-server:26.4
+    container_name: clickhouse-migrate
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - ./migrations:/migrations:ro
+    networks:
+      - siem-net
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        for f in /migrations/*.sql; do
+          echo "applying $$f";
+          clickhouse-client --host clickhouse --user "$$CLICKHOUSE_USER" --password "$$CLICKHOUSE_PASSWORD" --multiquery < "$$f" || exit 1;
+        done
+
 volumes:
   clickhouse-data:

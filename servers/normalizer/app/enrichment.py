@@ -14,10 +14,37 @@ nginx-was-logger의 Downward API 값(로그 자체에 실림)과 WAF backend가 
 자체가 없었던 요청)에 한해서만 아래 폴백을 채운다 - 폴백 값이 스테일해질 수 있다는
 한계는 여전하지만, 정상 경로(대부분의 이벤트)는 이제 이 값에 의존하지 않는다.
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.geoip import lookup as geoip_lookup
 from ids_shared.schemas import NormalizedEvent
+
+# target.name(WAS/WAF) 또는 pod 이름 접두사(Falco)로 "이 이벤트가 벌어진 대상 pod에
+# 바인딩된 K8s 신원"을 채워 넣는다(2026-07-19, actor_identity 필드 - schemas.py 주석
+# 참고). kubectl get pod -o jsonpath='{.spec.serviceAccountName}'로 실측 확인
+# (juice-shop/juice-shop-2 둘 다 serviceAccountName을 따로 안 줘서 default 네임스페이스의
+# default SA를 그대로 씀) - 여러 타깃을 붙이게 되면 여기에 그 타깃의 실제 SA도
+# 추가할 것. Falco 쪽은 target.name이 없어서(클러스터 단위 이벤트) pod 이름 접두사로
+# 대신 매칭한다 - 정확한 pod 이름 자체를 하드코딩하지 않는 이유는 위
+# _FALLBACK_RESOURCE_NAME 주석과 같다(ReplicaSet 해시 접미사가 재배포마다 바뀜) -
+# Deployment 이름 접두사는 재배포에도 안정적이다.
+_TARGET_ACTOR_IDENTITY: Dict[str, str] = {
+    "juice-shop": "system:serviceaccount:default:default",
+    "juice-shop-2": "system:serviceaccount:default:default",
+}
+# "juice-shop-2-xxx"가 "juice-shop-"에도 접두사로 걸려버리는 걸 막기 위해 긴 이름부터
+# 검사한다(정확한 이름 자체도 pod-template-hash 없이 그대로 올 수 있어 우선 비교).
+_TARGET_NAMES_BY_LENGTH_DESC = sorted(_TARGET_ACTOR_IDENTITY, key=len, reverse=True)
+
+
+def _actor_identity_for_pod(pod_name: Optional[str]) -> Optional[str]:
+    if not pod_name:
+        return None
+    for name in _TARGET_NAMES_BY_LENGTH_DESC:
+        if pod_name == name or pod_name.startswith(f"{name}-"):
+            return _TARGET_ACTOR_IDENTITY[name]
+    return None
+
 
 # 차단(prevention)돼서 Juice Shop 응답 헤더가 아예 없었던 요청에만 쓰이는 최후 폴백.
 # 예전엔 특정 시점에 관측된 pod 이름을 그대로 박아뒀다("juice-shop-68ccbc74b4-958dh")
@@ -43,3 +70,8 @@ async def enrich(source: str, payload: Dict[str, Any], event: NormalizedEvent) -
         event.orchestrator_namespace = _FALLBACK_NAMESPACE
         event.orchestrator_resource_type = "unknown"
         event.orchestrator_resource_name = event.target_name or _FALLBACK_RESOURCE_NAME
+
+    if source in ("was", "waf"):
+        event.actor_identity = _TARGET_ACTOR_IDENTITY.get(event.target_name)
+    elif source == "falco":
+        event.actor_identity = _actor_identity_for_pod(event.orchestrator_resource_name)

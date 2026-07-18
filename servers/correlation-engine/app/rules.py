@@ -1,8 +1,22 @@
 """시나리오 룰 실행기 (P4-1, P4-3). sequence/threshold 2타입.
 
-sequence: stage1 패턴이 매칭되면 join_key별로 "stage1 대기중" 상태(이벤트 id+모듈)를
-          Redis에 TTL=window_seconds로 기록한다. 그 안에 stage2 패턴이 매칭되면 발화.
-          stage1이 대기 중에 또 매칭되면 최신 것으로 덮어쓴다 (stage1 최신 덮어쓰기).
+sequence: stage1, stage2, stage3, ... 임의 개수의 단계를 순서대로 상관(2026-07-19,
+          예전엔 stage1/stage2 딱 2단계로 하드코딩돼 있었다 - 지금은 시나리오
+          YAML에 stageN 키를 몇 개를 쓰든 _stage_patterns()가 숫자 순서대로 전부
+          주워 모아서 그만큼의 단계로 평가한다. 최소 2단계(stage1/stage2)는 여전히
+          필수고 - test_scenario_catalog.py가 강제 - 그 이상은 이 파일을 고칠 필요
+          없이 YAML에 stage3, stage4, stage5, ...를 계속 추가하기만 하면 된다).
+          stage1 패턴이 매칭되면 join_key별로 "진행 중" 상태(지금까지 매칭된 이벤트
+          목록 + 다음 기다리는 단계 인덱스)를 Redis에 TTL=window_seconds로 기록한다.
+          그 뒤 "바로 다음 단계"의 패턴과 매칭되는 이벤트가 오면 한 칸씩 전진하고,
+          마지막 단계까지 도달하면 발화한다. stage1이 다시 매칭되면(진행 중이든
+          아니든) 그 시점부터 최신 것으로 덮어쓴다(stage1 최신 덮어쓰기) - 중간
+          단계를 건너뛰고 나중 단계 패턴만 오는 경우는 시퀀스 미완성으로 무시한다.
+          window_seconds는 체인 전체(stage1 최초 매칭 ~ 마지막 단계 완료)에 적용되는
+          예산이다 - 중간 단계를 지날 때는 KEEPTTL로 값만 갱신해서 마감시한 자체는
+          늘리지 않는다(안 그러면 체인이 길어질수록 전체 허용 시간이 단계 수만큼
+          늘어나 버려 "이 공격 전체가 window_seconds 안에 다 일어났다"는 의미가
+          깨진다).
 
 threshold: join_key별 매칭 카운터를 Redis에 TTL=window_seconds로 유지한다. count가
            threshold 이상이면 발화 -> 카운터 리셋 + 쿨다운 키를 세팅해서 쿨다운
@@ -21,6 +35,7 @@ join_key=Incident의 correlation_key_type/correlation_key_value, events=Incident
 """
 import ipaddress
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ids_shared.schemas import NormalizedEvent
@@ -30,7 +45,13 @@ def _join_key(event: NormalizedEvent, join_on: str) -> Optional[str]:
     if join_on == "pod":
         return event.orchestrator_resource_name
     if join_on == "user_or_sa":
-        return event.user_name
+        # actor_identity 우선(2026-07-19) - enrichment.py가 was/waf/falco 이벤트에
+        # "이 대상 pod에 바인딩된 K8s 신원"을 채워 넣은 값. k8s_audit은 이 필드를 안
+        # 채우고 user_name(실제 인증된 신원)만 채우므로 한 이벤트에 둘 다 있는 경우는
+        # 없다 - 이렇게 하나의 join_on=user_or_sa로 WAF/Falco(대상 pod 단위)와
+        # k8s_audit(그 pod가 훔친 토큰으로 실제 호출한 신원)까지 체인이 끊기지 않고
+        # 이어진다(schemas.py의 actor_identity 필드 주석 참고).
+        return event.actor_identity or event.user_name
     if join_on == "source_ip":
         return event.source_ip
     return None
@@ -108,6 +129,25 @@ def _matches(event: NormalizedEvent, pattern: Dict[str, Any]) -> bool:
         for pattern_key, event_attr, matcher in _MATCHERS
         if pattern_key in pattern
     )
+
+
+_STAGE_KEY_RE = re.compile(r"^stage(\d+)$")
+
+
+def _stage_patterns(scenario: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """sequence 시나리오의 stage1, stage2, stage3, ...를 숫자 순서대로 전부 뽑아
+    리스트로 반환한다 - 단계 수에 상한을 두지 않는다. 나중에 5단계, 6단계짜리
+    시나리오가 필요해져도 YAML에 stage5, stage6, ...만 추가하면 되고 이 함수는
+    손댈 필요가 없다(2026-07-19). stage1/stage2 필수, 번호 연속성(건너뛴 번호가
+    없어야 함)은 카탈로그 무결성 테스트(test_scenario_catalog.py)가 로드 단계에서
+    강제한다 - 여기서는 신뢰하고 그냥 숫자 순으로 정렬만 한다."""
+    numbered = [
+        (int(m.group(1)), pattern)
+        for key, pattern in scenario.items()
+        if (m := _STAGE_KEY_RE.match(key))
+    ]
+    numbered.sort(key=lambda pair: pair[0])
+    return [pattern for _, pattern in numbered]
 
 
 class ScenarioEngine:
@@ -272,31 +312,42 @@ class ScenarioEngine:
     async def _eval_sequence(
         self, scenario: Dict[str, Any], event: NormalizedEvent, join_key: str
     ) -> Optional[Dict[str, Any]]:
+        """stage1, stage2, ... 임의 개수의 순차 상관(최소 2단계). _stage_patterns()가
+        뽑아주는 순서 리스트를 기준으로, 진행 상태(progress = 지금까지 매칭된 단계 수)를
+        Redis에 들고 있다가 다음 단계가 오면 전진시킨다 - 리스트 길이가 곧 이 시나리오의
+        단계 수라 이 함수 자체는 몇 단계든 그대로 처리한다."""
+        stages = _stage_patterns(scenario)
         scenario_id = scenario["id"]
-        state_key = f"corr:{scenario_id}:stage1:{join_key}"
+        state_key = f"corr:{scenario_id}:stage:{join_key}"
 
-        if _matches(event, scenario["stage1"]):
-            # stage1 최신 덮어쓰기: 이미 대기 중이어도 그냥 새로 SET.
-            stage1_state = json.dumps(
-                {"event_id": event.event_id, "event_module": event.event_module}
-            )
-            await self._redis.set(state_key, stage1_state, ex=scenario["window_seconds"])
+        if _matches(event, stages[0]):
+            # stage1 최신 덮어쓰기: 진행 중이던 체인이 있어도 버리고 이 이벤트부터
+            # 새로 시작 - 2단계 시절 동작을 그대로 일반화.
+            state = {
+                "progress": 1,
+                "events": [{"event_id": event.event_id, "event_module": event.event_module}],
+            }
+            await self._redis.set(state_key, json.dumps(state), ex=scenario["window_seconds"])
             return None
 
-        if _matches(event, scenario["stage2"]):
-            stage1_raw = await self._redis.get(state_key)
-            if not stage1_raw:
-                return None  # stage1 없이 stage2만 온 경우 - 시퀀스 미완성, 발화 안 함
+        raw = await self._redis.get(state_key)
+        if not raw:
+            return None  # stage1 없이 중간/마지막 단계만 온 경우 - 시퀀스 미완성, 무시
 
+        state = json.loads(raw)
+        progress = state["progress"]
+        if progress >= len(stages) or not _matches(event, stages[progress]):
+            return None  # "바로 다음" 단계가 아니면(순서를 건너뛴 경우 포함) 무시 - 기존 진행 상태 유지
+
+        state["events"].append({"event_id": event.event_id, "event_module": event.event_module})
+        progress += 1
+
+        if progress == len(stages):
             await self._redis.delete(state_key)
-            stage1_state = json.loads(stage1_raw)
-            return self._fired_result(
-                scenario,
-                join_key,
-                [
-                    stage1_state,
-                    {"event_id": event.event_id, "event_module": event.event_module},
-                ],
-            )
+            return self._fired_result(scenario, join_key, state["events"])
 
+        state["progress"] = progress
+        # KEEPTTL - 값(진행 상태)만 갱신하고 stage1이 최초로 세팅한 마감시한은
+        # 그대로 둔다(모듈 docstring 참고).
+        await self._redis.set(state_key, json.dumps(state), keepttl=True)
         return None
