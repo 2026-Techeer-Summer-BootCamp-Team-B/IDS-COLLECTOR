@@ -34,7 +34,6 @@ opensearch 클라이언트의 start()만 직접 호출해서 라우트 핸들러
 값을 바꾸면 이미 살아서 실시간 트래픽을 처리 중인 correlation-engine/normalizer/
 platform-api 자체(다른 컨테이너)의 동작에 실제로 영향을 주므로(탐지 억제, 보존
 정책 변경 등) 이 dev 스택 대상으로는 읽기(GET)만 검증하고 쓰기는 하지 않는다."""
-import asyncio
 import os
 import uuid
 from typing import AsyncIterator, Dict
@@ -42,19 +41,35 @@ from typing import AsyncIterator, Dict
 import pytest
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """세션 스코프 async 픽스처(db pool 등)와 개별 테스트가 같은 이벤트 루프를
-    쓰게 강제한다 - pytest-asyncio 0.24는 asyncio_default_fixture_loop_scope로
-    픽스처 쪽만 session으로 묶을 수 있고 테스트 함수 자체의 기본 루프 스코프를
-    ini로 지정하는 옵션은 없어서(시도했더니 "Unknown config option"), 기본값인
-    함수별 새 이벤트 루프에서 실행된 테스트가 세션 스코프로 미리 열어둔 asyncpg
-    풀의 커넥션을 다른 루프에서 재사용하려다 `InterfaceError: cannot perform
-    operation: another operation is in progress`로 깨졌다(실측 확인) - 이 커스텀
-    event_loop 픽스처로 세션 전체가 정확히 하나의 루프를 공유하게 고정해서 해결."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+def pytest_collection_modifyitems(items: list) -> None:
+    """모든 테스트를 session 스코프 루프에서 돌게 한다(2026-07-18 재작성).
+
+    pytest.ini의 asyncio_default_fixture_loop_scope=session은 async "픽스처"에만
+    적용되고 테스트 함수 자체에는 적용되지 않는다(pytest-asyncio==0.24.0 - 마커 없는
+    테스트는 항상 loop_scope="function"으로 고정, plugin.py의 _get_marked_loop_scope
+    참고 - "Unknown config option"이라 이 버전엔 테스트 쪽 기본 스코프를 ini로 바꾸는
+    옵션 자체가 없다). 그 결과 session 스코프 픽스처(datastore_clients가 여는 asyncpg
+    pool 등)는 pytest-asyncio 내부 세션 루프에서 만들어지는데, 마커 없는 각 테스트는
+    자기만의 function 스코프 루프에서 돌아서 서로 다른 루프가 됐다 - asyncpg/
+    opensearch-py가 커넥션의 Future를 "다른 loop에 붙었다"고 보는
+    RuntimeError/InterfaceError로 실측 확인(2026-07-18).
+
+    예전엔 `event_loop` 픽스처 자체를 session 스코프로 오버라이드해서 고치려 했지만,
+    pytest-asyncio 0.24는 session 스코프 픽스처를 위해 별도의 내부 세션 루프
+    (_session_event_loop)를 따로 쓰고 `event_loop`이라는 이름의 픽스처는 여전히
+    "마커 없는(=function 스코프) 테스트"쪽에만 연결된다 - 즉 오버라이드해도 두 루프가
+    여전히 갈라져서 근본 해결이 안 됐다(deprecated 경고까지 뜸). 대신 모든 테스트
+    아이템에 @pytest.mark.asyncio(loop_scope="session") 마커를 강제로 붙여서, 테스트도
+    픽스처와 똑같은 내부 세션 루프를 쓰게 만드는 게 이 버전에서 지원하는 유일한
+    방법이다.
+
+    asyncio_mode=auto가 각 테스트에 미리 붙여둔 스코프 없는(=function) "asyncio"
+    마커가 이미 있어서 item.add_marker()로 그냥 추가만 하면 get_closest_marker()가
+    먼저 붙은(=auto가 붙인) 마커를 반환해 무시된다(own_markers는 추가된 순서 그대로
+    yield됨, 실측 확인) - 기존 마커를 먼저 지우고 session 스코프로 다시 붙인다."""
+    for item in items:
+        item.own_markers = [m for m in item.own_markers if m.name != "asyncio"]
+        item.add_marker(pytest.mark.asyncio(loop_scope="session"))
 
 # app.config.Settings()는 import 시점에 인스턴스화되므로, app 패키지의 어떤
 # 모듈이든 처음 import되기 전에 환경변수를 심어야 한다 - conftest.py는 pytest가
@@ -71,10 +86,16 @@ os.environ.setdefault("CLICKHOUSE_USER", "admin")
 os.environ.setdefault("CLICKHOUSE_PASSWORD", "mypassword")
 os.environ.setdefault("KAFKA_BROKERS", "localhost:9094")
 os.environ.setdefault("GEMINI_API_KEY", "")  # /reports/trend가 외부 API 호출 없이 결정적으로 동작하게
+# 게이트웨이 시크릿 강제(감사 S13, 2026-07-16, app/main.py의 GatewaySecretMiddleware) -
+# 이 테스트는 Traefik을 거치지 않고 app.main:app을 직접 ASGI로 구동하므로(모듈
+# docstring 참고) Traefik이 실제 요청에 주입해주는 X-Internal-Gateway-Secret 헤더가
+# 없다. 아래 client 픽스처가 이 값을 그대로 헤더에 실어 보내서 프로덕션의 Traefik
+# 미들웨어 주입을 흉내낸다.
+os.environ.setdefault("INTERNAL_GATEWAY_SECRET", "_smoketest-gateway-secret")
 
 import httpx  # noqa: E402  (env 세팅 이후 import 필수)
 
-from app import clickhouse_client, db, opensearch_client  # noqa: E402
+from app import clickhouse_client, db, opensearch_client, pipeline_health_api  # noqa: E402
 from app.main import app  # noqa: E402
 
 TEST_ADMIN_USERNAME = "_smoketest_admin"
@@ -83,12 +104,18 @@ TEST_ADMIN_PASSWORD = "smoketest-admin-pw-1"
 
 @pytest.fixture(scope="session", autouse=True)
 async def datastore_clients() -> AsyncIterator[None]:
-    """라우트 핸들러가 쓰는 db/clickhouse/opensearch 클라이언트만 기동한다 - 모듈
-    docstring 참고(백그라운드 폴링 태스크는 일부러 안 띄움)."""
+    """라우트 핸들러가 쓰는 db/clickhouse/opensearch/pipeline_health(Kafka) 클라이언트만
+    기동한다 - 모듈 docstring 참고(백그라운드 폴링 태스크는 일부러 안 띄움).
+    pipeline_health_api는 2026-07-18 API latency 개선으로 요청마다 새 Kafka
+    클라이언트를 만들던 걸 앱 기동 시 한 번만 만들어 재사용하는 방식으로 바뀌어서,
+    이 fixture도 db/clickhouse/opensearch와 동일하게 명시적으로 start() 해줘야
+    /stats/consumer-lag 등 4개 엔드포인트가 동작한다."""
     await db.start()
     await clickhouse_client.start()
     await opensearch_client.start()
+    await pipeline_health_api.start()
     yield
+    await pipeline_health_api.stop()
     await clickhouse_client.stop()
     await db.stop()
 
@@ -99,7 +126,10 @@ async def client(datastore_clients) -> AsyncIterator[httpx.AsyncClient]:
     # AIOKafkaConsumer/AdminClient로 브로커에 붙어서(app/pipeline_health_api.py)
     # httpx 기본 5초보다 오래 걸릴 수 있다.
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver", timeout=30.0) as c:
+    headers = {"x-internal-gateway-secret": os.environ["INTERNAL_GATEWAY_SECRET"]}
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver", timeout=30.0, headers=headers
+    ) as c:
         yield c
 
 

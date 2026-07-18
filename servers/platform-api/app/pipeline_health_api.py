@@ -5,9 +5,24 @@ platform-api 자신의 Kafka 컨슈머 상태를 들여다보는 용도라 Kafka
 질의하고, 클록 차이는 OpenSearch attack-logs-* 표본으로 계산한다(ClickHouse엔
 event.ingested 컬럼이 없어서).
 
+2026-07-18 개선(API latency 실측): 원래 이 4개 엔드포인트(consumer-lag/dlq-depth/
+dlq-peek/unknown-depth)는 요청마다 AIOKafkaConsumer/AIOKafkaAdminClient를 새로 만들고
+버렸다 - db.py/opensearch_client.py/clickhouse_client.py는 전부 앱 기동 시 한 번만
+연결해서 재사용하는데 여기만 그 패턴을 안 따라서, 매 호출마다 브로커 핸드셰이크/
+메타데이터 부트스트랩 비용이 그대로 응답시간에 더해졌다(dlq-peek 실측 1.5초, 나머지도
+0.1~0.3초). start()/stop()으로 db.py와 동일한 lifecycle을 적용해 그 핸드셰이크 비용을
+없앤다.
+
+_consumer는 이제 요청 간에 공유되는 상태 있는(assign()/seek()로 내부 커서를 바꾸는)
+객체라 동시 요청이 겹치면 서로의 assignment를 덮어쓸 수 있다 - _consumer_lock으로
+"assign 후 조회"를 하나의 임계구역으로 묶어 직렬화한다. AIOKafkaAdminClient
+(list_consumer_group_offsets)는 로컬 상태를 안 건드리는 순수 요청/응답이라 잠금 없이
+동시 호출해도 안전하다.
+
 주의: Kafka 관련 부분은 aiokafka==0.12.0(requirements.txt) API 기준으로 작성했고, 이
 세션 환경에는 컴파일러가 없어 aiokafka를 직접 설치해 API를 검증하지 못했다 - 실제
 브로커 대상으로 배포 후 한 번은 반드시 실측 확인할 것."""
+import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +35,46 @@ from app.opensearch_client import client as opensearch_client
 from app.timeparse import parse_iso8601_safe
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+
+_consumer: Optional[AIOKafkaConsumer] = None
+_admin: Optional[AIOKafkaAdminClient] = None
+_consumer_lock = asyncio.Lock()
+
+
+async def start() -> None:
+    """db.py의 asyncpg 풀과 동일한 이유(브로커가 아직 안 떴을 때 기동하면 실패할 수
+    있음)로 재시도 루프를 쓴다. consumer/admin 둘 다 여기서 한 번만 만들어 앱 수명
+    동안 재사용한다."""
+    global _consumer, _admin
+    while True:
+        try:
+            consumer = AIOKafkaConsumer(bootstrap_servers=settings.kafka_brokers)
+            await consumer.start()
+            admin = AIOKafkaAdminClient(bootstrap_servers=settings.kafka_brokers)
+            await admin.start()
+            _consumer, _admin = consumer, admin
+            return
+        except Exception as e:
+            print(f"[platform-api] 파이프라인 헬스용 Kafka 클라이언트 연결 실패, 3초 후 재시도: {e}")
+            await asyncio.sleep(3)
+
+
+async def stop() -> None:
+    if _consumer:
+        await _consumer.stop()
+    if _admin:
+        await _admin.close()
+
+
+def _consumer_client() -> AIOKafkaConsumer:
+    assert _consumer is not None, "pipeline_health_api.start()를 먼저 호출해야 함"
+    return _consumer
+
+
+def _admin_client() -> AIOKafkaAdminClient:
+    assert _admin is not None, "pipeline_health_api.start()를 먼저 호출해야 함"
+    return _admin
+
 
 # group_id -> 그 그룹이 구독하는 토픽. servers/docker-compose.yml의 각 서비스
 # KAFKA_CONSUMER_GROUP/KAFKA_SOURCE_TOPICS/KAFKA_NORMALIZED_TOPIC 환경변수를 그대로
@@ -50,7 +105,7 @@ UNKNOWN_TOPIC = "events.unknown"
 _DLQ_PEEK_RAW_PREVIEW_CHARS = 2000
 
 
-async def _topic_partitions(consumer: AIOKafkaConsumer, topics: List[str]) -> List[TopicPartition]:
+def _topic_partitions(consumer: AIOKafkaConsumer, topics: List[str]) -> List[TopicPartition]:
     tps: List[TopicPartition] = []
     for topic in topics:
         partitions = consumer.partitions_for_topic(topic) or set()
@@ -59,29 +114,26 @@ async def _topic_partitions(consumer: AIOKafkaConsumer, topics: List[str]) -> Li
 
 
 async def _end_offsets(topics: List[str]) -> Dict[TopicPartition, int]:
-    consumer = AIOKafkaConsumer(bootstrap_servers=settings.kafka_brokers)
-    await consumer.start()
-    try:
-        tps = await _topic_partitions(consumer, topics)
+    """공유 컨슈머로 조회 - assign()이 컨슈머의 전역 배정 상태를 바꾸므로
+    _consumer_lock으로 "assign 후 조회"를 한 임계구역으로 묶어 동시 요청끼리
+    서로의 배정을 덮어쓰지 않게 한다."""
+    consumer = _consumer_client()
+    async with _consumer_lock:
+        tps = _topic_partitions(consumer, topics)
         if not tps:
             return {}
         consumer.assign(tps)
         return await consumer.end_offsets(tps)
-    finally:
-        await consumer.stop()
 
 
 async def _beginning_offsets(topics: List[str]) -> Dict[TopicPartition, int]:
-    consumer = AIOKafkaConsumer(bootstrap_servers=settings.kafka_brokers)
-    await consumer.start()
-    try:
-        tps = await _topic_partitions(consumer, topics)
+    consumer = _consumer_client()
+    async with _consumer_lock:
+        tps = _topic_partitions(consumer, topics)
         if not tps:
             return {}
         consumer.assign(tps)
         return await consumer.beginning_offsets(tps)
-    finally:
-        await consumer.stop()
 
 
 @router.get("/consumer-lag")
@@ -95,48 +147,44 @@ async def get_consumer_lag() -> List[Dict[str, Any]]:
     lag(예: 재시작 직후 실측 54565)으로 보인다. 이런 파티션은 합산에서 빼고
     uncommitted_partitions로 별도 표시한다 - 프론트는 이 목록이 비어있지 않으면
     total_lag 숫자를 그대로 경보에 쓰지 말고 "막 시작함"으로 취급할 것."""
-    admin = AIOKafkaAdminClient(bootstrap_servers=settings.kafka_brokers)
-    await admin.start()
+    admin = _admin_client()
     results: List[Dict[str, Any]] = []
-    try:
-        for group_id, topics in _MONITORED_GROUPS.items():
-            try:
-                end_offsets = await _end_offsets(topics)
-                committed = await admin.list_consumer_group_offsets(group_id)
+    for group_id, topics in _MONITORED_GROUPS.items():
+        try:
+            end_offsets = await _end_offsets(topics)
+            committed = await admin.list_consumer_group_offsets(group_id)
 
-                by_topic: Dict[str, int] = {}
-                total_lag = 0
-                uncommitted_partitions: List[str] = []
-                for tp, end_offset in end_offsets.items():
-                    offset_meta = committed.get(tp)
-                    if offset_meta is None:
-                        uncommitted_partitions.append(f"{tp.topic}-{tp.partition}")
-                        continue
-                    lag = max(end_offset - offset_meta.offset, 0)
-                    by_topic[tp.topic] = by_topic.get(tp.topic, 0) + lag
-                    total_lag += lag
+            by_topic: Dict[str, int] = {}
+            total_lag = 0
+            uncommitted_partitions: List[str] = []
+            for tp, end_offset in end_offsets.items():
+                offset_meta = committed.get(tp)
+                if offset_meta is None:
+                    uncommitted_partitions.append(f"{tp.topic}-{tp.partition}")
+                    continue
+                lag = max(end_offset - offset_meta.offset, 0)
+                by_topic[tp.topic] = by_topic.get(tp.topic, 0) + lag
+                total_lag += lag
 
-                results.append(
-                    {
-                        "group": group_id,
-                        "total_lag": total_lag,
-                        "by_topic": by_topic,
-                        "uncommitted_partitions": uncommitted_partitions,
-                        "error": None,
-                    }
-                )
-            except Exception as e:
-                results.append(
-                    {
-                        "group": group_id,
-                        "total_lag": None,
-                        "by_topic": {},
-                        "uncommitted_partitions": [],
-                        "error": str(e),
-                    }
-                )
-    finally:
-        await admin.close()
+            results.append(
+                {
+                    "group": group_id,
+                    "total_lag": total_lag,
+                    "by_topic": by_topic,
+                    "uncommitted_partitions": uncommitted_partitions,
+                    "error": None,
+                }
+            )
+        except Exception as e:
+            results.append(
+                {
+                    "group": group_id,
+                    "total_lag": None,
+                    "by_topic": {},
+                    "uncommitted_partitions": [],
+                    "error": str(e),
+                }
+            )
     return results
 
 
@@ -168,16 +216,21 @@ async def get_dlq_peek(limit: int = 20) -> Dict[str, Any]:
     "몇 건 쌓였는지"만 알 수 있었고 "뭐가 왜 실패했는지"는 kafka-console-consumer로
     컨테이너에 직접 들어가야만 볼 수 있었다(실측 확인 후 추가).
 
-    group_id 없이 매번 새로 붙는 일회성 컨슈머라 실제 컨슈머 그룹의 커밋 오프셋에는
-    전혀 영향을 주지 않는다(이 토픽은 애초에 소비하는 그룹 자체가 없다 - 위 주석
-    참고) - 순수 조회 전용. 각 파티션의 끝에서 최대 `limit`개를 seek해서 읽으므로
+    group_id 없이 공유 컨슈머로 직접 assign/seek하는 순수 조회라 실제 컨슈머 그룹의
+    커밋 오프셋에는 전혀 영향을 주지 않는다(이 토픽은 애초에 소비하는 그룹 자체가
+    없다 - 위 주석 참고). 각 파티션의 끝에서 최대 `limit`개를 seek해서 읽으므로
     파티션이 여러 개면 파티션별로 최대 `limit`개씩 읽힐 수 있다(전역 정확히
-    최신 N건 순서 보장은 아님 - 그 정도까지 필요하면 Kafka에 직접 붙을 것)."""
+    최신 N건 순서 보장은 아님 - 그 정도까지 필요하면 Kafka에 직접 붙을 것).
+
+    assign()/seek()/getmany() 전체가 공유 컨슈머의 배정 상태를 바꾸는 하나의 흐름이라
+    _consumer_lock으로 통째로 묶는다 - 조회 자체가 최대 1초×(limit/배치크기) 정도
+    걸릴 수 있어서, 그동안 다른 파이프라인 헬스 조회(consumer-lag 등)가 이 컨슈머를
+    쓰려면 잠깐 기다린다(이 4개 엔드포인트는 대시보드에서 자동 폴링되지 않고 사람이
+    Infrastructure 탭을 열 때만 호출되므로 실사용에서 경합 가능성은 낮다)."""
     limit = max(1, min(limit, 200))
-    consumer = AIOKafkaConsumer(bootstrap_servers=settings.kafka_brokers)
-    await consumer.start()
-    try:
-        tps = await _topic_partitions(consumer, [DLQ_TOPIC])
+    consumer = _consumer_client()
+    async with _consumer_lock:
+        tps = _topic_partitions(consumer, [DLQ_TOPIC])
         if not tps:
             return {"topic": DLQ_TOPIC, "messages": []}
 
@@ -229,8 +282,6 @@ async def get_dlq_peek(limit: int = 20) -> Dict[str, Any]:
 
         messages.sort(key=lambda m: m["timestamp"], reverse=True)
         return {"topic": DLQ_TOPIC, "messages": messages[:limit]}
-    finally:
-        await consumer.stop()
 
 
 def _percentile(sorted_data: List[float], pct: float) -> float:

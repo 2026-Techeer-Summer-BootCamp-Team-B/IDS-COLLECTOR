@@ -27,7 +27,7 @@ _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 1.0  # 1s -> 2s -> 4s
 
 
-async def _post_webhook(channel_type: str, url: str, text: str) -> None:
+async def _post_webhook(channel_type: str, url: str, text: str) -> bool:
     """웹훅 POST - 연결 실패/타임아웃/4xx·5xx(레이트리밋 429 포함) 전부 지수
     백오프로 최대 _MAX_ATTEMPTS번까지 재시도한다. 예전엔 실패를 로그만 찍고
     그 자리에서 포기해서 일시적 네트워크 장애면 그 알림이 그냥 유실됐다
@@ -39,30 +39,34 @@ async def _post_webhook(channel_type: str, url: str, text: str) -> None:
     함수를 부르고 바로 notified_at을 찍으므로, 여기서 마지막 시도까지 실패하면
     그 인시던트에 대한 이 채널 알림은 정말로 유실된다(같은 인시던트가 재발화해
     다시 notify_incident가 불릴 때까지는 재시도 기회가 없음) - 무한 재시도는
-    poll_loop 전체를 오래 막을 수 있어서 하지 않는다."""
+    poll_loop 전체를 오래 막을 수 있어서 하지 않는다.
+
+    반환값(성공 여부)은 notify_text()가 호출별 성공/실패 채널 수를 집계하는 데
+    쓴다 - 재시도 정책 자체는 바뀌지 않는다."""
     build_payload = _PAYLOAD_BUILDERS.get(channel_type)
     if not url or build_payload is None:
-        return
+        return False
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.post(url, json=build_payload(text))
                 response.raise_for_status()
-            return
+            return True
         except httpx.HTTPError as e:
             if attempt == _MAX_ATTEMPTS:
                 print(
                     f"[platform-api] 웹훅 전송 실패({channel_type}), "
                     f"{attempt}회 재시도 끝에 포기: {e}"
                 )
-                return
+                return False
             backoff = _BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
             print(
                 f"[platform-api] 웹훅 전송 실패({channel_type}), "
                 f"{backoff:.0f}s 후 재시도({attempt}/{_MAX_ATTEMPTS}): {e}"
             )
             await asyncio.sleep(backoff)
+    return False
 
 
 async def _matching_alert_configs(severity: int) -> List[Any]:
@@ -74,16 +78,26 @@ async def _matching_alert_configs(severity: int) -> List[Any]:
         )
 
 
-async def notify_text(severity: int, text: str) -> None:
+async def notify_text(severity: int, text: str) -> Dict[str, int]:
     """severity 이상을 구독하는 채널 전부에 임의 텍스트를 발송 - notify_incident()와
     DLQ 깊이 알림(app/incident_alerts.py, 2026-07-16)이 공유하는 발송 경로.
     인시던트 형태로 안 맞는 운영 알림(파이프라인 적체 등)도 같은 채널/쿨다운 없는
-    즉시발송 정책을 타게 하려고 텍스트만 받는 형태로 분리했다."""
+    즉시발송 정책을 타게 하려고 텍스트만 받는 형태로 분리했다.
+
+    반환값(attempted/succeeded/failed 채널 수)은 리포트 웹훅 트리거(app/main.py의
+    POST /reports/trend/notify)처럼 호출 결과를 응답에 담아야 하는 호출부를 위한
+    것 - notify_incident()/DLQ 알림처럼 결과를 안 쓰는 기존 호출부는 그냥 무시하면
+    되므로(반환값 추가는 하위호환) 동작이 바뀌지 않는다."""
     rows = await _matching_alert_configs(severity)
-    if not rows:
-        return
+    result = {"attempted": 0, "succeeded": 0, "failed": 0}
     for row in rows:
-        await _post_webhook(row["channel_type"], row["webhook_url"], text)
+        result["attempted"] += 1
+        ok = await _post_webhook(row["channel_type"], row["webhook_url"], text)
+        if ok:
+            result["succeeded"] += 1
+        else:
+            result["failed"] += 1
+    return result
 
 
 async def notify_incident(incident: Dict[str, Any]) -> None:

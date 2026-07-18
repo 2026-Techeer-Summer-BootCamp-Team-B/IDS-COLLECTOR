@@ -374,6 +374,21 @@ def _audit_configmap_has_credentials(payload: Dict[str, Any]) -> Any:
     return None
 
 
+def _audit_ingress_has_tls(payload: Dict[str, Any]) -> Any:
+    """ingress의 request body(spec)에 tls 키가 있는지 검사한다(값이 빈 배열이어도
+    "존재"로 친다 - falcosecurity/plugins의 ingress_tls 매크로
+    `jevt.value[/requestObject/spec/tls] exists`와 동일 판정). requestObject
+    자체가 없으면(예: 감사정책이 안 맞아 body가 안 온 경우) 판정 불가라 None을
+    반환 - False(명시적으로 tls 없음)와 구분해서 오탐을 막는다. requestObject가
+    JSON Patch 배열이면 배열 안 dict 원소 중 하나라도 tls 키가 있으면 True를
+    반환한다(다른 _audit_* 함수들과 같은 패턴)."""
+    request_objects = _audit_request_objects(payload)
+    if not request_objects:
+        return None
+
+    return any("tls" in (request_object.get("spec") or {}) for request_object in request_objects)
+
+
 def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> NormalizedEvent:
     """kube-apiserver audit 로그(audit.k8s.io/v1 Event JSON) 한 줄을 NormalizedEvent로 변환.
 
@@ -395,6 +410,16 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
     role_rule_flags = _audit_role_rule_flags(payload) if resource in RBAC_ROLE_RESOURCES else None
     binding_role_name = _audit_binding_role_name(payload) if resource in RBAC_BINDING_RESOURCES else None
     pod_security_flags = _audit_pod_security_flags(payload) if (resource == "pods" and verb == "create") else None
+
+    # event.action에 위험 플래그를 붙여서 "create pods"(severity=2, 일반 생성)와
+    # "create pods [host_path_volume]"(severity=4, S16 재료)를 화면에서 바로 구분할 수
+    # 있게 한다(2026-07-18) - 이전엔 둘 다 event.action이 "create pods"로 동일해서
+    # kubernetes.audit.pod.security_flags 필드를 따로 펼쳐보지 않는 한 왜 같은
+    # 액션인데 severity가 다른지 알 수 없었다. correlation-engine의 어떤 시나리오도
+    # subresource 없는 순수 "create pods" 문자열을 event_action으로 정확히 매치하지
+    # 않는다(S16은 orchestrator_resource_type/pod_security_flags_any 같은 별도
+    # 필드로 매치) - event.action에 접미사를 붙여도 상관분석 매칭에 영향 없음.
+    action_flag_suffix = f" [{', '.join(pod_security_flags)}]" if pod_security_flags else ""
     service_type = (
         _audit_service_type(payload)
         if (resource == "services" and verb in ("create", "update", "patch"))
@@ -419,7 +444,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "event.module": "k8s_audit",
             "event.dataset": "k8s_audit.audit",
             "event.kind": "event",
-            "event.action": f"{verb} {resource_full}".strip(),
+            "event.action": f"{verb} {resource_full}{action_flag_suffix}".strip(),
             "event.outcome": "success" if (status_code and status_code < 400) else "failure",
             "event.severity": get_severity(
                 "audit",

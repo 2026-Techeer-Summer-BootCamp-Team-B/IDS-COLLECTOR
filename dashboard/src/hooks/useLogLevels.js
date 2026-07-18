@@ -4,8 +4,9 @@ import { usePoll } from "./usePoll";
 
 // GET /stats/levels (servers/platform-api/app/stats_api.py) — Log Levels 차트의
 // 실데이터 소스 (event.severity 1~4, realSeverity.js와 짝). pollMs를 주면 주기적으로
-// 재요청.
-export function useLogLevels({ hours, module, pollMs }) {
+// 재요청. minSeverity(">=")/severity(정확히 일치)는 Overview KPI 카드
+// (Errors/Warnings) 클릭 필터 - 2026-07-17 추가.
+export function useLogLevels({ hours, module, minSeverity, severity, pollMs }) {
   const [levels, setLevels] = useState([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -19,6 +20,8 @@ export function useLogLevels({ hours, module, pollMs }) {
 
     const qs = new URLSearchParams({ hours: String(hours) });
     if (module) qs.set("module", module);
+    if (minSeverity != null) qs.set("min_severity", String(minSeverity));
+    if (severity != null) qs.set("severity", String(severity));
 
     apiGet(`/stats/levels?${qs.toString()}`)
       .then((res) => {
@@ -38,7 +41,7 @@ export function useLogLevels({ hours, module, pollMs }) {
     return () => {
       cancelled = true;
     };
-  }, [hours, module, pollTick]);
+  }, [hours, module, minSeverity, severity, pollTick]);
 
   return { levels, total, status, error };
 }

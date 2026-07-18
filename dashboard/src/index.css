@@ -88,13 +88,19 @@ body {
  *  - 드래그/리사이즈 중 "여기로 놓일 예정" 플레이스홀더가 빨간색 - "여기 놓을
  *    수 없다"는 경고처럼 보이지만 실제로는 겹치는 자리를 자동으로 밀어내고
  *    놓아주는 정상 동작이라(react-grid-layout은 겹침 자체를 막지, 배치를
- *    막지 않음) - 앱의 "가능/성공" 톤인 mint로 바꾼다.
+ *    막지 않음) - 앱의 "가능/성공" 톤인 mint로 바꾼다. opacity도 명시적으로
+ *    지정 - node_modules/react-grid-layout/css/styles.css의
+ *    .react-grid-placeholder { background: red; opacity: 0.2; } 규칙과 selector
+ *    특이도가 같아서, index.css가 먼저 import돼도(main.jsx) react-grid-layout의
+ *    styles.css가 더 깊은 모듈(LogDashboard.jsx)에서 나중에 import되면 번들
+ *    순서에 따라 승패가 갈릴 수 있다 - !important로 순서 의존성을 없앤다.
  *  - 리사이즈 핸들의 그립 표시(모서리 대각선 두 줄)가 rgba(0,0,0,0.4) 고정이라
  *    이 앱의 어두운 카드 배경 위에서 사실상 안 보였다(핸들 자체는 hover시
  *    opacity:1로 존재하는데 그 안의 시각 표시만 안 보이는 상태) - mint로
  *    바꿔서 실제로 리사이즈할 수 있다는 게 보이게 한다. */
 .react-grid-item.react-grid-placeholder {
   background: rgb(var(--dash-mint)) !important;
+  opacity: 0.25 !important;
 }
 .react-grid-item > .react-resizable-handle::after {
   border-right-color: rgb(var(--dash-mint) / 0.7);
@@ -141,5 +147,53 @@ body {
 :root.light .glow-box-mint,
 :root.light .glow-box-critical {
   box-shadow: none;
+}
+
+/* 2026-07-18: "실시간 탐지"(LiveActivityTree) 위젯 복원과 함께 다시 가져온
+   애니메이션 - 위험 이벤트 파동(ripple)과 신규 이벤트 반짝임(dot-blink). 원래
+   2026-07-16에 위젯 자체를 삭제하면서 같이 지웠던 규칙(34cd73d "실시간 활동
+   흐름 삭제")을 그대로 되살렸다. */
+@keyframes activity-ripple {
+  0% {
+    r: 9;
+    opacity: 0.55;
+  }
+  100% {
+    r: 24;
+    opacity: 0;
+  }
+}
+.activity-ripple-ring {
+  animation: activity-ripple 1.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes activity-dot-blink {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.7);
+  }
+  45% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.activity-dot-blink {
+  animation: activity-dot-blink 700ms ease-out;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 

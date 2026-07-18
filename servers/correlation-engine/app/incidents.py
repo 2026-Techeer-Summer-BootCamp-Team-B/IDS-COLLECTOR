@@ -12,6 +12,7 @@ scenario_rules/incidents/incident_events 참고.
 idx_incidents_active_dedup unique index가 이 규칙을 DB 레벨에서도 강제한다.
 """
 import asyncio
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,21 @@ import asyncpg
 from app.config import settings
 
 _pool: Optional[asyncpg.Pool] = None
+
+# join_on=user_or_sa 시나리오(S1/S3/S14/S15/S16 등 pod 생성이 얽힌 것들)는 join_key로
+# event.user.name을 그대로 쓰는데, Deployment/DaemonSet/StatefulSet/Job을 통해 만들어진
+# pod의 실제 create 요청자는 항상 그 리소스를 만든 사람이 아니라 kube-system의 내장
+# 컨트롤러(replicaset-controller 등)로 찍힌다 - k3d-audit-policy.yaml이 deployments류의
+# request body(pod template)를 아예 안 남겨서(catch-all Metadata 레벨) normalizer가
+# "누가 이 Deployment를 만들었는지"를 볼 방법이 없기 때문(실측 확인, 2026-07-17
+# event-generator k8saudit 테스트에서 S16 join_key가 전부
+# system:serviceaccount:kube-system:replicaset-controller로 찍힘). 근본 수정은 감사
+# 정책/normalizer/시나리오 3곳을 다 고쳐야 하는 큰 작업이라, 우선 인시던트 제목에
+# 귀속이 불확실하다는 걸 눈에 띄게 표시해서 분석가가 "범인은 replicaset-controller"로
+# 오해하지 않게만 한다.
+_K8S_POD_CONTROLLER_IDENTITY_RE = re.compile(
+    r"^system:serviceaccount:kube-system:[\w-]*-controller$"
+)
 
 
 async def start() -> None:
@@ -170,6 +186,8 @@ async def upsert_incident(
                 )
             else:
                 title = f"{scenario_name} - {join_key}"
+                if correlation_key_type == "user.name" and _K8S_POD_CONTROLLER_IDENTITY_RE.match(join_key):
+                    title += " (⚠ 컨트롤러 경유 생성 - 실제 생성자는 Deployment/DaemonSet/Job 등 상위 리소스 이력 확인 필요)"
                 row = await conn.fetchrow(
                     """
                     INSERT INTO incidents

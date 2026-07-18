@@ -5,7 +5,8 @@
   "description": "SENTINEL-OPS 로그인 페이지용 온보딩 데모 영상 - 컴포넌트로 구성하는 Remotion 프로젝트",
   "scripts": {
     "preview": "remotion studio src/index.js",
-    "render": "remotion render src/index.js OnboardingDemo out/onboarding-demo.mp4"
+    "render": "remotion render src/index.js OnboardingDemo out/onboarding-demo.mp4",
+    "render:tour": "remotion render src/index.js DualMonitorTour out/dual-monitor-tour.mp4"
   },
   "dependencies": {
     "react": "^18.3.1",

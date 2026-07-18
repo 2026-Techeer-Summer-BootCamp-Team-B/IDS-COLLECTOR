@@ -28,9 +28,13 @@ function loadGoogleMaps(apiKey) {
       delete window[callbackName];
     };
     const script = document.createElement("script");
+    // language=en: 안 넣으면 Maps JS SDK가 브라우저 로케일(이 프로젝트 사용자 대부분
+    // ko-KR)을 따라가서 지도 위 나라/지명 라벨이 한글로 뜬다(마커 툴팁 쪽 국가명은
+    // countryGeo.js에 이미 영문으로 박혀있어 문제 없었음 - 문제는 Google이 타일
+    // 자체에 그려주는 라벨) - 2026-07-17, "나라 이름 영어로" 피드백으로 고정.
     script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
       apiKey
-    )}&callback=${callbackName}&loading=async`;
+    )}&callback=${callbackName}&loading=async&language=en`;
     script.async = true;
     script.onerror = () => reject(new Error("Google Maps 스크립트 로드 실패"));
     document.head.appendChild(script);
@@ -83,12 +87,23 @@ export default function GoogleGeoMap({ points, compact = false }) {
         mapRef.current = new maps.Map(containerRef.current, {
           center: { lat: 20, lng: 10 },
           zoom: compact ? 1 : 2,
-          minZoom: 1,
+          minZoom: 2,
           styles: theme === "light" ? LIGHT_MAP_STYLE : DARK_MAP_STYLE,
           disableDefaultUI: true,
           zoomControl: true,
           gestureHandling: "greedy", // 스크롤만으로 바로 확대/축소 (Ctrl 안 눌러도 됨)
           backgroundColor: C.bg,
+          // restriction: minZoom=1(줌 아웃 최대치)에서는 Google 지도가 세계지도를
+          // 옆으로 이어붙여서(경도 wrap-around) 여러 개로 반복 표시한다 - "세계
+          // 지도가 여러 개 중복해서 나온다"는 2026-07-17 피드백의 원인. 위경도를
+          // 지구 전체(위도 ±85도, 경도 ±180도)로 한정하고 strictBounds로 그 밖으로
+          // 못 나가게 고정하면 지도가 딱 한 벌만 렌더링된다(Google Maps 공식 문서의
+          // "restrict panning" 패턴) - minZoom도 1→2로 살짝 올려서 반복이 다시
+          // 보일 만큼 축소되는 걸 원천 차단.
+          restriction: {
+            latLngBounds: { north: 85, south: -85, west: -180, east: 180 },
+            strictBounds: true,
+          },
         });
         // headerDisabled: true - hover로 뜨고 벗어나면 사라지는 패널이라 기본
         // 닫기(X) 버튼이 불필요함(2026-07-17 요청). 그래도 일부 구버전 API에선
