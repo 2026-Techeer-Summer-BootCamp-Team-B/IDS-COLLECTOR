@@ -225,6 +225,8 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
                     <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
                     <Tooltip
                       contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg, fontSize: 12 }}
+                      labelStyle={{ color: C.fg }}
+                      itemStyle={{ color: C.fg }}
                       cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
                     />
                     <Bar dataKey="count" fill={DONUT_PALETTE[3]} radius={[3, 3, 0, 0]} />
