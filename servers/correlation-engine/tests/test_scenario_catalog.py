@@ -5,6 +5,7 @@ import re
 import uuid
 
 from app.main import _load_scenarios
+from app.rules import _RECENCY_MARKER_TTL_SECONDS, _stage_patterns
 
 _STAGE_KEY_RE = re.compile(r"^stage(\d+)$")
 
@@ -72,3 +73,40 @@ def test_join_on_is_a_known_value(all_scenarios):
     # None이 되어 그 시나리오는 조용히 영원히 발화하지 않는다.
     for s in all_scenarios:
         assert s["join_on"] in {"pod", "user_or_sa", "source_ip"}, s["id"]
+
+
+def test_scenario_type_is_known(all_scenarios):
+    # rules.py의 evaluate() 타입 분기가 인식하는 값 셋 - 여기 없는 값이면 threshold도
+    # cardinality도 아니라서 조용히 _eval_sequence로 떨어져(else 분기) stage1/stage2가
+    # 없다는 이유로 IndexError가 난다.
+    for s in all_scenarios:
+        assert s["type"] in {"threshold", "sequence", "cardinality"}, s["id"]
+
+
+def test_cardinality_scenarios_have_threshold_window_match_and_distinct_field(all_scenarios):
+    for s in all_scenarios:
+        if s["type"] == "cardinality":
+            assert "threshold" in s, s["id"]
+            assert "window_seconds" in s, s["id"]
+            assert "match" in s, s["id"]
+            assert "distinct_field" in s, s["id"]
+
+
+def test_absent_recent_seconds_does_not_exceed_recency_marker_ttl(all_scenarios):
+    """absent_recent_seconds(또는 window_seconds 기본값)가 rules.py의
+    _RECENCY_MARKER_TTL_SECONDS를 넘으면, _stamp_recency()가 남긴 마커가 그 시간이
+    되기 전에 먼저 Redis에서 만료돼 "최근에 없었다"고 오판할 수 있다 - 실제로는
+    있었는데 마커만 사라진 거짓 부재를 카탈로그 로드 단계에서 막는다."""
+    for s in all_scenarios:
+        window = s.get("window_seconds")
+        patterns = list(_stage_patterns(s))
+        if "match" in s:
+            patterns.append(s["match"])
+        for pattern in patterns:
+            if "absent_recent_module" not in pattern:
+                continue
+            seconds = pattern.get("absent_recent_seconds", window)
+            assert seconds <= _RECENCY_MARKER_TTL_SECONDS, (
+                f"{s['id']}: absent_recent_seconds({seconds}) > "
+                f"_RECENCY_MARKER_TTL_SECONDS({_RECENCY_MARKER_TTL_SECONDS})"
+            )

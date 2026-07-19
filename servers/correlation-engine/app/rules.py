@@ -25,8 +25,31 @@ threshold: join_key별 매칭 카운터를 Redis에 TTL=window_seconds로 유지
            incidents.upsert_incident가 여전히 open인 그 인시던트에 이벤트를 추가하고
            updated_at을 갱신하게 한다 - 그래야 목록(최신순)에서 계속 맨 위에 남는다.
 
+cardinality (2026-07-19): join_key별로 어떤 필드(distinct_field)의 "서로 다른 값
+           개수"가 threshold 이상이면 발화한다 - 예: 같은 IP가 서로 다른 URL을
+           threshold개 이상 두드림(반복이 아니라 다양성이 신호인 정찰 탐지, 여러
+           계층 시나리오 Notion 페이지의 M4/M10). threshold(INCR 카운터)와 값
+           집합을 Redis SET(SADD/SCARD)으로 유지한다는 것만 다르고, 윈도우/쿨다운
+           규칙은 threshold와 동일하다.
+
 join_key가 없는 이벤트(join_on 필드가 비어있는 경우)는 상관에서 제외하고 결측
 카운터만 올린다 (파이프라인 헬스 뷰 P7-3에서 노출).
+
+absent_recent_module (2026-07-19, "동시 부재" 확인): match(threshold/cardinality)
+           또는 stageN(sequence) 패턴에 이 키를 추가하면, "이 패턴이 매칭되는 순간
+           지정된 모듈이 같은 join_key로 최근(기본값: 이 시나리오의 window_seconds,
+           override는 absent_recent_seconds) 발생한 적이 없어야" 이 패턴을 매칭으로
+           친다 - 여러 계층 시나리오 Notion 페이지의 M9("K8s Audit 비인가 이미지
+           pull + Falco 악성 패턴 + WAF/WAS 트래픽 없음 = 공급망 침해 정황")처럼
+           "이 사건이 났을 때 다른 소스가 최근에 조용했는가"를 보는 동시성 부재
+           체크다. evaluate()가 매 이벤트마다 무조건 _stamp_recency()로 "이
+           모듈·이 join_key가 방금 나타났다"는 흔적을 Redis에 남겨두므로(어느
+           시나리오가 나중에 이 흔적을 쓸지 몰라 pod/user_or_sa/source_ip 3개 축
+           전부에 미리 남긴다), 패턴 평가 시 그 흔적의 최신 여부만 확인하면 되고
+           미래를 기다리는 스케줄러가 필요 없다. ⚠️ 이건 동시 부재만 본다 - "stage1
+           이후 N초 안에 아무 일도 안 일어나면 발화"처럼 미래 시간 경과 자체를
+           기다려야 하는 지연 부재는 이 메커니즘으로 못 한다(별도 스케줄러 필요,
+           아직 미구현).
 
 evaluate()가 반환하는 "발화" 결과는 PostgreSQL의 Incident/IncidentEvent 스키마에
 그대로 대응한다 (scenario_db_id=matched_scenario_rule_id, correlation_key_type/
@@ -39,6 +62,18 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ids_shared.schemas import NormalizedEvent
+
+
+# "동시 부재"(absent_recent_module) 마커의 절대 상한 TTL - absent_recent_seconds(또는
+# window_seconds 기본값)가 이 값을 넘으면 마커가 그 전에 먼저 Redis에서 사라져 실제로는
+# 있었는데 "부재"로 오판할 수 있다. test_scenario_catalog.py가 카탈로그 로드 단계에서
+# 이 상한을 강제한다.
+_RECENCY_MARKER_TTL_SECONDS = 900
+
+# _stamp_recency()가 매 이벤트마다 흔적을 남기는 join_on 축 전체 - 어떤 시나리오가
+# 나중에 absent_recent_module로 이 이벤트의 부재를 어느 축으로 물어볼지 미리 알 수
+# 없어서, 값이 있는 축 전부에 남긴다(_join_key 참고).
+_JOIN_ON_KINDS: Tuple[str, ...] = ("pod", "user_or_sa", "source_ip")
 
 
 def _join_key(event: NormalizedEvent, join_on: str) -> Optional[str]:
@@ -202,6 +237,62 @@ class ScenarioEngine:
             for network, entry_target in self._allow_list
         )
 
+    async def _stamp_recency(self, event: NormalizedEvent) -> None:
+        """이 이벤트가 나중에 다른 시나리오의 absent_recent_module 조건에서 조회될
+        수 있도록, 값이 있는 모든 join_on 축(pod/user_or_sa/source_ip)으로 "최근
+        발생" 흔적을 Redis에 남긴다. 어떤 시나리오가 나중에 이 모듈의 부재를 어느
+        축으로 물어볼지 미리 알 수 없어 3개 축 전부를 싼 비용(SET 최대 3개, 값 없는
+        축은 스킵)으로 남겨둔다. 값은 이벤트의 실제 발생 시각(timestamp, 수신 시각인
+        event_ingested가 아니다)이라 나중에 조회하는 쪽이 "그때로부터 몇 초가
+        지났는지"를 정확히 계산할 수 있다 - TTL(_RECENCY_MARKER_TTL_SECONDS)은 그
+        계산이 가능하도록 값을 충분히 오래 살려두는 상한일 뿐이다.
+
+        allow_list로 상관분석 자체가 면제되는 이벤트도 여기는 통과한다(evaluate()가
+        이 호출을 allow_list 체크보다 앞에 둠) - "신뢰된 IP라 인시던트는 안 만들되,
+        그 소스에서 트래픽이 있었다는 사실 자체"는 M9류 부재 확인에 여전히 유효한
+        정보이기 때문이다(신뢰된 헬스체커 트래픽도 "이 pod로 외부 트래픽이 아예
+        없었다"를 반증하는 증거로는 유효)."""
+        for join_on in _JOIN_ON_KINDS:
+            key = _join_key(event, join_on)
+            if key is None:
+                continue
+            await self._redis.set(
+                f"seen:{event.event_module}:{join_on}:{key}",
+                str(event.timestamp.timestamp()),
+                ex=_RECENCY_MARKER_TTL_SECONDS,
+            )
+
+    async def _passes_absent_recent(
+        self, pattern: Dict[str, Any], scenario: Dict[str, Any], join_key: str, now_ts: float
+    ) -> bool:
+        """pattern에 absent_recent_module이 없으면 그냥 통과. 있으면 _stamp_recency()가
+        남긴 흔적으로 "지정된 모듈이 같은 join_key·join_on 축으로 최근(기본값: 이
+        시나리오의 window_seconds, override는 absent_recent_seconds) 발생했는지"를
+        확인해서, 발생했으면(=부재 조건 불성립) False를 돌려준다."""
+        modules = pattern.get("absent_recent_module")
+        if not modules:
+            return True
+        if isinstance(modules, str):
+            modules = [modules]
+        seconds = pattern.get("absent_recent_seconds", scenario["window_seconds"])
+        join_on = scenario["join_on"]
+        for module in modules:
+            raw = await self._redis.get(f"seen:{module}:{join_on}:{join_key}")
+            if raw is not None and (now_ts - float(raw)) <= seconds:
+                return False
+        return True
+
+    async def _stage_matches(
+        self, event: NormalizedEvent, pattern: Dict[str, Any], scenario: Dict[str, Any], join_key: str
+    ) -> bool:
+        """구조적 조건(_matches, 동기)과 "동시 부재" 조건(absent_recent_module, Redis
+        조회가 필요해 비동기)을 합쳐서 판단한다 - threshold의 match, sequence의
+        stageN, cardinality의 match가 전부 이 경로를 탄다(_matches를 직접 부르지
+        않는다)."""
+        if not _matches(event, pattern):
+            return False
+        return await self._passes_absent_recent(pattern, scenario, join_key, event.timestamp.timestamp())
+
     async def evaluate(self, event: NormalizedEvent) -> List[Dict[str, Any]]:
         """이 이벤트로 새로 발화하는 인시던트 목록을 반환 (없으면 빈 리스트).
 
@@ -229,7 +320,14 @@ class ScenarioEngine:
         platform-api의 PATCH /scenarios/{id}/enabled가 Postgres와 함께 이 키를
         SET한다(app/main.py가 엔진 기동 시 Postgres 값으로 시드도 함). 키가 없거나
         "1"이면 평가 진행 - 새로 추가된 시나리오가 기본 활성 상태인 것과 같은
-        fail-open 기본값이다."""
+        fail-open 기본값이다.
+
+        가장 먼저 _stamp_recency()로 이 이벤트의 "최근 발생" 흔적을 남긴다 - 어느
+        시나리오와도 매칭 여부와 무관하게, 심지어 allow_list로 이후 상관분석이
+        면제되는 이벤트여도 남긴다(다른 시나리오의 absent_recent_module 조건이
+        나중에 참조할 수 있어야 하므로 이 시점에 먼저 실행)."""
+        await self._stamp_recency(event)
+
         if self._is_allow_listed(event.source_ip, event.target_name):
             return []
 
@@ -248,6 +346,8 @@ class ScenarioEngine:
 
             if scenario["type"] == "threshold":
                 result = await self._eval_threshold(scenario, event, join_key)
+            elif scenario["type"] == "cardinality":
+                result = await self._eval_cardinality(scenario, event, join_key)
             else:
                 result = await self._eval_sequence(scenario, event, join_key)
 
@@ -271,7 +371,7 @@ class ScenarioEngine:
     async def _eval_threshold(
         self, scenario: Dict[str, Any], event: NormalizedEvent, join_key: str
     ) -> Optional[Dict[str, Any]]:
-        if not _matches(event, scenario.get("match", {})):
+        if not await self._stage_matches(event, scenario.get("match", {}), scenario, join_key):
             return None
 
         scenario_id = scenario["id"]
@@ -309,6 +409,50 @@ class ScenarioEngine:
             scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
         )
 
+    async def _eval_cardinality(
+        self, scenario: Dict[str, Any], event: NormalizedEvent, join_key: str
+    ) -> Optional[Dict[str, Any]]:
+        """join_key별로 distinct_field 값의 "서로 다른 개수"가 threshold 이상이면
+        발화 - threshold(단순 건수)와 달리 같은 값이 반복돼도 카운트가 안 오른다
+        (예: 같은 URL을 계속 두드리는 건 재시도일 수 있어서 무시하고, 서로 다른
+        URL이 늘어야 정찰로 친다). Redis SET(SADD/SCARD)으로 distinct 값 집합을
+        유지한다는 것만 빼면 _eval_threshold와 창/쿨다운 규칙이 완전히 동일해서
+        그 주석을 반복하지 않는다."""
+        if not await self._stage_matches(event, scenario.get("match", {}), scenario, join_key):
+            return None
+
+        value = getattr(event, scenario["distinct_field"], None)
+        if value is None:
+            return None  # 셀 값 자체가 없는 이벤트는 무시(예: url_path 없는 이벤트)
+
+        scenario_id = scenario["id"]
+        set_key = f"corr:{scenario_id}:distinct:{join_key}"
+        cooldown_key = f"corr:{scenario_id}:cooldown:{join_key}"
+
+        if await self._redis.get(cooldown_key):
+            # _eval_threshold와 동일한 이유 - 쿨다운 중에도 발화 결과를 계속 반환해서
+            # 여전히 open인 인시던트가 갱신되게 한다.
+            return self._fired_result(
+                scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
+            )
+
+        await self._redis.sadd(set_key, value)
+        count = await self._redis.scard(set_key)
+        if count == 1:
+            await self._redis.expire(set_key, scenario["window_seconds"])
+
+        if count < scenario["threshold"]:
+            return None
+
+        await self._redis.delete(set_key)
+        await self._redis.set(
+            cooldown_key, "1", ex=scenario.get("cooldown_seconds", scenario["window_seconds"])
+        )
+
+        return self._fired_result(
+            scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
+        )
+
     async def _eval_sequence(
         self, scenario: Dict[str, Any], event: NormalizedEvent, join_key: str
     ) -> Optional[Dict[str, Any]]:
@@ -320,7 +464,7 @@ class ScenarioEngine:
         scenario_id = scenario["id"]
         state_key = f"corr:{scenario_id}:stage:{join_key}"
 
-        if _matches(event, stages[0]):
+        if await self._stage_matches(event, stages[0], scenario, join_key):
             # stage1 최신 덮어쓰기: 진행 중이던 체인이 있어도 버리고 이 이벤트부터
             # 새로 시작 - 2단계 시절 동작을 그대로 일반화.
             state = {
@@ -336,7 +480,9 @@ class ScenarioEngine:
 
         state = json.loads(raw)
         progress = state["progress"]
-        if progress >= len(stages) or not _matches(event, stages[progress]):
+        if progress >= len(stages) or not await self._stage_matches(
+            event, stages[progress], scenario, join_key
+        ):
             return None  # "바로 다음" 단계가 아니면(순서를 건너뛴 경우 포함) 무시 - 기존 진행 상태 유지
 
         state["events"].append({"event_id": event.event_id, "event_module": event.event_module})

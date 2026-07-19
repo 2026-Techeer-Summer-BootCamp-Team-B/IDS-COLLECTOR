@@ -18,7 +18,7 @@
 | `defense_evasion.yaml` | 컨테이너 내 흔적 인멸 | S23, S36, S37, S44 |
 | `lateral_movement.yaml` | 탈취한 인증 자료를 이용한 측면 이동 | S25, S57 |
 
-## 엔진 동작 (sequence/threshold 2타입)
+## 엔진 동작 (sequence/threshold/cardinality 3타입)
 
 - **sequence**: stage1 패턴이 매칭되면 join_key별로 "stage1 대기중" 상태(이벤트
   id+모듈)를 Redis에 TTL=window_seconds로 기록한다. 그 안에 stage2 패턴이
@@ -27,11 +27,65 @@
   count가 threshold 이상이면 발화 -> 카운터 리셋 + 쿨다운 키를 세팅해서 쿨다운
   기간 동안 재발화를 막는다. threshold=1은 "카운트 누적이 필요 없는 단발성
   critical 이벤트"를 쿨다운과 함께 처리하는 용도로도 쓴다(S6/S8/S9/S11 등).
+- **cardinality** (2026-07-19): join_key별로 어떤 필드(`distinct_field`, `NormalizedEvent`
+  속성명)의 "서로 다른 값 개수"가 threshold 이상이면 발화한다 - Redis SET
+  (`SADD`/`SCARD`)으로 distinct 값 집합을 유지한다는 것만 threshold(`INCR` 카운터)와
+  다르고, 윈도우/쿨다운 규칙은 threshold와 동일하다. 같은 값이 반복돼도 카운트가
+  오르지 않는다는 게 핵심 차이 - "같은 IP가 서로 다른 엔드포인트를 N개 이상
+  스캔했다"처럼 반복이 아니라 다양성 자체가 신호인 정찰 탐지용이다(여러 계층 시나리오
+  Notion 페이지의 M4/M10). 예:
+  ```yaml
+  - id: S-EXAMPLE
+    type: cardinality
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [was]
+    window_seconds: 60
+    threshold: 20            # 서로 다른 url_path가 20개 이상
+    cooldown_seconds: 300
+    distinct_field: url_path
+    match:
+      event_module: was
+    severity: 2
+    mitre_technique_id: "T1595"
+  ```
 
 `join_on`: 엔진 내부 로직/Redis 키 네임스페이스용 식별자(`pod`/`user_or_sa`/
 `source_ip`, `app/rules.py`의 `_join_key` 참고). `correlation_key_type`:
 PostgreSQL enum 값 그대로 - `Incident.correlation_key_type`에 저장되는 값이라
 `join_on`과 반드시 짝이 맞아야 한다.
+
+## "동시 부재" 확인 (`absent_recent_module`, 2026-07-19)
+
+`match`(threshold/cardinality) 또는 `stageN`(sequence) 패턴에 `absent_recent_module`을
+추가하면, "이 패턴이 매칭되는 순간 지정된 모듈이 같은 join_key로 최근 발생한 적이
+없어야" 이 패턴을 매칭으로 친다:
+
+```yaml
+match:
+  event_module: falco
+  event_action: "Known Cryptominer Process Executed"
+  absent_recent_module: waf       # 또는 [waf, was]
+  absent_recent_seconds: 300      # 생략하면 이 시나리오의 window_seconds
+```
+
+`app/rules.py`의 `ScenarioEngine.evaluate()`가 매 이벤트마다 무조건
+`_stamp_recency()`로 "이 모듈·이 join_key가 방금 나타났다"는 흔적을 Redis에
+남긴다(어느 시나리오가 나중에 이 흔적을 쓸지 몰라 `pod`/`user_or_sa`/`source_ip`
+3개 축 전부에 미리 남긴다) - 패턴 평가 시 그 흔적의 최신 여부만 확인하면 되므로
+미래를 기다리는 스케줄러가 필요 없다. 여러 계층 시나리오 Notion 페이지의
+M9("K8s Audit 비인가 이미지 pull + Falco 악성 패턴 + WAF/WAS 트래픽 없음 = 공급망
+침해 정황")이 이 메커니즘을 쓰는 예시다.
+
+⚠️ 이건 "이 사건이 났을 때 다른 소스가 최근에 조용했는가"만 보는 **동시 부재**다 -
+"stage1 이후 N초 안에 아무 일도 안 일어나면 발화"처럼 미래 시간 경과 자체를
+기다려야 하는 **지연 부재**는 이 메커니즘으로 못 한다(별도 스케줄러가 필요, 아직
+미구현 - 여러 계층 시나리오 Notion 페이지 참고).
+
+`absent_recent_seconds`(또는 `window_seconds` 기본값)는 `app/rules.py`의
+`_RECENCY_MARKER_TTL_SECONDS`(900초)를 넘을 수 없다 - 넘으면 마커가 그 전에 먼저
+Redis에서 사라져 실제로는 있었는데 "부재"로 오판할 수 있다
+(`test_scenario_catalog.py`가 카탈로그 로드 단계에서 강제).
 
 ## 설계 근거 출처
 
