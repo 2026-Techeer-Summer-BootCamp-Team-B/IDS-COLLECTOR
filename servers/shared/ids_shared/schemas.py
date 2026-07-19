@@ -43,6 +43,14 @@ class NormalizedEvent(BaseModel):
     # 상관 키 (P4 시나리오 join_on 대상 - 반드시 이 필드명으로 통일)
     source_ip: Optional[str] = Field(default=None, alias="source.ip")  # S4 join_on
     user_name: Optional[str] = Field(default=None, alias="user.name")  # S2 join_on
+    # was/waf/falco 이벤트에 enrichment.py가 채워 넣는 "이 이벤트가 벌어진 대상 pod에
+    # 바인딩된 K8s 신원"(2026-07-19, join_on=user_or_sa로 WAF/Falco를 k8s_audit까지
+    # 한 체인으로 잇기 위해 도입). user_name과 분리한 이유 - falco는 이미 user_name에
+    # 컨테이너 안 OS 유저(root 등, 포렌식 가치가 있는 별개 정보)를 채우고 있어서 같은
+    # 필드에 K8s 신원을 덮어쓰면 그 정보가 사라진다. rules.py의 _join_key()가
+    # user_or_sa 조인 시 이 필드를 user_name보다 우선 사용한다(둘 다 있을 이벤트는
+    # 없음 - k8s_audit은 이 필드를 안 채우고 user_name만 채움).
+    actor_identity: Optional[str] = Field(default=None, alias="actor.identity")
     orchestrator_namespace: Optional[str] = Field(default=None, alias="orchestrator.namespace")
     orchestrator_resource_type: Optional[str] = Field(
         default=None, alias="orchestrator.resource.type"
