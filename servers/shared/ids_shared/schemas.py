@@ -147,3 +147,14 @@ class NormalizedEvent(BaseModel):
 
     class Config:
         populate_by_name = True
+
+    @property
+    def event_date(self) -> str:
+        """timestamp(사건 실제 발생 시각, UTC)의 날짜 부분만 "YYYY-MM-DD" 문자열로
+        뽑은 순수 파생 값(2026-07-20, 여러 계층 시나리오 Notion 페이지의 M52 -
+        correlation-engine의 cardinality distinct_field로 "서로 다른 며칠에 걸쳐
+        발생했는지"를 세는 용도). Kafka로 직렬화되는 실제 필드가 아니다 - normalizer가
+        만들 때나 correlation-engine이 평가할 때나 각자 이미 가진 timestamp에서 그때그때
+        계산하므로, event.original 페이로드나 와이어 포맷을 전혀 바꾸지 않고
+        추가할 수 있었다."""
+        return self.timestamp.date().isoformat()

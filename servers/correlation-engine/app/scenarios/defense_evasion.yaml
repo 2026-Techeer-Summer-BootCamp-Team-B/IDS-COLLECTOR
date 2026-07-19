@@ -91,3 +91,76 @@ scenarios:
       event_action: "PTRACE anti-debug attempt"
     severity: 2
     mitre_technique_id: "T1622"
+
+  # S76 (sequence, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오" M77 구현,
+  # DET0146 기반, S16/S75/S37 결합): MITRE 공식 DET0146의 AN0416은 "컨테이너
+  # 이스케이프 시도에 이은 호스트 삭제"를 하나의 패턴으로 명시한다 - `S37`(디스크
+  # 대량 데이터 삭제) 단독으로는 파괴가 컨테이너 내부에 그쳤는지 마운트된 호스트
+  # 경로까지 번졌는지 구분이 안 되는데, 직전에 이스케이프 시도(`S75`의
+  # release_agent 또는 `S52`의 Debugfs)가 확인되면 "단순 로그/캐시 정리가 아니라
+  # 호스트 자체를 노린 파괴 행위"라는 확정적 증거가 된다.
+  #
+  # `S37` 원본이 이 파일(defense_evasion.yaml)에 있는 것과 같은 이유(MITRE
+  # 전술은 Impact지만 "흔적을 지우거나 데이터를 지운다"는 행위 패턴이 이 파일의
+  # 나머지 시나리오와 유사)로 여기 둔다. workload.yaml의 M15(`S37`→VolumeSnapshot
+  # delete, 파괴 이후 백업 삭제)와 자매 관계지만 반대 방향(파괴 이전에 이스케이프가
+  # 있었는지)을 본다.
+  #
+  # S52/S75/S37 셋 다 이미 join_on=pod인 단발 이벤트라 조정 없이 그대로 이어붙였다.
+  # mitre_technique_id=T1485: 이 시나리오의 헤드라인("호스트 경로 파괴 탐지")이
+  # stage2(S37)의 결론에 있다는 점에서 S69와 같은 논리로 stage2를 앵커로 삼는다 -
+  # stage1(T1611, 이스케이프)은 그 파괴가 왜 더 심각한지를 설명하는 전조.
+  # severity=4는 S52/S75와 같은 급 - S37 단독(severity=3)보다 위인 이유는 "단순
+  # 컨테이너 내부 정리가 아니라 호스트를 노렸다"는 확실성이 더해져서다.
+  - id: S76
+    name: "이스케이프 시도 직후 호스트 경로 파괴 탐지 (Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action: ["Detect release_agent File Container Escapes", "Debugfs Launched in Privileged Container"]
+    stage2:
+      event_module: falco
+      event_action: "Remove Bulk Data from Disk"
+    severity: 4
+    mitre_technique_id: "T1485"
+
+  # S88 (sequence, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오" M15
+  # 구현): 데이터를 파괴하는 동시에 백업(스냅샷)까지 지우면 복구 자체가
+  # 불가능해진다 - 랜섬웨어의 전형적 마무리 단계. stage1(`S37`, 대량 데이터 삭제)은
+  # 이미 구현된 재료를 그대로 재사용한다(M6/M82와 같은 "기존 신호 재활용" 패턴).
+  #
+  # k3d-audit-policy.yaml에 volumesnapshots/persistentvolumeclaims 전용 규칙은
+  # 없지만 S71/S72/S86과 같은 이유로 맨 아래 catch-all(level: Metadata)이 이미
+  # 잡고 있어 정책 변경 없이 바로 쓸 수 있다.
+  #
+  # ⚠️ join_on=user_or_sa: 원안의 "동일 pod/namespace 기준"은 그대로 못 쓴다 -
+  # VolumeSnapshot/PersistentVolumeClaim delete 이벤트의 orchestrator_resource_name은
+  # 그 스냅샷/PVC 자신의 이름이지 pod가 아니고(M27/M64/M11-B에서 이미 확인한 것과
+  # 같은 종류의 문제), join_on은 namespace 축 자체를 지원하지 않는다. 그래서 S73/
+  # S87과 같은 방식으로 "같은 신원이 대량 파괴도 하고, 짧은 시간 안에 별도로
+  # 백업 삭제도 직접 확인된다"로 완화했다 - 정확한 인과관계보다는 근사적 신호다.
+  #
+  # mitre_technique_id=T1490(Inhibit System Recovery)은 이 카탈로그에 처음
+  # 등장하는 기법 - M15 원문이 명시한 그대로다. severity=4는 S37 단독(3)보다
+  # 위 - 파괴가 백업 삭제까지 이어져 복구 자체가 불가능해졌다는 확실성이
+  # 더해져서다.
+  - id: S88
+    name: "백업/스냅샷 삭제를 통한 복구 방해 (Falco → K8s Audit)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [falco, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action: "Remove Bulk Data from Disk"
+    stage2:
+      event_module: k8s_audit
+      audit_verb: delete
+      orchestrator_resource_type: [volumesnapshots, persistentvolumeclaims]
+    severity: 4
+    mitre_technique_id: "T1490"

@@ -150,3 +150,80 @@ scenarios:
         ]
     severity: 4
     mitre_technique_id: "T1069"
+
+  # S79 (threshold, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오" M82
+  # 구현, DET0587 기반, S10 정밀화): MITRE 공식 DET0587(AN1616)은 "짧은 시간 안에
+  # 여러 계정 객체를 조회하는 API 호출"을 계정 탐색의 핵심 지표로 명시한다 -
+  # `S10`(get/list/watch 전체 대량 호출, threshold=30)은 pods/secrets/services
+  # 등을 뭉뚱그려 세는데, 이건 "계정(서비스어카운트) 자체를 노리는 열거"만 좁혀서
+  # 본다는 점에서 더 특화된 신호 - M50(distinct 리소스 타입 다양성 자체가 신호)과는
+  # 반대로, 여긴 특정 타입 하나(serviceaccounts)의 반복 횟수 자체를 본다.
+  #
+  # threshold=10/60s는 S10(30)보다 낮다 - serviceaccounts만 좁혀서 세므로 정상
+  # 운영에서 도달하기 더 어려운 문턱이라 판단했다(S31의 5와 S10의 30 사이 - S31처럼
+  # RBAC 오브젝트만 보는 좁은 스코프에 더 가깝지만 serviceaccounts는 RBAC
+  # 오브젝트(role/binding)보다 정상 조회 빈도가 조금 더 높을 수 있어 중간값을
+  # 택함). ⚠️ 다른 threshold 시나리오와 같은 이유로 실측 튜닝 필요.
+  #
+  # mitre_technique_id=T1087(Account Discovery)은 CONTAINERS_MATRIX(30개) 밖
+  # 기법이지만 MITRE 공식 문서를 직접 인용 - S28/S36/S40/S44/S50/S70/S71/S77이
+  # 이미 쓰는 "카탈로그 밖 기법 사용" 관례와 동일. severity=2는 S10/S31과 같은
+  # 급(정찰 단계, 아직 실공격 아님).
+  - id: S79
+    name: "서비스어카운트 대량 열거 탐지"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 10
+    cooldown_seconds: 300
+    match:
+      event_module: k8s_audit
+      audit_verb: [get, list]
+      orchestrator_resource_type: serviceaccounts
+    severity: 2
+    mitre_technique_id: "T1087"
+
+  # S91 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오"
+  # M52 구현, 엔진 확장 포함): 하루 이틀의 정찰은 우연일 수 있지만, 같은 신원이
+  # 여러 날에 걸쳐 반복적으로 정찰 패턴을 보이면 지속적으로 침투 기회를 노리는
+  # 내부자 또는 장기 잠복 위협일 가능성이 높다 - 지금까지의 모든 M은
+  # window_seconds가 최대 1800초(M19) 수준인데, 이건 "일" 단위의 훨씬 긴 시간창을
+  # 쓴다는 점에서 근본적으로 다른 시간 스케일이다.
+  #
+  # ⚠️ 원안이 우려한 두 가지를 재검토했다:
+  #   - "_RECENCY_MARKER_TTL_SECONDS(900초)와 충돌": 기우였다 - 그 상한은
+  #     absent_recent_module 전용이고 cardinality의 window_seconds와는 무관하다.
+  #     Redis의 EXPIRE는 며칠짜리 TTL도 문제없이 처리한다.
+  #   - 진짜 막힌 지점은 distinct_field였다 - "정찰이 발화한 날짜(day bucket)"는
+  #     NormalizedEvent에 없는 파생 값이라 그대로 못 썼다. ids_shared/schemas.py에
+  #     순수 Python @property `event_date`(timestamp의 날짜 부분, "YYYY-MM-DD")를
+  #     추가했다(2026-07-20, 와이어 포맷 변경 없음 - normalizer/correlation-engine
+  #     양쪽이 이미 가진 timestamp에서 각자 계산). `_eval_cardinality`가 getattr()로
+  #     읽으므로 rules.py 자체는 변경이 필요 없었다.
+  #   - 원안 예시값(window_seconds=86400=1일)도 그대로는 말이 안 됐다 - 1일짜리
+  #     창 안에서는 "서로 다른 날짜"가 최대 1~2개(UTC 경계 걸침)뿐이라 day-bucket
+  #     cardinality 자체가 성립하지 않는다. window_seconds=604800(7일)로 넓혀
+  #     "일주일 중 최소 3일에 정찰 패턴"으로 재정의했다.
+  #
+  # match는 S10(모든 get/list/watch, threshold=30/60s)의 조건을 그대로 재사용한다 -
+  # S31보다 넓은 정의라 "정찰류 활동이 있었던 날"을 폭넓게 잡는다.
+  # mitre_technique_id=T1613: S10의 태그를 그대로 물려받는다. severity=3은
+  # S10/S31(단발 burst, 2)보다 위 - 여러 날에 걸친 지속성이 확인됐다는 확실성이
+  # 더해져서다.
+  - id: S91
+    name: "반복적 정찰-침해 사이클 탐지 (여러 날에 걸친 정찰 재발생)"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 604800
+    threshold: 3
+    cooldown_seconds: 86400
+    distinct_field: event_date
+    match:
+      event_module: k8s_audit
+      audit_verb: [get, list, watch]
+    severity: 3
+    mitre_technique_id: "T1613"

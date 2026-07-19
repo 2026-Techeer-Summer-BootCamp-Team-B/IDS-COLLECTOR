@@ -100,3 +100,17 @@ class TestJoinKeyUserOrSa:
     def test_none_when_neither_present(self, make_event):
         event = make_event(event_module="was", user_name=None, actor_identity=None)
         assert _join_key(event, "user_or_sa") is None
+
+
+class TestJoinKeyRuleId:
+    """join_on=rule_id(2026-07-20, M32) - "공격자"가 아니라 "공격 시그니처"를
+    조인 축으로 삼는 첫 사례. rule_id는 waf/was/falco가 이미 채우는 필드라
+    별도 브릿지 로직 없이 그대로 반환한다."""
+
+    def test_returns_rule_id(self, make_event):
+        event = make_event(event_module="waf", rule_id="sqli-001")
+        assert _join_key(event, "rule_id") == "sqli-001"
+
+    def test_none_when_absent(self, make_event):
+        event = make_event(event_module="waf", rule_id=None)
+        assert _join_key(event, "rule_id") is None

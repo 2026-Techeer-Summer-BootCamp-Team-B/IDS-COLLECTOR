@@ -615,3 +615,325 @@ scenarios:
       http_response_status_code: [200, 201, 204]
     severity: 4
     mitre_technique_id: "T1550"
+
+  # S71 (threshold, threshold=1, 2026-07-20, Notion "여러 계층 시나리오" M60 구현):
+  # NetworkPolicy는 파드 간 네트워크 세그멘테이션(예: DB pod는 API pod에서만 접근
+  # 가능)을 강제하는 유일한 수단이다 - 이걸 지우면 이미 뚫린 pod 하나에서 클러스터
+  # 내부의 다른 워크로드로 옆으로 이동하기가 훨씬 쉬워진다. `S11`(system: 롤 변조,
+  # T1685)/M27(Falco 무력화, 보류됨)과 같은 "방어 체계 자체를 노리는" 계열이지만,
+  # 이건 네트워크 세그멘테이션이라는 또 다른 방어층을 겨냥한다는 점에서 별개.
+  #
+  # k3d-audit-policy.yaml에 networkpolicies 전용 규칙은 없지만, 맨 아래 catch-all
+  # (level: Metadata, verbs: [create/update/patch/delete/deletecollection] - "그 외
+  # 클러스터 상태를 바꾸는 모든 요청은 최소 Metadata 레벨로 기록")이 이미 모든
+  # 리소스의 delete를 잡고 있어 audit_verb/orchestrator_resource_type만 보면
+  # 충분한 이 시나리오엔 정책 변경 없이 바로 쓸 수 있다(request body가 필요한
+  # S12~S18류와 다름).
+  #
+  # join_on=user_or_sa, severity=4는 S8/S11(단발성 방어 무력화/파괴 행위) 컨벤션
+  # 그대로. mitre_technique_id=T1562(Impair Defenses)는 CONTAINERS_MATRIX에 없는
+  # 기법이지만 MITRE 공식 Containers 매트릭스가 명시하는 개념을 직접 인용 - S28/
+  # S36/S40/S44/S50/S70이 이미 쓰는 "카탈로그 밖 기법 사용" 관례와 동일.
+  - id: S71
+    name: "NetworkPolicy 삭제를 통한 방어 설정 무력화"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      audit_verb: delete
+      orchestrator_resource_type: networkpolicies
+    severity: 4
+    mitre_technique_id: "T1562"
+
+  # S77 (threshold, threshold=1, 2026-07-20, Notion "여러 계층 시나리오" M80 구현,
+  # DET0445 기반, README "스킵" 항목 재검토): README.md는 port-forward를 "MITRE
+  # 기법이 깔끔하게 안 맞아 억지로 끼워맞추지 않기로 하고 스킵"한 항목으로 기록하고
+  # 있었다 - 그런데 MITRE 공식 DET0445(T1090 Proxy)의 AN1233은 정확히 "동적/정적
+  # 포트 포워딩 규칙 추가"를 프록시 인프라 구축의 신호로 명시한다. 이 문서 전체에서
+  # 유일하게 기존 "스킵" 결정을 공식 문서 재조회로 뒤집는 사례.
+  #
+  # falcosecurity/plugins의 k8s_audit_rules.yaml "port-forward" 룰을 WebFetch로
+  # 직접 재확인 - 조건은 `ka.target.subresource in (portforward)`(verb 제한 없음).
+  # 정확한 verb를 알 수 없어 S1이 pods/exec·attach에서 이미 겪은 것과 같은 이중
+  # verb 패턴(create/get)으로 안전하게 잡는다 - k3d-audit-policy.yaml에 전용 규칙은
+  # 없지만 mutating catch-all 또는 마지막 "나머지 API 호출도 기본 수집" catch-all
+  # 둘 중 하나로 이미 잡히고 있어 정책 변경 없이 바로 쓸 수 있다.
+  #
+  # join_on=user_or_sa는 S6/S8/S9/S11 등 단발성 K8s Audit 시나리오의 기존
+  # 컨벤션 그대로. severity=3은 falcosecurity 원본 태그가 심각도 신호 없이
+  # [k8s]뿐이라, 새 외부 접근 경로를 만드는 S17/S24(둘 다 3)와 같은 급으로 잡았다.
+  - id: S77
+    name: "kubectl port-forward를 이용한 프록시 터널 구축 탐지"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      event_action: ["create pods/portforward", "get pods/portforward"]
+    severity: 3
+    mitre_technique_id: "T1090"
+
+  # S78 (sequence, join_on=source_ip, 2026-07-20, Notion "여러 계층 시나리오" M81
+  # 구현, DET0304/DET0415 기반, M39 대안 경로): M39(WAF Rate Limit 남용 이후 리소스
+  # 고갈 확인)는 pod 상태(crashloop 등) 텔레메트리가 이 파이프라인에 없어 막혔다고
+  # 결론 냈다 - 그런데 MITRE 공식 DET0304(AN0851/AN0852)와 DET0415(AN1168)를
+  # 보면 신호는 "크래시 자체"가 아니라 "그 이후 관측되는 반복적인 5xx/서비스
+  # 실패"다. WAS는 이미 응답 상태코드를 보고 있으므로, pod 상태 데이터 없이도 이
+  # 신호를 근사할 수 있는 대안 경로가 된다.
+  #
+  # ⚠️ 원안의 stage1("페이로드 매칭 다발")/stage2("5xx 급증")은 둘 다 "여러 건"을
+  # 요구하는데, sequence의 stage는 이벤트 한 건의 패턴만 볼 수 있어(M19/M34에서
+  # 이미 확인한 엔진 제약) 그대로 못 옮긴다. 그래서 단발 이벤트로 완화했다 - 이
+  # 결과 stage1/stage2의 원재료 자체는 `S60`(M1)과 겹친다(같은 WAF 익스플로잇
+  # event_action 리스트 + WAS 5xx). 다만 M81은 M1과 다른 질문에 답한다 - M1은
+  # "탐지된 공격이 실제로 침투에 성공했는가"(T1190)를 보고, 이건 "반복적
+  # 익스플로잇/퍼징 시도가 서비스 자체를 불안정하게 만들었는가"(T1499, DoS)를
+  # 본다 - 그래서 stage2 상태코드에 순수 애플리케이션 에러(500)뿐 아니라 과부하/
+  # 타임아웃을 직접 가리키는 503/504도 포함시켜 서비스 불안정 쪽에 더 가깝게
+  # 잡았다. `S27`(단순 요청 폭주, 페이로드 무관)과 달리 "페이로드 자체가
+  # 익스플로잇/퍼징 시도"라는 조건이 붙는다는 점에서 별개.
+  #
+  # severity=3은 S60(확정적 침투 확인, 4)보다 한 단계 낮다 - 이건 "먹혔다"는
+  # 확정 증거가 아니라 "불안정해졌다"는 간접 증거라 신뢰도가 상대적으로 낮다.
+  - id: S78
+    name: "익스플로잇/퍼징 트래픽 이후 서비스 불안정 확인 (WAF → WAS)"
+    type: sequence
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [waf, was]
+    window_seconds: 60
+    stage1:
+      event_module: waf
+      event_action: [sqli, xss, os_command_injection, path_traversal]
+    stage2:
+      event_module: was
+      http_response_status_code: [500, 502, 503, 504]
+    severity: 3
+    mitre_technique_id: "T1499"
+
+  # S83 (sequence, join_on=user_or_sa, 3단계, 2026-07-20, Notion "여러 계층
+  # 시나리오" M5 구현): 브루트포스 → 계정 탈취 → 관리 API 오남용을 하나의
+  # 킬체인으로 엮는다. `S19`/`S26`은 브루트포스 "시도" 자체까지만 잡고 끝난다 -
+  # 탈취 성공 이후 실제 관리 API 오남용까지 이어졌는지 잇는 후속 체인은 없었다.
+  #
+  # stage1은 `S19`가 아니라 `S26`의 재료를 쓴다 - S19는 threshold(60초 안에
+  # 5회) 타입이라 sequence stage 조건으로 그대로 못 옮기지만(M19/M34/M81에서
+  # 이미 확인한 엔진 제약), S26은 WAF 자체가 이미 내부에서 카운팅과 임계치 판단을
+  # 끝내고 단발 이벤트(event_action=brute_force)로 내보내므로 sequence stage1로
+  # 바로 쓸 수 있다.
+  #
+  # stage2는 `S19`와 같은 로그인 엔드포인트(/rest/user/login, POST)를 보되
+  # 실패(401/403) 대신 성공(200)을 본다 - "탈취가 실제로 성공했다"는 확인.
+  #
+  # stage3의 join_on=user_or_sa는 `S59`/`S82`가 이미 증명한 actor_identity
+  # 브릿지(enrichment.py가 대상 pod에 정적으로 매핑해둔 K8s 신원)를 그대로
+  # 쓴다 - "탈취된 세션과 연동된 서비스어카운트가 실제로 관리 API를 오남용했다"는
+  # 전제는 S59가 이미 검증한 것과 같은 종류의 해석이다. ConfigMap/Secret 수정,
+  # 스케일링(Deployment/StatefulSet), RBAC 변경(S3/S62 재료)을 event_action
+  # 리스트 하나로 합쳤다.
+  #
+  # mitre_technique_id=T1110: stage1 재료인 S26의 태그를 그대로 물려받는다 -
+  # "브루트포스"가 이 시나리오의 헤드라인(M5 원문 제목의 시작점)이고 stage2/3은
+  # 그게 실제 성공과 오남용으로 이어졌다는 확인 단계. severity=4는 S59와 같은
+  # 급 - 확정적 전체 침해 체인.
+  - id: S83
+    name: "브루트포스 → 계정 탈취 → 관리 API 오남용 (WAF → WAS → K8s Audit)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [waf, was, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: waf
+      event_action: brute_force
+    stage2:
+      event_module: was
+      url_path_prefix: "/rest/user/login"
+      http_request_method: POST
+      http_response_status_code: 200
+    stage3:
+      event_module: k8s_audit
+      event_action:
+        [
+          "create configmaps",
+          "update configmaps",
+          "patch configmaps",
+          "create secrets",
+          "update secrets",
+          "patch secrets",
+          "update deployments",
+          "patch deployments",
+          "update statefulsets",
+          "patch statefulsets",
+          "create clusterroles",
+          "delete clusterroles",
+          "deletecollection clusterroles",
+          "patch clusterroles",
+          "update clusterroles",
+          "create clusterrolebindings",
+          "delete clusterrolebindings",
+          "deletecollection clusterrolebindings",
+          "patch clusterrolebindings",
+          "update clusterrolebindings",
+          "create roles",
+          "delete roles",
+          "deletecollection roles",
+          "patch roles",
+          "update roles",
+          "create rolebindings",
+          "delete rolebindings",
+          "deletecollection rolebindings",
+          "patch rolebindings",
+          "update rolebindings",
+        ]
+    severity: 4
+    mitre_technique_id: "T1110"
+
+  # S84 (sequence, join_on=pod, 3단계, 2026-07-20, Notion "여러 계층 시나리오" M76
+  # 구현, DET0080 기반, M1/M2 통합판 — 단 stage4는 제외): MITRE 공식 DET0080의
+  # AN0220(Apache/Nginx)·AN0222(컨테이너)는 "탐지 → 에러율 증가 → 웹서버 프로세스의
+  # 쉘 생성/웹쉘 → 외부 콜백"이라는 4단계 전체를 하나의 분석으로 규정한다 -
+  # `S60`(M1)은 앞 2단계만 봤는데, 이 시나리오는 stage3(웹서버 프로세스의 예상 밖
+  # 자식 프로세스, M2 재료)까지 이어붙여 사실상 M1과 M2를 하나로 통합한다.
+  #
+  # ⚠️ stage4(외부 목적지 연결/메타데이터 IP 접근, M8/M16 재료)는 여전히 막혀
+  # 있다 - NormalizedEvent에 목적지 IP/포트 필드 자체가 없고(schemas.py 확인),
+  # falcosecurity/rules core에도 클라우드 메타데이터 IP나 일반적인 "의심 목적지"를
+  # 잡는 룰이 없음을 WebFetch로 재확인(M54 조사 때 확인한 "Contact K8S API Server
+  # From Container"는 K8s API 서버 접속만 잡고 임의 외부 목적지는 안 봄, 이미
+  # S1/S5/S59/S81의 stage2 재료로 다른 목적으로 쓰이고 있음). 그래서 이건 DET0080
+  # 4단계 완전판이 아니라 3단계 축소판이다.
+  #
+  # stage3 "Web Server Spawned Suspicious Child Process"는 falcosecurity/rules
+  # core에 실제로 존재함을 WebFetch로 확인(M54 조사 때 발견 - condition:
+  # spawned_process and spawned_by_web_server and proc.name in
+  # (suspicious_web_children), 태그 mitre_execution/T1059) - 이 카탈로그에서
+  # 처음 쓰인다.
+  #
+  # join_on=pod: enrichment.py를 직접 확인한 결과 WAF/WAS는 각각 Juice Shop 응답
+  # 헤더(X-Served-By-Pod)/nginx-was-logger의 Downward API로 orchestrator.*를
+  # "실제 서빙 pod 이름"으로 동적으로 채운다(정적 매핑이 아님, normalizer.py의
+  # normalize_was/normalize_waf) - S5가 이미 증명한 WAF→Falco pod 조인이 WAS까지
+  # 포함해 3단계 전체에 정확하게 적용된다.
+  #
+  # mitre_technique_id=T1190: stage1 재료인 S60/S26 계열과 같은 헤드라인("웹
+  # 익스플로잇")을 물려받는다. severity=4는 S60과 같은 급 - 확정적 침해 확인
+  # 체인이 한 단계 더 길어진 것.
+  - id: S84
+    name: "웹 익스플로잇 → 에러율 증가 → 웹서버 프로세스 이상 자식 프로세스 확인 (WAF/WAS → WAS → Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [waf, was, falco]
+    window_seconds: 300
+    stage1:
+      event_module: waf
+      event_action: [sqli, xss, os_command_injection, path_traversal]
+    stage2:
+      event_module: was
+      http_response_status_code: [500, 502, 503]
+    stage3:
+      event_module: falco
+      event_action: "Web Server Spawned Suspicious Child Process"
+    severity: 4
+    mitre_technique_id: "T1190"
+
+  # S85 (sequence, join_on=user_or_sa, 4단계, 2026-07-20, Notion "여러 계층
+  # 시나리오" M7 구현): `S3`(RBAC 상승 → exec)는 이미 있지만 시작점이 k8s_audit이라
+  # "웹 계층에서의 최초 인증 우회"는 못 본다 - 이 시나리오는 WAF/WAS를 stage1~2로
+  # 앞에 붙여 최초 침투 경로까지 추적한다.
+  #
+  # stage1/2는 WAF가 아니라 WAS를 직접 본다 - Target 저장소(Techeer-12th-b) 백엔드에
+  # "관리자 경로 비인가 접근"을 판정하는 WAF attack_type이 없음을 확인했다(admin/
+  # actuator 관련 로직 전무) - S19가 이미 WAF를 거치지 않고 WAS 원본 로그를 직접
+  # 보는 것과 같은 방식으로 대체했다. 관리자 경로는 사용자 확인 후
+  # `/rest/admin/application-configuration`(Juice Shop의 실제 관리자 설정 조회
+  # API)로 정했다 - stage1(401/403, 차단/거부됨)과 stage2(200, 우회 성공) 쌍으로
+  # "탐지 vs 먹힘"을 본다(M1/M20/M33과 같은 발상).
+  #
+  # stage3(`S3`의 RBAC 오브젝트 변경 verb 범위 재사용)/stage4(`S16`의 위험한 pod
+  # 생성 조건 재사용)로 이어진다.
+  #
+  # ⚠️ 원안의 stage4는 "신규 Pod 생성 후 비정상 프로세스 실행"(S1/S16 재료)까지
+  # 요구하지만, "프로세스 실행 확인"(falco, join_on=pod)까지 추가하면 5단계가
+  # 되고 그 전환에 pod 축이 필요한데, 이 시퀀스는 stage1~4 전체가 user_or_sa
+  # 하나로 통일돼야 한다(엔진은 시나리오 전체에 단일 join_on만 지원, 모듈
+  # docstring 참고) - 그래서 stage4는 S16의 "위험한 설정을 가진 pod 생성"까지만
+  # 보고, 그 pod 안에서 실제로 이상행동이 확인됐는지(S1 후반부)는 별도로
+  # `S67`/`S68`류 pod-axis 체인이 이어서 잡아줄 몫으로 남긴다.
+  #
+  # join_on=user_or_sa: stage1/2(WAS)의 actor_identity → stage3/4(k8s_audit)의
+  # user.name 브릿지는 S59/S83이 이미 증명한 것과 같은 메커니즘(enrichment.py의
+  # target_name 기반 정적 매핑, normalizer.py 직접 확인).
+  #
+  # mitre_technique_id=T1190: 이 시나리오의 헤드라인("웹 계층에서의 최초 인증
+  # 우회")을 반영해 S60/S84와 같은 태그를 물려받는다. severity=4는 S59/S83과
+  # 같은 급 - 확정적 전체 침해 체인.
+  - id: S85
+    name: "인증 우회 → 관리 콘솔 접근 → RBAC 권한 상승 (WAF/WAS → K8s Audit)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [was, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: was
+      url_path_prefix: "/rest/admin/application-configuration"
+      http_response_status_code: [401, 403]
+    stage2:
+      event_module: was
+      url_path_prefix: "/rest/admin/application-configuration"
+      http_response_status_code: 200
+    stage3:
+      event_module: k8s_audit
+      audit_verb: [create, delete, deletecollection, patch, update]
+      orchestrator_resource_type: [clusterroles, clusterrolebindings, roles, rolebindings]
+    stage4:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: pods
+      audit_pod_security_flags_any: [privileged, host_network, host_pid, host_ipc, host_path_volume]
+    severity: 4
+    mitre_technique_id: "T1190"
+
+  # S90 (cardinality, join_on=rule_id, 2026-07-20, Notion "여러 계층 시나리오"
+  # M32 구현, 엔진 확장 포함): 지금까지의 모든 시나리오는 "한 발신지(IP/신원)가
+  # 한 대상을 계속 두드린다"는 축으로 join한다 - 이건 반대로 "같은 공격 시그니처가
+  # 서로 다른 여러 pod에 짧은 시간 안에 동시다발적으로 나타나는지"를 본다. 하나의
+  # IP가 순차적으로 스캔하는 것과 달리, 짧은 시간에 여러 대상에서 동일 시그니처가
+  # 동시에 뜨면 자동화된 전파(웜)이거나 여러 소스 IP를 쓰는 협조 공격일 가능성이
+  # 높다.
+  #
+  # join_key를 "공격자"가 아니라 "공격 시그니처"로 잡는 이 카탈로그 최초의
+  # 시나리오라, app/rules.py의 _join_key()에 rule_id 축을 새로 추가하는 엔진
+  # 확장이 선행됐다(2026-07-20, 이 시나리오와 함께 커밋) - event.rule_id는 이미
+  # waf/was/falco가 채우는 필드라 새 필드는 필요 없었다.
+  #
+  # threshold=3/60s는 초기 추정치(다른 cardinality 시나리오와 같은 이유 - 실측
+  # 트래픽 기준선이 아직 없음, verdict 피드백 루프로 나중에 조정할 것).
+  # mitre_technique_id=T1190은 S4/S55/S60/S84와 같은 태그 - 근본적으로 같은
+  # "공개 웹앱 익스플로잇 시도"를 다른 조인 축(단일 발신지 vs 시그니처 확산)으로
+  # 보는 것뿐이다.
+  - id: S90
+    name: "여러 pod에 걸친 동일 공격 시그니처의 짧은 확산 (웜형 자동 전파 탐지)"
+    type: cardinality
+    join_on: rule_id
+    correlation_key_type: "rule.id"
+    required_modules: [waf]
+    window_seconds: 60
+    threshold: 3
+    cooldown_seconds: 300
+    distinct_field: orchestrator_resource_name
+    match:
+      event_module: waf
+    severity: 4
+    mitre_technique_id: "T1190"

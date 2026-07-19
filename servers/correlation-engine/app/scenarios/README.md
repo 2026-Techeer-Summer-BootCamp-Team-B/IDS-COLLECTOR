@@ -10,12 +10,12 @@
 | 파일 | 다루는 영역 | 시나리오 |
 | --- | --- | --- |
 | `rbac.yaml` | RBAC 변경/권한 상승/백도어 계정 | S3, S6, S7, S9, S11, S12, S13, S53, S58 |
-| `workload.yaml` | Pod/워크로드 생명주기 및 컨테이너 이스케이프 | S1, S8, S14, S15, S16, S20, S21, S34, S35, S40, S41, S42, S43, S52, S61, S64 |
-| `credentials.yaml` | 자격증명 접근/노출 | S2, S18, S38, S39, S45, S46, S47, S48, S49, S56 |
-| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55, S59, S60, S63, S65 |
-| `discovery.yaml` | 정찰(reconnaissance) | S10, S31, S50, S62 |
-| `resource_abuse.yaml` | 컨테이너 런타임 리소스 남용(크립토마이닝) | S22 |
-| `defense_evasion.yaml` | 컨테이너 내 흔적 인멸 | S23, S36, S37, S44 |
+| `workload.yaml` | Pod/워크로드 생명주기 및 컨테이너 이스케이프 | S1, S8, S14, S15, S16, S20, S21, S34, S35, S40, S41, S42, S43, S52, S61, S64, S66, S67, S68, S69, S70, S72, S73, S74, S75, S80, S81, S86, S87 |
+| `credentials.yaml` | 자격증명 접근/노출 | S2, S18, S38, S39, S45, S46, S47, S48, S49, S56, S89 |
+| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55, S59, S60, S63, S65, S71, S77, S78, S83, S84, S85, S90 |
+| `discovery.yaml` | 정찰(reconnaissance) | S10, S31, S50, S62, S79, S91 |
+| `resource_abuse.yaml` | 컨테이너 런타임 리소스 남용(크립토마이닝) | S22, S82 |
+| `defense_evasion.yaml` | 컨테이너 내 흔적 인멸 | S23, S36, S37, S44, S76, S88 |
 | `lateral_movement.yaml` | 탈취한 인증 자료를 이용한 측면 이동 | S25, S57 |
 
 ## 엔진 동작 (sequence/threshold/cardinality 3타입)
@@ -51,9 +51,13 @@
   ```
 
 `join_on`: 엔진 내부 로직/Redis 키 네임스페이스용 식별자(`pod`/`user_or_sa`/
-`source_ip`, `app/rules.py`의 `_join_key` 참고). `correlation_key_type`:
+`source_ip`/`rule_id`, `app/rules.py`의 `_join_key` 참고). `correlation_key_type`:
 PostgreSQL enum 값 그대로 - `Incident.correlation_key_type`에 저장되는 값이라
 `join_on`과 반드시 짝이 맞아야 한다.
+
+`rule_id`(2026-07-20 추가, S90 재료): "누가/어디서"가 아니라 "같은 공격 시그니처가
+서로 다른 여러 대상(pod)에 동시다발적으로 나타나는지"를 보는 축 - 웜형 자동 전파나
+협조 공격(여러 소스 IP) 탐지용. 지금까지의 3개 축과 근본적으로 다른 질문에 답한다.
 
 ## "동시 부재" 확인 (`absent_recent_module`, 2026-07-19)
 
@@ -71,8 +75,8 @@ match:
 
 `app/rules.py`의 `ScenarioEngine.evaluate()`가 매 이벤트마다 무조건
 `_stamp_recency()`로 "이 모듈·이 join_key가 방금 나타났다"는 흔적을 Redis에
-남긴다(어느 시나리오가 나중에 이 흔적을 쓸지 몰라 `pod`/`user_or_sa`/`source_ip`
-3개 축 전부에 미리 남긴다) - 패턴 평가 시 그 흔적의 최신 여부만 확인하면 되므로
+남긴다(어느 시나리오가 나중에 이 흔적을 쓸지 몰라 `pod`/`user_or_sa`/`source_ip`/
+`rule_id` 4개 축 전부에 미리 남긴다) - 패턴 평가 시 그 흔적의 최신 여부만 확인하면 되므로
 미래를 기다리는 스케줄러가 필요 없다. 여러 계층 시나리오 Notion 페이지의
 M9("K8s Audit 비인가 이미지 pull + Falco 악성 패턴 + WAF/WAS 트래픽 없음 = 공급망
 침해 정황")이 이 메커니즘을 쓰는 예시다.
@@ -168,9 +172,12 @@ Service, Configmap 자격증명, Ingress without TLS)을 구현했다.
   로그(k8s_audit)/런타임 syscall(Falco)/WAF·WAS만 수집하고 pod 상태 변화
   자체(Watch on pod status, 또는 kube-state-metrics류)는 수집하지 않아서, 새
   시나리오 하나가 아니라 새 수집기(컬렉터)가 있어야 하는 문제 - 범위 밖.
-- **port-forward**(subresource=portforward): objectRef만으로 조건은 만들 수
+- ~~**port-forward**(subresource=portforward): objectRef만으로 조건은 만들 수
   있지만, MITRE Containers 매트릭스에 깔끔하게 들어맞는 기법이 없어서(억지로
-  끼워맞추지 않기로 하고) 시나리오화하지 않았다.
+  끼워맞추지 않기로 하고) 시나리오화하지 않았다.~~ **(2026-07-20 재검토, 뒤집힘)**
+  MITRE 공식 Detection Strategies의 DET0445(T1090 Proxy) AN1233이 "동적/정적
+  포트 포워딩 규칙 추가"를 명시적으로 프록시 인프라 구축 신호로 다뤄 -
+  `network.yaml`의 `S77`로 구현.
 - **외부 allowlist가 필요한 룰**(Disallowed K8s User, Full K8s Administrative
   Access, Untrusted Node, Create Disallowed Namespace 등): "정상 목록"이라는
   운영 정책 자체가 이 프로젝트에 없어서 스킵.

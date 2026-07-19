@@ -44,8 +44,8 @@ absent_recent_module (2026-07-19, "동시 부재" 확인): match(threshold/cardi
            "이 사건이 났을 때 다른 소스가 최근에 조용했는가"를 보는 동시성 부재
            체크다. evaluate()가 매 이벤트마다 무조건 _stamp_recency()로 "이
            모듈·이 join_key가 방금 나타났다"는 흔적을 Redis에 남겨두므로(어느
-           시나리오가 나중에 이 흔적을 쓸지 몰라 pod/user_or_sa/source_ip 3개 축
-           전부에 미리 남긴다), 패턴 평가 시 그 흔적의 최신 여부만 확인하면 되고
+           시나리오가 나중에 이 흔적을 쓸지 몰라 pod/user_or_sa/source_ip/rule_id
+           4개 축 전부에 미리 남긴다), 패턴 평가 시 그 흔적의 최신 여부만 확인하면 되고
            미래를 기다리는 스케줄러가 필요 없다. ⚠️ 이건 동시 부재만 본다 - "stage1
            이후 N초 안에 아무 일도 안 일어나면 발화"처럼 미래 시간 경과 자체를
            기다려야 하는 지연 부재는 이 메커니즘으로 못 한다(별도 스케줄러 필요,
@@ -73,7 +73,7 @@ _RECENCY_MARKER_TTL_SECONDS = 900
 # _stamp_recency()가 매 이벤트마다 흔적을 남기는 join_on 축 전체 - 어떤 시나리오가
 # 나중에 absent_recent_module로 이 이벤트의 부재를 어느 축으로 물어볼지 미리 알 수
 # 없어서, 값이 있는 축 전부에 남긴다(_join_key 참고).
-_JOIN_ON_KINDS: Tuple[str, ...] = ("pod", "user_or_sa", "source_ip")
+_JOIN_ON_KINDS: Tuple[str, ...] = ("pod", "user_or_sa", "source_ip", "rule_id")
 
 
 def _join_key(event: NormalizedEvent, join_on: str) -> Optional[str]:
@@ -89,6 +89,15 @@ def _join_key(event: NormalizedEvent, join_on: str) -> Optional[str]:
         return event.actor_identity or event.user_name
     if join_on == "source_ip":
         return event.source_ip
+    if join_on == "rule_id":
+        # 2026-07-20 추가 (Notion "여러 계층 시나리오" M32) - "공격자"가 아니라
+        # "공격 시그니처"를 조인 축으로 삼는 첫 사례. 지금까지의 join_on(pod/
+        # user_or_sa/source_ip)은 전부 "누가/어디서"를 묻지만, 이건 "같은 룰이
+        # 서로 다른 여러 대상(pod)에 동시다발적으로 발화하는지"를 묻는다 - 웜형
+        # 자동 전파나 여러 소스 IP를 쓰는 협조 공격 탐지용. event.rule_id는
+        # waf/was/falco가 이미 채우는 필드라(schemas.py) 새 필드 없이 바로 쓸 수
+        # 있다.
+        return event.rule_id
     return None
 
 
@@ -239,10 +248,10 @@ class ScenarioEngine:
 
     async def _stamp_recency(self, event: NormalizedEvent) -> None:
         """이 이벤트가 나중에 다른 시나리오의 absent_recent_module 조건에서 조회될
-        수 있도록, 값이 있는 모든 join_on 축(pod/user_or_sa/source_ip)으로 "최근
-        발생" 흔적을 Redis에 남긴다. 어떤 시나리오가 나중에 이 모듈의 부재를 어느
-        축으로 물어볼지 미리 알 수 없어 3개 축 전부를 싼 비용(SET 최대 3개, 값 없는
-        축은 스킵)으로 남겨둔다. 값은 이벤트의 실제 발생 시각(timestamp, 수신 시각인
+        수 있도록, 값이 있는 모든 join_on 축(pod/user_or_sa/source_ip/rule_id)으로
+        "최근 발생" 흔적을 Redis에 남긴다. 어떤 시나리오가 나중에 이 모듈의 부재를
+        어느 축으로 물어볼지 미리 알 수 없어 4개 축 전부를 싼 비용(SET 최대 4개,
+        값 없는 축은 스킵)으로 남겨둔다. 값은 이벤트의 실제 발생 시각(timestamp, 수신 시각인
         event_ingested가 아니다)이라 나중에 조회하는 쪽이 "그때로부터 몇 초가
         지났는지"를 정확히 계산할 수 있다 - TTL(_RECENCY_MARKER_TTL_SECONDS)은 그
         계산이 가능하도록 값을 충분히 오래 살려두는 상한일 뿐이다.

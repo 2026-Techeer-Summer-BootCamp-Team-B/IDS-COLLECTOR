@@ -72,7 +72,7 @@ def test_join_on_is_a_known_value(all_scenarios):
     # rules.py의 _join_key()가 인식하는 값 셋 - 여기 없는 값이면 join_key가 항상
     # None이 되어 그 시나리오는 조용히 영원히 발화하지 않는다.
     for s in all_scenarios:
-        assert s["join_on"] in {"pod", "user_or_sa", "source_ip"}, s["id"]
+        assert s["join_on"] in {"pod", "user_or_sa", "source_ip", "rule_id"}, s["id"]
 
 
 def test_scenario_type_is_known(all_scenarios):

@@ -2,6 +2,8 @@
 개수가 threshold 이상이면 발화한다(rules.py의 _eval_cardinality). 카탈로그와 무관한
 합성 시나리오로 엔진 메커니즘 자체만 검증한다(test_engine_sequence_multistage.py와
 동일 방침)."""
+from datetime import datetime, timezone
+
 from app.rules import ScenarioEngine
 
 _SCAN_SCENARIO = {
@@ -98,3 +100,54 @@ class TestCardinalityThreshold:
 
         second = await engine.evaluate(make_event(event_module="was", source_ip=ip, url_path="/api/d"))
         assert len(second) == 1
+
+
+_DAY_BUCKET_SCENARIO = {
+    "id": "TEST-DAY-BUCKET",
+    "db_id": "test-day-bucket-db-id",
+    "name": "합성 day-bucket 카디널리티 테스트 시나리오 (M52)",
+    "type": "cardinality",
+    "join_on": "user_or_sa",
+    "correlation_key_type": "user.name",
+    "required_modules": ["k8s_audit"],
+    "window_seconds": 604800,
+    "threshold": 3,
+    "cooldown_seconds": 86400,
+    "distinct_field": "event_date",
+    "match": {"event_module": "k8s_audit", "audit_verb": ["get", "list", "watch"]},
+    "severity": 3,
+    "mitre_technique_id": "T1613",
+}
+
+
+class TestCardinalityEventDateBucket:
+    """distinct_field=event_date(2026-07-20, M52) - NormalizedEvent.event_date는
+    schemas.py의 순수 @property(timestamp에서 계산)라 getattr()로 정상 동작하는지
+    확인한다."""
+
+    def _day(self, day: int) -> datetime:
+        return datetime(2026, 7, day, 10, 0, 0, tzinfo=timezone.utc)
+
+    async def test_same_day_repeated_does_not_fire(self, redis_client, make_event):
+        engine = ScenarioEngine([_DAY_BUCKET_SCENARIO], redis_client)
+        user = "system:serviceaccount:default:default"
+        for _ in range(5):
+            fired = await engine.evaluate(
+                make_event(event_module="k8s_audit", audit_verb="get", user_name=user, timestamp=self._day(1))
+            )
+        assert fired == []
+
+    async def test_three_distinct_days_fires(self, redis_client, make_event):
+        engine = ScenarioEngine([_DAY_BUCKET_SCENARIO], redis_client)
+        user = "system:serviceaccount:default:default"
+        await engine.evaluate(
+            make_event(event_module="k8s_audit", audit_verb="get", user_name=user, timestamp=self._day(1))
+        )
+        await engine.evaluate(
+            make_event(event_module="k8s_audit", audit_verb="list", user_name=user, timestamp=self._day(2))
+        )
+        fired = await engine.evaluate(
+            make_event(event_module="k8s_audit", audit_verb="watch", user_name=user, timestamp=self._day(3))
+        )
+        assert len(fired) == 1
+        assert fired[0]["join_key"] == user
