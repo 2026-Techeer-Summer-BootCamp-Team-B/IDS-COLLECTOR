@@ -75,3 +75,78 @@ scenarios:
       event_action: "Packet socket created in container"
     severity: 3
     mitre_technique_id: "T1557"
+
+  # S62 (sequence, join_on=user_or_sa, window_seconds=1800, 2026-07-19, Notion
+  # "여러 계층 시나리오" M19 구현, S31 후속): S10/S31(둘 다 threshold) 같은
+  # "빠르게 많이"에만 반응하는 시나리오는 정찰 사실을 아는 공격자가 임계값 아래로
+  # 속도를 늦추면(low-and-slow) 아무것도 못 잡는다 - 이건 "빈도"가 아니라 "정찰
+  # 이후의 인과관계"를 신호로 쓴다: RBAC를 한 번이라도 훑어본 신원이 그 뒤 훨씬
+  # 넓은 시간창(1800초) 안에 민감 리소스에 단 한 번만 접근해도 매칭한다.
+  #
+  # ⚠️ 원안(Notion 문서)은 stage1을 "S31 재료(threshold=5/60s)가 이미 발화한
+  # 상태"로 적었는데, 그대로는 구현 불가능하다 - sequence의 stageN은 이벤트 한
+  # 건이 패턴에 맞는지만 보는 정적 매칭(_matches())이라, "같은 패턴이 60초 안에
+  # 5번 반복됐는지"(threshold의 Redis 카운터 로직)를 스테이지 조건으로 가져올
+  # 수가 없다(M48이 지적한 "시퀀스 안에 threshold/cardinality를 중첩" 문제와 같은
+  # 엔진 제약). 그래서 stage1은 S31의 threshold(5회)가 아니라 S31의 match 패턴
+  # (roles/clusterroles/rolebindings/clusterrolebindings의 get/list) 자체를
+  # 단발 이벤트로 재사용한다 - 오히려 이게 원안의 취지에 더 맞다: stage1에 5회
+  # 임계값을 그대로 요구하면 그 자체가 병목이 되어 "임계값 아래로 속도를 늦추는"
+  # 공격자를 여전히 놓치게 된다. stage2(민감 리소스 접근)가 실질적인 노이즈
+  # 필터 역할을 하므로 stage1을 단발로 완화해도 무분별하게 발화하지 않는다.
+  #
+  # stage2 "민감 리소스(secrets get, RBAC 변경 등)"는 두 갈래 - S2가 쓰는 secrets
+  # get/list와 S3가 쓰는 RBAC 오브젝트 변경(clusterroles/clusterrolebindings/
+  # roles/rolebindings의 create/delete/deletecollection/patch/update, S3 stage1과
+  # 동일 verb 범위 - deletecollection을 빠뜨리면 안 된다는 게 S3 주석의 교훈)을
+  # event_action 리스트 하나로 합쳤다(S1 stage1/S61 stage2와 같은 "여러 verb x
+  # resource 조합을 event_action 리스트로" 패턴 - audit_verb+orchestrator_resource_type
+  # 필드를 따로 쓰면 두 갈래가 서로의 verb/resource와 원치 않게 교차 매칭될 수
+  # 있어(예: get secrets가 아니라 delete secrets까지 잡히는 식) 이 방식을 피했다).
+  #
+  # mitre_technique_id=T1069: stage2가 실제로는 T1552(자격증명 접근)/T1098(RBAC
+  # 권한 부여)까지 걸치는 혼합 신호지만, 이 시나리오의 정체성은 "S31의 후속"이라는
+  # 데 있어 S31의 기법 태그를 그대로 물려받는다 - S60/S61이 각각의 원조 시나리오
+  # 태그를 재사용한 것과 같은 컨벤션. severity=4는 S1/S3/S61과 같은 논리 - 정찰
+  # 단독(S31, severity=2)보다 "정찰 이후 실제 접근까지 확인됐다"는 확정적 체인이라
+  # 한 단계 올려 잡는다.
+  - id: S62
+    name: "RBAC 열거 정찰 이후 저빈도 민감 리소스 접근 (threshold 우회 대응)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 1800
+    stage1:
+      event_module: k8s_audit
+      audit_verb: [get, list]
+      orchestrator_resource_type: [roles, clusterroles, rolebindings, clusterrolebindings]
+    stage2:
+      event_module: k8s_audit
+      event_action:
+        [
+          "get secrets",
+          "list secrets",
+          "create clusterroles",
+          "delete clusterroles",
+          "deletecollection clusterroles",
+          "patch clusterroles",
+          "update clusterroles",
+          "create clusterrolebindings",
+          "delete clusterrolebindings",
+          "deletecollection clusterrolebindings",
+          "patch clusterrolebindings",
+          "update clusterrolebindings",
+          "create roles",
+          "delete roles",
+          "deletecollection roles",
+          "patch roles",
+          "update roles",
+          "create rolebindings",
+          "delete rolebindings",
+          "deletecollection rolebindings",
+          "patch rolebindings",
+          "update rolebindings",
+        ]
+    severity: 4
+    mitre_technique_id: "T1069"

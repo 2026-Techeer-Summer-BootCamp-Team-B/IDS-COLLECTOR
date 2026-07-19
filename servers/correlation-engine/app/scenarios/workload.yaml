@@ -407,3 +407,111 @@ scenarios:
       event_action: "Debugfs Launched in Privileged Container"
     severity: 4
     mitre_technique_id: "T1611"
+
+  # S61 (sequence, join_on=user_or_sa, 2026-07-19, Notion "여러 계층 시나리오" M3
+  # 구현): S1/S3와 방향이 반대인 체인 - S1/S3는 "k8s_audit 선행(exec 권한 사용/RBAC
+  # 변경) → falco 후행(실제 이상행동)"인데, 이건 "falco가 먼저 컨테이너 침해를
+  # 확인한 뒤 그 신원이 K8s Audit에서 클러스터 권한을 노리는지"를 본다 - 컨테이너
+  # 하나가 뚫린 걸 넘어 클러스터 전체로 번지려는 시도라 위험도가 가장 높다.
+  #
+  # stage1은 이미 구현된 falco 신호 4종을 재료로 재사용한다 - 리버스쉘/RCE 계열
+  # (S32 stdout/stdin 리다이렉트, S34 미확인 바이너리 실행, S35 Netcat RCE)과
+  # 컨테이너 이스케이프 계열(S52 Debugfs). ⚠️ M3 원문의 "/proc/*/root 접근"과
+  # "setuid/CAP_SYS_ADMIN capability 변경"은 대응하는 falco 룰이 카탈로그에 없어서
+  # (커스텀 룰이 필요, S53/S56처럼 Techeer-12th-b에 별도 룰 추가가 선행돼야 함)
+  # 이번엔 뺐다 - 근거 없이 조건을 지어내지 않는다는 이 카탈로그의 원칙 그대로.
+  #
+  # stage2는 S1/S2/S3/S13이 이미 쓰는 event_action 값을 그대로 모아 하나의
+  # 리스트로 표현했다(S1 stage1이 이미 이 "여러 verb x resource 조합을 event_action
+  # 리스트 하나로" 패턴을 쓰고 있어 그대로 따름) - clusterrolebinding/rolebinding
+  # 생성(S13류 권한 몰아주기), secrets 조회(S2), 다른 pod exec/attach(S1/S3).
+  #
+  # join_on=user_or_sa: falco(stage1)의 actor_identity(enrichment.py가 대상 pod에
+  # 정적으로 매핑해둔 K8s 신원)와 k8s_audit(stage2)의 실제 인증된 user.name이
+  # 자연히 이어진다 - `S59`가 이미 같은 Falco→K8s Audit 브릿지를 5단계 체인에서
+  # 증명한 방식 그대로라 새로운 조인 문제가 없다.
+  #
+  # severity=4, mitre_technique_id=T1609: S1/S3와 짝을 이루는 역방향 체인이라는
+  # 점을 명시적으로 밝힌 원문 그대로 같은 기법 태그를 재사용했다 - stage2가 실제로는
+  # T1098(RBAC 권한 부여)/T1552(자격증명 접근)/T1609(exec) 세 종류를 포괄하는 혼합
+  # 신호지만, 이 카탈로그가 S1/S3에 이미 확립한 "쌍을 이루는 체인은 같은 기법으로
+  # 묶는다"는 컨벤션을 그대로 따른다.
+  - id: S61
+    name: "컨테이너 침해 확인 이후 클러스터 권한 확장 시도 (Falco → K8s Audit)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [falco, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action:
+        [
+          "Redirect STDOUT/STDIN to Network Connection in Container",
+          "Drop and execute new binary in container",
+          "Netcat Remote Code Execution in Container",
+          "Debugfs Launched in Privileged Container",
+        ]
+    stage2:
+      event_module: k8s_audit
+      event_action:
+        [
+          "create clusterrolebindings",
+          "create rolebindings",
+          "get secrets",
+          "list secrets",
+          "create pods/exec",
+          "create pods/attach",
+          "get pods/exec",
+          "get pods/attach",
+        ]
+    severity: 4
+    mitre_technique_id: "T1609"
+
+  # S64 (sequence, join_on=pod, 2026-07-19, Notion "여러 계층 시나리오" M30 구현,
+  # S8/S23 후속): 로그 삭제(`S23`, stage1 재료)만으로는 falco의 실시간 프로세스
+  # 트리 관측까지는 못 지운다 - 컨테이너 자체를 delete+recreate로 통째로 갈아치우면
+  # 그 안의 모든 런타임 흔적(프로세스 히스토리, 열린 파일 핸들)이 사라진다는 점에서
+  # 흔적 인멸의 더 근본적인 버전.
+  #
+  # `S8`(네임스페이스 삭제 전체)과 조건이 겹칠 수 있다고 M30 원문이 스스로 지적한
+  # 우려는 stage2/3을 orchestrator_resource_type=pods로 좁혀서 해소했다 -
+  # namespaces가 아니라 개별 pod의 delete+recreate 쌍만 본다.
+  #
+  # ⚠️ stage2->stage3이 join_on=pod로 자연히 이어지려면 삭제된 pod와 "정확히 같은
+  # 이름"으로 재생성돼야 한다 - Deployment가 관리하는 일반 pod는 재시작하면 보통
+  # 새 랜덤 접미사 이름을 받아서(예: juice-shop-7d9f8-abc12 -> -xyz34) 이 조인이 안
+  # 걸린다. 반면 StatefulSet pod는 재시작해도 이름이 그대로 유지되고, 공격자가
+  # 명시적으로 같은 이름 스펙으로 재생성하는 경우도 이 조건에 해당한다 - 이건 엔진
+  # 한계가 아니라 워크로드 유형에 따라 갈리는 자연스러운 특성이라 그대로 둔다.
+  #
+  # window_seconds=180: 엔진이 스테이지 사이 구간별로 서로 다른 마감시한을 두는
+  # 기능이 없어(모듈 docstring 참고 - window_seconds는 체인 전체에 적용되는 예산
+  # 하나뿐) M30 원문의 "로그 삭제 이후"와 "delete 후 매우 짧은 시간 안에 recreate"
+  # 두 서로 다른 긴급도를 하나의 예산으로 근사한다 - 전체 체인이 3분 안에 끝나야
+  # 한다는 뜻.
+  #
+  # mitre_technique_id=T1070: stage1 재료인 S23의 태그를 그대로 물려받는다 -
+  # S60~S63이 이미 확립한 "재사용한 원조 시나리오의 기법 태그를 따른다"는 컨벤션.
+  # severity=4는 S1/S3/S61과 같은 논리 - 흔적 인멸 시도(S23, severity=3)보다 "실제로
+  # 컨테이너를 통째로 갈아치우는 데까지 이어졌다"는 확정적 체인이라 한 단계 올린다.
+  - id: S64
+    name: "로그 삭제 이후 pod 재시작을 통한 흔적 완전 인멸 (Falco → K8s Audit)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco, k8s_audit]
+    window_seconds: 180
+    stage1:
+      event_module: falco
+      event_action: "Clear Log Activities"
+    stage2:
+      event_module: k8s_audit
+      audit_verb: delete
+      orchestrator_resource_type: pods
+    stage3:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: pods
+    severity: 4
+    mitre_technique_id: "T1070"
