@@ -134,6 +134,8 @@ function RuleRankingBarChart({ data, C }) {
         />
         <Tooltip
           contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+          labelStyle={{ color: C.fg }}
+          itemStyle={{ color: C.fg }}
           cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
           formatter={(value) => [`${value}건`, "적중 건수"]}
           labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}

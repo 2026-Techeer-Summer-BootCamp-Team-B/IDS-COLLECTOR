@@ -390,7 +390,7 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
               <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
               <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
               <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} labelStyle={{ color: C.fg }} itemStyle={{ color: C.fg }} />
               {stackSeries.map((s) => (
                 <Area
                   key={s.key}
@@ -530,6 +530,8 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
                 <Tooltip
                   contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }}
+                  labelStyle={{ color: C.fg }}
+                  itemStyle={{ color: C.fg }}
                   cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
                 />
                 <Bar dataKey="total" fill={totalColor} radius={[3, 3, 0, 0]} />
@@ -550,7 +552,7 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip contentStyle={tooltipStyle(C)} />
+                <Tooltip contentStyle={tooltipStyle(C)} labelStyle={{ color: C.fg }} itemStyle={{ color: C.fg }} />
                 <Area type="monotone" dataKey="total" stroke={totalColor} fill="url(#volumeFill)" strokeWidth={2} />
                 <Area type="monotone" dataKey="errorish" stroke={errorColor} fill="url(#errorFill)" strokeWidth={2} />
                 {spikePoint && (
@@ -667,7 +669,7 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
               <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
               <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
               <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-              <Tooltip contentStyle={tooltipStyle(C)} />
+              <Tooltip contentStyle={tooltipStyle(C)} labelStyle={{ color: C.fg }} itemStyle={{ color: C.fg }} />
               <Area
                 type="monotone"
                 dataKey="was"
@@ -775,7 +777,7 @@ export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", c
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} labelStyle={{ color: C.fg }} itemStyle={{ color: C.fg }} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -830,6 +832,8 @@ export function LevelDistributionChart({ events }) {
           <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
           <Tooltip
             contentStyle={{ background: C.surfaceAlt, border: "none", borderRadius: 8, color: C.fg }}
+            labelStyle={{ color: C.fg }}
+            itemStyle={{ color: C.fg }}
             cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
           />
           <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
@@ -967,7 +971,12 @@ function CategoryBarChart({ data, C, height = 160 }) {
         <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
         <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
         <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} />
-        <Tooltip contentStyle={tooltipStyle(C)} cursor={{ fill: C.surfaceAlt, opacity: 0.5 }} />
+        <Tooltip
+          contentStyle={tooltipStyle(C)}
+          labelStyle={{ color: C.fg }}
+          itemStyle={{ color: C.fg }}
+          cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
+        />
         <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
           {data.map((d) => (
             <Cell key={d.key} fill={d.color} />
@@ -1324,7 +1333,7 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} labelStyle={{ color: C.fg }} itemStyle={{ color: C.fg }} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1409,7 +1418,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                   <Cell key={d.key} fill={d.color} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} />
+              <Tooltip contentStyle={tooltipStyle(C)} labelStyle={{ color: C.fg }} itemStyle={{ color: C.fg }} cursor={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
@@ -1479,6 +1488,8 @@ function LayerAttackStatsCompact({ scenarios, status, error, controlled = false 
             <YAxis type="category" dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} width={80} />
             <Tooltip
               contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+              labelStyle={{ color: C.fg }}
+              itemStyle={{ color: C.fg }}
               cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
               formatter={(value) => [`${value}건`, "적중 건수"]}
             />
