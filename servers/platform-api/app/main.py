@@ -121,6 +121,12 @@ app.add_middleware(
     allow_origins=settings.cors_allowed_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
+    # X-Next-Cursor(app/pagination.py) - 브라우저는 기본적으로 커스텀 응답
+    # 헤더를 JS에서 못 읽는다(같은 오리진이면 상관없지만, dev 서버처럼
+    # cross-origin으로 API_BASE를 잡은 경우엔 이게 없으면 fetch().headers.get()이
+    # 항상 null을 반환한다 - 2026-07-19, 커서 페이지네이션을 처음 프론트에서
+    # 실제로 소비하면서 발견).
+    expose_headers=["X-Next-Cursor"],
 )
 
 # 게이트웨이 시크릿 강제(감사 S13, 2026-07-16) - 모듈 docstring 및

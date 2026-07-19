@@ -45,7 +45,7 @@ export class ApiError extends Error {
 // 미들웨어가 /api/auth/*, /api/health를 뺀 모든 /api/*에서 한다(auth.py의
 // GET /verify, 2026-07-14부터 - README "프론트엔드 연동 API" 절 참고). 여기서
 // 헤더를 항상 붙여주는 건 그 검사를 통과하기 위해서다 - 안 붙이면 401.
-export async function apiFetch(path, { method = "GET", body, headers = {}, skipAuth = false } = {}) {
+async function apiFetchRaw(path, { method = "GET", body, headers = {}, skipAuth = false } = {}) {
   const token = getToken();
   const finalHeaders = { ...headers };
   if (body !== undefined) finalHeaders["Content-Type"] = "application/json";
@@ -79,15 +79,26 @@ export async function apiFetch(path, { method = "GET", body, headers = {}, skipA
     }
     throw new ApiError(res.status, detail || `요청 실패 (${res.status})`);
   }
-  if (res.status === 204) return null;
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  const body_ = res.status === 204 ? null : await res.text().then((t) => (t ? JSON.parse(t) : null));
+  return { body: body_, res };
+}
+
+export async function apiFetch(path, opts) {
+  const { body } = await apiFetchRaw(path, opts);
+  return body;
 }
 
 export const apiGet = (path) => apiFetch(path);
 export const apiPost = (path, body) => apiFetch(path, { method: "POST", body });
 export const apiPatch = (path, body) => apiFetch(path, { method: "PATCH", body });
 export const apiDelete = (path) => apiFetch(path, { method: "DELETE" });
+
+// app/pagination.py의 X-Next-Cursor 커서 페이지네이션을 쓰는 목록 엔드포인트용 -
+// apiGet과 달리 다음 페이지 커서(없으면 null)까지 같이 돌려준다.
+export async function apiGetPaged(path) {
+  const { body, res } = await apiFetchRaw(path);
+  return { data: body ?? [], nextCursor: res.headers.get("X-Next-Cursor") };
+}
 
 // ---- /auth/* (servers/platform-api/app/auth.py) ----
 

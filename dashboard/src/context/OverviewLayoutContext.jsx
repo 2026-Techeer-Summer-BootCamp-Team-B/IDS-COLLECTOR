@@ -21,21 +21,24 @@ const STORAGE_ACTIVE_KEY = "sentinelops_overview_active_v2";
 // minW/minH(2026-07-17 요청 - "리사이즈해도 내용이 안 잘리는 최소 크기") -
 // KPI 카드는 Playwright로 실제 렌더링해서 재봤다(라벨+값+델타 3줄 내용이
 // 116~118px 밑에서는 세로로 잘림, 폭은 텍스트가 줄바꿈돼서 하드 최솟값이
-// 없어 시각적으로 봐줄만한 선으로 잡음). 나머지 차트/테이블/지도 타입은
-// 전부 Playwright로 하나하나 재기엔 조합이 너무 많아서(범례 줄바꿈, 축 라벨
-// 개수가 데이터에 따라 달라짐 등), KPI 카드 실측 비율(기본 크기 대비 약
-// 60~65%)을 기준으로 위젯 성격(차트 vs 테이블 vs 지도)에 맞게 비례 추정했다 -
-// 정확한 값이 필요하면 문제되는 위젯을 짚어주면 그것부터 다시 실측하겠다.
+// 없어 시각적으로 봐줄만한 선으로 잡음).
 //
-// selfResponsive: true(2026-07-17 버그 수정) - recharts 차트류는 이미 자기
-// 내부에서 ResponsiveContainer로 박스 크기를 따라간다(LogDashboard.jsx의
-// isControlled 분기 참고). WidgetFrame의 useContentScale(고정 크기로 렌더한
-// 뒤 transform:scale로 확대)을 여기에도 같이 적용했더니, 차트를 담은 Card의
-// CSS min-h-80(320px)이 useContentScale이 강제한 더 작은 높이를 무시하고
-// 커져버려서 그 위에 scale까지 겹쳐 두 배로 부풀어 오르는 버그가 났다
-// (Playwright로 실측: 216px로 강제하려던 게 실제로는 399px까지 커짐) -
-// 이미 반응형인 타입은 useContentScale을 아예 건너뛰어서 자체 반응형 로직만
-// 쓰게 한다.
+// 2026-07-19: 나머지 차트/테이블/지도 타입도 전부 실측으로 교체 - 실제 백엔드에
+// 붙인 커스텀 대시보드에서 각 위젯을 단독으로 놓고 h를 한 칸씩 줄여가며(w는
+// 필요시 같이) DOM에서 (a) overflow:hidden/text-overflow로 잘리는 요소,
+// (b) recharts SVG가 0px로 붕괴하는지, (c) 축/범례 텍스트끼리 겹치는지,
+// (d) WidgetFrame의 overflow-auto wrapper가 스크롤이 필요할 만큼(15px 초과)
+// 넘치는지 4가지를 측정해서 스크롤 없이 안 잘리고 다 보이는 가장 작은 값을
+// 찾았다(이전 버전은 KPI 카드 비율로 비례 추정한 값이었음 - 실측해보니 상당수가
+// 부족했다). Log Levels/심각도 분포/탐지소스별 분포는 이 측정 도중 실제
+// 버그도 하나 발견: Card가 block 레이아웃이라 도넛/막대 콘텐츠의 height:100%가
+// "타이틀 행 아래 남는 공간"이 아니라 Card 전체 높이를 기준으로 계산돼서
+// 타이틀 행만큼 항상 넘쳤다(도넛은 아예 0px로 붕괴, 막대는 축 레이블이
+// 스크롤해야만 보임) - Card를 flex-col로, 콘텐츠 영역을 flex-1 min-h-0으로
+// 바꿔서 고쳤다(WidgetFrame 관련 함수들 주석 참고). Top Source IPs/모듈별
+// 로그량 추이/실시간 탐지는 실측 최소값이 기존 기본 배치 크기(w/h)보다 커서
+// 기본 크기도 같이 올렸다 - 안 그러면 캔버스에 처음 놓는 순간부터 이미
+// 최소치보다 작은 상태가 된다.
 //
 // icon: 위젯 설정 팔레트에서 라벨 글씨만으로는 뭔지 안 보인다는 2026-07-18
 // 피드백으로 추가 - LogDashboard.jsx의 WidgetPreviewIcon이 이 값으로 작은
@@ -52,9 +55,8 @@ export const WIDGET_CATALOG = [
     label: "Log Volume",
     w: 8,
     h: 9,
-    minW: 5,
-    minH: 6,
-    selfResponsive: true,
+    minW: 6,
+    minH: 9,
     icon: "area",
     chartTypeOptions: [
       { value: "area", label: "영역" },
@@ -67,8 +69,7 @@ export const WIDGET_CATALOG = [
     w: 4,
     h: 9,
     minW: 3,
-    minH: 6,
-    selfResponsive: true,
+    minH: 9,
     icon: "bar",
     chartTypeOptions: [
       { value: "bar", label: "막대" },
@@ -82,7 +83,6 @@ export const WIDGET_CATALOG = [
     h: 9,
     minW: 3,
     minH: 6,
-    selfResponsive: true,
     icon: "donut",
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
@@ -96,7 +96,6 @@ export const WIDGET_CATALOG = [
     h: 9,
     minW: 3,
     minH: 6,
-    selfResponsive: true,
     icon: "donut",
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
@@ -108,48 +107,16 @@ export const WIDGET_CATALOG = [
   // LayerAttackStatsCompact 참고). 이 type을 바꾸면 이미 저장된 커스텀
   // 대시보드(localStorage)에 이 타입으로 박혀있는 위젯이 CATALOG_BY_TYPE에서
   // 안 찾아져서 통째로 사라진다 - 그래서 라벨/차트타입만 바꾸고 키는 안 건드림.
-  // minW/minH/selfResponsive는 원래 이 자리(구 K8s 네임스페이스 도넛)에 있던 값을
-  // 그대로 이식 - w/h(4x9)가 안 바뀌었으니 리사이즈 최소크기도 그대로 유효하다.
-  {
-    type: "donut-k8s-namespace",
-    label: "계층별 공격 통계",
-    w: 4,
-    h: 9,
-    minW: 3,
-    minH: 6,
-    selfResponsive: true,
-    icon: "hbar",
-  },
+  { type: "donut-k8s-namespace", label: "계층별 공격 통계", w: 4, h: 9, minW: 3, minH: 6, icon: "hbar" },
   { type: "latency-stats", label: "API Latency", w: 12, h: 5, minW: 8, minH: 4, icon: "gauge" },
-  {
-    type: "module-volume",
-    label: "모듈별 로그량 추이",
-    w: 8,
-    h: 9,
-    minW: 5,
-    minH: 6,
-    selfResponsive: true,
-    icon: "area",
-  },
-  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14, minW: 5, minH: 8, icon: "list" },
-  { type: "top-sources", label: "Top Sources", w: 4, h: 7, minW: 3, minH: 5, icon: "list" },
-  { type: "error-rate", label: "Error Rate", w: 4, h: 7, minW: 3, minH: 5, icon: "gauge" },
-  {
-    type: "geo-summary",
-    label: "지역별 분포",
-    w: 12,
-    h: 11,
-    minW: 6,
-    minH: 7,
-    selfResponsive: true,
-    icon: "map",
-  },
+  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 10, minW: 6, minH: 10, icon: "area" },
+  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14, minW: 6, minH: 14, icon: "list" },
+  { type: "top-sources", label: "Top Sources", w: 4, h: 8, minW: 3, minH: 8, icon: "list" },
+  { type: "error-rate", label: "Error Rate", w: 4, h: 7, minW: 3, minH: 7, icon: "gauge" },
+  { type: "geo-summary", label: "지역별 분포", w: 12, h: 11, minW: 4, minH: 6, icon: "map" },
   // 2026-07-16(8차)에 기본 화면에서 뺐던 위젯 - 2026-07-18, "위젯 목록에 다시
-  // 추가해달라"는 요청으로 선택적 위젯(카탈로그에만)으로 복원. LiveActivityTree는
-  // recharts ResponsiveContainer를 쓰는 차트가 아니라(자체 레이아웃 컴포넌트)
-  // 위 selfResponsive 버그 수정 대상이 아니었어서 minW/minH/selfResponsive는
-  // 안 붙인다 - 커스텀 대시보드에서 리사이즈했을 때 문제가 보이면 그때 추가.
-  { type: "activity-flow", label: "실시간 탐지", w: 12, h: 12, icon: "pulse" },
+  // 추가해달라"는 요청으로 선택적 위젯(카탈로그에만)으로 복원.
+  { type: "activity-flow", label: "실시간 탐지", w: 12, h: 13, minW: 6, minH: 13, icon: "pulse" },
 ];
 
 const CATALOG_BY_TYPE = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w]));
@@ -164,66 +131,6 @@ export function chartTypeOptionsFor(type) {
 
 export function defaultChartTypeFor(type) {
   return CATALOG_BY_TYPE[type]?.chartTypeOptions?.[0]?.value;
-}
-
-// LogDashboard.jsx의 두 <ResponsiveGridLayout> JSX(cols/rowHeight/margin
-// prop)와 반드시 맞출 것 - 바뀌면 여기도 같이 고쳐야 아래 픽셀 환산이 틀어진다.
-const GRID_COLS = 12;
-const GRID_ROW_HEIGHT = 20;
-const GRID_MARGIN = 16;
-
-function gridColWidth(containerWidth) {
-  return (containerWidth - GRID_MARGIN * (GRID_COLS - 1)) / GRID_COLS;
-}
-
-// 위젯을 리사이즈(드래그 또는 "높이 -/+" 버튼)할 때 카탈로그의 원래 w/h가
-// "실제 컨테이너 폭 기준으로 렌더링됐을 때의 픽셀 비율"을 그대로 유지시킨다 -
-// LogDashboard.jsx의 WidgetFrame이 selfResponsive가 아닌 위젯에 쓰는
-// useAutoFitBox는 scale = Math.min(w/baseline.w, h/baseline.h)로 계산해서,
-// 박스의 "픽셀" 비율이 기준선(=최초 카탈로그 w/h가 렌더링된 실제 px)과
-// 달라지면 두 비율 중 더 작은 쪽에 맞춰져 콘텐츠가 박스를 못 채우고 빈
-// 공간이 남는 버그가 있었다(2026-07-18).
-//
-// 그리드 "단위"(w/h, 컬럼/행 개수) 비율만 고정하는 걸로는 부족하다 - 컬럼
-// 폭(colWidth, containerWidth에 따라 달라짐)과 행 높이(rowHeight=20, 고정)가
-// 서로 다른 단위라, 단위 비율을 그대로 유지해도 실제 px 비율은 박스가
-// 커질수록 조금씩 어긋난다(실측 확인: kpi-total을 3x6→4x8로 그리드 비율만
-// 맞춰 키웠는데도 콘텐츠와 박스 사이에 135px 간극이 남았음). react-grid-layout
-// v2의 내장 aspectRatio() constraint가 쓰는 것과 동일한 공식
-// (colWidth*w+margin*(w-1) 형태)으로 px 단위까지 맞춘다 - 그 constraint
-// 자체는 이 프로젝트가 쓰는 legacy 호환 래퍼에서 per-item 설정이 무시돼서
-// (레거시 래퍼가 top-level constraints를 defaultConstraints로 하드코딩,
-// applyLayoutToWidgets 주석 참고) 못 쓰고 같은 공식을 여기서 직접 재구현.
-//
-// oldW/oldH와 다른 축(사용자가 실제로 드래그/클릭한 쪽)을 "주도 축"으로 보고
-// 나머지 축을 비율대로 역산한다 - 그래야 세로로만 드래그해도 반응하고,
-// 가로로만 드래그해도 반응한다. containerWidth를 모르면(초기 렌더 등) 그리드
-// 단위 비율로 대충 맞추는 것도 안 하고 그냥 원래 값을 돌려준다 - 잘못된
-// containerWidth=0 기준으로 계산하면 오히려 더 틀어진다.
-export function lockAspectRatioSize(type, containerWidth, oldW, oldH, newW, newH) {
-  const entry = catalogEntry(type);
-  if (!entry || !entry.w || !entry.h || !containerWidth) return { w: newW, h: newH };
-
-  const colWidth = gridColWidth(containerWidth);
-  const baselinePixelWidth = colWidth * entry.w + GRID_MARGIN * Math.max(0, entry.w - 1);
-  const baselinePixelHeight = GRID_ROW_HEIGHT * entry.h + GRID_MARGIN * Math.max(0, entry.h - 1);
-  const ratio = baselinePixelWidth / baselinePixelHeight; // 카탈로그 기준 px 비율(w/h)
-  const minW = entry.minW ?? 1;
-  const minH = entry.minH ?? 1;
-
-  if (newW !== oldW) {
-    const pixelWidth = colWidth * newW + GRID_MARGIN * Math.max(0, newW - 1);
-    const pixelHeight = pixelWidth / ratio;
-    const h = Math.max(minH, Math.round((pixelHeight + GRID_MARGIN) / (GRID_ROW_HEIGHT + GRID_MARGIN)));
-    return { w: newW, h };
-  }
-  if (newH !== oldH) {
-    const pixelHeight = GRID_ROW_HEIGHT * newH + GRID_MARGIN * Math.max(0, newH - 1);
-    const pixelWidth = pixelHeight * ratio;
-    const w = Math.max(minW, Math.round((pixelWidth + GRID_MARGIN) / colWidth));
-    return { w, h: newH };
-  }
-  return { w: newW, h: newH };
 }
 
 let uidCounter = 0;

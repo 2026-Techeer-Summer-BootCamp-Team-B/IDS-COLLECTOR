@@ -69,7 +69,6 @@ import {
   chartTypeOptionsFor,
   defaultChartTypeFor,
   makeWidgetUid,
-  lockAspectRatioSize,
 } from "../context/OverviewLayoutContext";
 
 // WidthProvider는 컨테이너 폭을 재서 GridLayout에 넘겨주는 HOC — 컴포넌트 함수
@@ -793,11 +792,20 @@ export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", c
           <ChartTypeToggle options={chartTypeOptionsFor("level-distribution")} value={chartType} onChange={setInternalType} />
         )
       }
-      className={isControlled ? "min-h-80 h-full" : "h-80"}
+      // 2026-07-19: isControlled일 때 flex-col + flex-1 min-h-0 조합으로 바꿨다 -
+      // Card가 block 레이아웃이라(flex-col 아니었을 때) 도넛/막대 콘텐츠의
+      // height:100%가 "타이틀 행 아래 남는 공간"이 아니라 Card content-box
+      // 전체(패딩 제외 h-full)를 기준으로 계산돼서, 타이틀 행+ 그 아래 margin
+      // 만큼 항상 아래로 넘쳤다(실측: h=12여도 h=11이어도 정확히 34px 초과 -
+      // 늘어난 높이가 그대로 다시 초과분에 흡수될 뿐 안 줄어드는 게 단서였음).
+      // flex-col로 바꾸면 타이틀 행은 자기 콘텐츠 높이만 쓰고, flex-1
+      // min-h-0을 준 콘텐츠 영역이 "진짜 남는 공간"을 갖게 되어 그 안의
+      // height:100%가 정확히 계산된다.
+      className={isControlled ? "min-h-80 h-full flex flex-col" : "h-80"}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status !== "error" && chartType === "donut" && (
-        <div className="flex items-center gap-4 h-[88%]">
+        <div className={isControlled ? "flex items-center gap-4 flex-1 min-h-0" : "flex items-center gap-4"}>
           {isControlled ? (
             // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 고정 132px이 아니라
             // ResponsiveContainer로 박스 크기에 맞춰 커지고 작아지게 한다(2026-07-17
@@ -810,8 +818,8 @@ export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", c
                   data={data}
                   dataKey="count"
                   nameKey="label"
-                  innerRadius={32}
-                  outerRadius={52}
+                  innerRadius="49%"
+                  outerRadius="79%"
                   startAngle={90}
                   endAngle={-270}
                   stroke="none"
@@ -885,9 +893,13 @@ export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", c
           </div>
         </div>
       )}
-      {status !== "error" && chartType !== "donut" && (
-        <CategoryBarChart data={data} C={C} height={isControlled ? "100%" : 220} theme={theme} />
-      )}
+      {status !== "error" && chartType !== "donut" && (isControlled ? (
+        <div className="flex-1 min-h-0">
+          <CategoryBarChart data={data} C={C} height="100%" theme={theme} />
+        </div>
+      ) : (
+        <CategoryBarChart data={data} C={C} height={220} theme={theme} />
+      ))}
     </Card>
   );
 }
@@ -1600,31 +1612,44 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
           <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
         )
       }
-      className={isControlled ? "h-full" : ""}
+      // 2026-07-19: isControlled일 때 flex-col + flex-1 min-h-0 조합 - Card가
+      // block 레이아웃이면 도넛/막대 콘텐츠의 height:100%가 "타이틀 행 아래
+      // 남는 공간"이 아니라 Card content-box 전체를 기준으로 계산돼서 타이틀
+      // 행+margin만큼 항상 아래로 넘친다(막대 모드는 도넛 모드보다 이 문제가
+      // 덜 티나지만 구조는 동일 - level-distribution의 Log Levels에서 실측
+      // 확인: h를 늘려도 초과분이 정확히 그대로 34px 고정이었음, 즉 늘어난
+      // 높이가 그대로 다시 초과분에 흡수될 뿐이었다는 게 단서). flex-col +
+      // flex-1 min-h-0으로 "진짜 남는 공간"을 명시적으로 만들어야 그 안의
+      // height:100%가 정확히 계산된다.
+      className={isControlled ? "h-full flex flex-col" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
-      {data.length > 0 && chartType === "bar" && (
-        <CategoryBarChart data={data} C={C} height={isControlled ? "100%" : 150} theme={theme} />
-      )}
+      {data.length > 0 && chartType === "bar" && (isControlled ? (
+        <div className="flex-1 min-h-0">
+          <CategoryBarChart data={data} C={C} height="100%" theme={theme} />
+        </div>
+      ) : (
+        <CategoryBarChart data={data} C={C} height={150} theme={theme} />
+      ))}
       {data.length > 0 && chartType === "donut" && (
-        <div className="flex items-center gap-4">
+        <div className={isControlled ? "flex items-center gap-4 flex-1 min-h-0" : "flex items-center gap-4"}>
           {isControlled ? (
             // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 고정 132px이 아니라
             // ResponsiveContainer로 박스 크기에 맞춰 커지고 작아지게 한다(2026-07-17
             // 요청 - "박스 리사이즈해도 내부 도넛이 안 따라온다"). 기본(고정 레이아웃)
             // 모드는 계속 고정 132px 그대로 둬서 이전에 잡은 "ResponsiveContainer가
-            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다. selfResponsive: true인
-            // 위젯이라 useAutoFitBox를 건너뛰고(WidgetFrame 참고) 이 컴포넌트가
-            // 직접 박스 크기에 반응한다.
+            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다. WidgetFrame은 이 위젯
+            // 내부를 그대로(overflow-auto로만) 감싸므로 이 컴포넌트가 직접
+            // 박스 크기에 반응해야 한다.
             <ResponsiveContainer width="100%" height="100%">
               <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
                 <Pie
                   data={data}
                   dataKey="count"
                   nameKey="label"
-                  innerRadius={32}
-                  outerRadius={52}
+                  innerRadius="49%"
+                  outerRadius="79%"
                   startAngle={90}
                   endAngle={-270}
                   stroke="none"
@@ -1747,31 +1772,44 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
           <ChartTypeToggle options={chartTypeOptionsFor("donut-severity")} value={chartType} onChange={setInternalType} />
         )
       }
-      className={isControlled ? "h-full" : ""}
+      // 2026-07-19: isControlled일 때 flex-col + flex-1 min-h-0 조합 - Card가
+      // block 레이아웃이면 도넛/막대 콘텐츠의 height:100%가 "타이틀 행 아래
+      // 남는 공간"이 아니라 Card content-box 전체를 기준으로 계산돼서 타이틀
+      // 행+margin만큼 항상 아래로 넘친다(막대 모드는 도넛 모드보다 이 문제가
+      // 덜 티나지만 구조는 동일 - level-distribution의 Log Levels에서 실측
+      // 확인: h를 늘려도 초과분이 정확히 그대로 34px 고정이었음, 즉 늘어난
+      // 높이가 그대로 다시 초과분에 흡수될 뿐이었다는 게 단서). flex-col +
+      // flex-1 min-h-0으로 "진짜 남는 공간"을 명시적으로 만들어야 그 안의
+      // height:100%가 정확히 계산된다.
+      className={isControlled ? "h-full flex flex-col" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && data.length === 0 && <p className="text-dash-muted text-xs">이 구간에는 로그가 없습니다.</p>}
-      {data.length > 0 && chartType === "bar" && (
-        <CategoryBarChart data={data} C={C} height={isControlled ? "100%" : 150} theme={theme} />
-      )}
+      {data.length > 0 && chartType === "bar" && (isControlled ? (
+        <div className="flex-1 min-h-0">
+          <CategoryBarChart data={data} C={C} height="100%" theme={theme} />
+        </div>
+      ) : (
+        <CategoryBarChart data={data} C={C} height={150} theme={theme} />
+      ))}
       {data.length > 0 && chartType === "donut" && (
-        <div className="flex items-center gap-4">
+        <div className={isControlled ? "flex items-center gap-4 flex-1 min-h-0" : "flex items-center gap-4"}>
           {isControlled ? (
             // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 고정 132px이 아니라
             // ResponsiveContainer로 박스 크기에 맞춰 커지고 작아지게 한다(2026-07-17
             // 요청 - "박스 리사이즈해도 내부 도넛이 안 따라온다"). 기본(고정 레이아웃)
             // 모드는 계속 고정 132px 그대로 둬서 이전에 잡은 "ResponsiveContainer가
-            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다. selfResponsive: true인
-            // 위젯이라 useAutoFitBox를 건너뛰고(WidgetFrame 참고) 이 컴포넌트가
-            // 직접 박스 크기에 반응한다.
+            // 불필요하다"는 콘솔 워닝도 그대로 안 남는다. WidgetFrame은 이 위젯
+            // 내부를 그대로(overflow-auto로만) 감싸므로 이 컴포넌트가 직접
+            // 박스 크기에 반응해야 한다.
             <ResponsiveContainer width="100%" height="100%">
               <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
                 <Pie
                   data={data}
                   dataKey="count"
                   nameKey="label"
-                  innerRadius={32}
-                  outerRadius={52}
+                  innerRadius="49%"
+                  outerRadius="79%"
                   startAngle={90}
                   endAngle={-270}
                   stroke="none"
@@ -2330,114 +2368,30 @@ function WidgetPreviewIcon({ kind }) {
 // 위젯 자체(Card/KpiCard 등이 이미 갖고 있는 배경/테두리)만 보이게 하고, 드래그
 // 핸들/차트타입 버튼/제거 버튼은 마우스를 올렸을 때만 우상단에 작은 플로팅
 // 툴바로 뜨도록 바꿨다 - 평소엔 기본 모드와 완전히 똑같이 보인다.
-// 2026-07-17(재작업) - 박스 크기와 내부 콘텐츠를 완전히 동기화하는 공용 훅.
-//
-// 실측 없이 "그리드 컬럼 하나가 대략 몇 px"라고 상수로 가정했던 첫 버전은
-// 실제 컬럼 폭(캔버스 폭에 따라 달라짐 - Playwright로 재보니 이 화면에서
-// 58px, 처음 가정한 43px과 전혀 다름)과 어긋나서 "박스를 키워도 내용은 작게
-// 몰려있고 나머지가 텅 빔" / "최소 크기로 줄이면 스크롤 생김" 두 버그가 났다.
-//
-// 그 다음 시도(자연 크기를 DOM에서 직접 재는 버전)는 KpiCard 등이 전부
-// `w-full h-full`(부모를 꽉 채우는) 구조라는 걸 놓쳤다 - shrink-to-fit
-// 컨테이너(inline-block) 안에 w-full 자식을 넣으면 크기가 서로를 참조하는
-// 순환이 생겨서 자연 크기를 제대로 못 쟀다.
-//
-// 최종 방식: "박스가 처음 나타났을 때의 크기"를 기준선(scale=1)으로 한 번만
-// 캡처해두고, 그 이후 리사이즈되는 만큼만 비례해서 scale을 계산한다. 콘텐츠는
-// 항상 이 기준선 픽셀 크기로 고정 렌더링(그 안에서는 w-full/h-full이 정상
-// 동작 - 고정된 부모니까)하고 transform:scale로만 확대/축소한다. 그리드 단위
-// 환산이나 DOM 자연-크기 추정이 전혀 필요 없어서 두 버그의 원인 자체가 없다.
-//
-// scale = Math.min(w/baseline.w, h/baseline.h)라 박스의 가로세로 비율이
-// 기준선과 달라지면(예: 폭만 늘리고 높이는 그대로) 두 비율 중 더 작은 쪽으로
-// 맞춰서 실제 콘텐츠가 박스를 꽉 못 채우고 빈 공간이 남는다 - 그래서 리사이즈
-// 결과 w/h를 항상 카탈로그 기준선 비율로 스냅한다(applyLayoutToWidgets의
-// lockAspectRatioSize 참고 - react-grid-layout v2의 per-item aspectRatio()
-// constraint나 onResize 콜백 mutation은 이 프로젝트가 쓰는 legacy 호환
-// 래퍼에서 둘 다 안 먹혀서(실측 확인, applyLayoutToWidgets 주석 참고)
-// onLayoutChange 시점에 후처리하는 방식을 쓴다).
-function useAutoFitBox(enabled) {
-  const outerRef = useRef(null);
-  const baselineRef = useRef(null); // 처음 측정된 { w, h } - 이후 안 바뀜
-  const [scale, setScale] = useState(1);
-  const [baseline, setBaseline] = useState(null);
-
-  useEffect(() => {
-    if (!enabled) return undefined;
-    const el = outerRef.current;
-    if (!el) return undefined;
-    const ro = new ResizeObserver(([e]) => {
-      const w = e.contentRect.width;
-      const h = e.contentRect.height;
-      if (w <= 0 || h <= 0) return;
-      if (!baselineRef.current) {
-        baselineRef.current = { w, h };
-        setBaseline({ w, h });
-        setScale(1);
-        return;
-      }
-      const b = baselineRef.current;
-      const ratio = Math.min(w / b.w, h / b.h);
-      // 위쪽은 2.4배까지만(그 이상은 폰트가 과도하게 커져 어색함 - 남는 공간은
-      // outerRef의 flex 중앙 정렬로 처리). 아래쪽은 사실상 무제한으로 계속
-      // 줄어들게 둔다 - "스크롤은 절대 생기면 안 된다"가 최우선이라, 그리드
-      // 자체의 minW/minH가 허용하는 한 콘텐츠는 항상 그 크기에 맞춰 줄어들어야
-      // 한다(여기서 하한을 따로 걸면 그 하한보다 그리드가 더 작게 허용할 때
-      // 다시 넘친다 - 실제로 겪은 버그).
-      setScale(Math.min(ratio, 2.4));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [enabled]);
-
-  return { outerRef, scale, baseline };
-}
-
 // height/onHeightChange: 2026-07-18, "도넛 차트들 길이가 버그가 있던데 위젯
 // 높이도 설정할 수 있게 해달라"는 피드백으로 추가 - -/+ 버튼으로 grid row
-// 단위(h)를 직접 조절한다. setWidgetHeight/handleHeightChange가 항상 w도
-// 같이 비례 조절해서(lockAspectRatioSize) 기준선 비율을 유지하므로, 이
-// 버튼도 드래그 리사이즈와 마찬가지로 useAutoFitBox가 박스를 정확히 꽉
-// 채우게 한다.
+// 단위(h)를 직접 조절한다.
+//
+// 2026-07-18: 박스 크기와 콘텐츠를 transform:scale로 동기화하는
+// useAutoFitBox를 여기 얹었었는데(리사이즈 시 박스와 콘텐츠 크기가
+// 어긋나는 버그를 고치려던 시도), baseline 측정 자체가 react-grid-layout의
+// 폭 계산과 경쟁 상태(race condition)에 걸려 처음부터 잘못된 기준선을
+// 캡처하는 별도 버그가 발견됐다(리사이즈를 전혀 안 해도 콘텐츠가 박스를
+// 못 채움, 실측 확인) - 그 버그를 더 파고들기보다 팀원 버전(overflow로
+// 그냥 넘치면 스크롤)으로 되돌린다. 도넛류 위젯의 isControlled 동적
+// ResponsiveContainer 크기 조절(다른 함수들 참고)은 이 훅과 무관한 별도
+// 메커니즘이라 그대로 유지.
 function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove, height, onHeightChange, children }) {
   const options = chartTypeOptionsFor(widgetType);
-  const entry = catalogEntry(widgetType);
-  // 차트류(recharts ResponsiveContainer)는 이미 자체적으로 박스 크기에 반응하므로
-  // 건너뛴다 - 같이 적용하면 Card의 min-h-80과 겹쳐서 두 배로 부풀어 오르는
-  // 버그가 있었다(카탈로그 selfResponsive 주석 참고).
-  const autoFitEnabled = Boolean(entry) && !entry.selfResponsive;
-  const { outerRef, scale, baseline } = useAutoFitBox(autoFitEnabled);
 
   return (
     <div className="group relative h-full w-full">
-      <div ref={outerRef} className="h-full w-full overflow-hidden flex items-center justify-center">
-        {autoFitEnabled && baseline ? (
-          <div
-            style={{
-              width: baseline.w,
-              height: baseline.h,
-              transform: `scale(${scale})`,
-              transformOrigin: "center center",
-              flexShrink: 0,
-            }}
-          >
-            {children}
-          </div>
-        ) : (
-          children
-        )}
-      </div>
-      {/* 2026-07-17 요청: "윈도우/맥OS 창처럼 타이틀 바 전체를 잡아서 이동" -
-          예전엔 우상단의 작은 알약 모양(⠿⠿ + 제목)만 draggableHandle이라
-          정확히 그 위에서만 드래그가 시작됐다. 이제 위쪽 가장자리 전체(top-0
-          left-0 right-0)가 핸들이라 제목 위든 빈 여백이든 상단 어디를 잡아도
-          이동된다 - 평소엔 안 보이다가 hover해야 나타나는 느낌은 그대로 유지
-          (absolute + opacity-0 오버레이라 안 보일 때도 차트 레이아웃을 안 밀어냄). */}
+      <div className="h-full w-full overflow-auto">{children}</div>
       <div
-        className="widget-drag-handle cursor-move absolute top-0 left-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 bg-dash-bg/95 border-b border-dash-mint/25 shadow-lg text-dash-muted text-[10px] uppercase tracking-wide select-none opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
+        className="widget-drag-handle cursor-move absolute top-1.5 right-1.5 z-10 flex items-center gap-1.5 max-w-[92%] px-2 py-1 rounded-lg bg-dash-bg/95 border border-dash-mint/25 shadow-lg text-dash-muted text-[10px] uppercase tracking-wide select-none opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
       >
         <span className="opacity-70 tracking-tighter shrink-0">⠿⠿</span>
-        <span className="truncate flex-1">{title}</span>
+        <span className="truncate">{title}</span>
         {options && onChartTypeChange && (
           <div
             className="flex items-center gap-0.5 shrink-0 normal-case tracking-normal cursor-default"
@@ -2499,49 +2453,18 @@ function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove
 
 // 캔버스(react-grid-layout)의 위젯 배치 상태(uid 기준)를 실제 widgets 배열에
 // 병합한다 - onLayoutChange/onDrop 핸들러 여러 곳에서 재사용.
-//
-// 리사이즈로 w/h가 바뀐 경우 lockAspectRatioSize로 카탈로그 기준선 비율에
-// 맞춰 스냅한다(useAutoFitBox 주석 참고) - react-grid-layout/legacy는 v1 호환
-// 래퍼라 v2의 per-item aspectRatio() constraint를 전혀 안 읽는다(레거시
-// 래퍼가 top-level constraints를 defaultConstraints로 하드코딩해서 그냥
-// 씌워버림, 실측 확인: constraints 필드를 얹어도 w=7 리사이즈에 h=27이
-// 그대로 나옴 - 기대값 h=14). onResize에서 newItem을 직접 변형하는 v1
-// 방식도 v2 콜백 파라미터가 immutable이라 안 먹힌다(react-grid-layout
-// README "Breaking Changes"). 그래서 드래그 도중엔 자유롭게 리사이즈되다가
-// onLayoutChange(드래그를 놓았을 때 한 번 호출)에서 비율을 스냅시키는
-// 방식으로 처리 - 라이브 프리뷰가 즉시 비율에 안 맞을 수 있지만(드래그 중
-// 잠깐), 놓는 순간 정확한 비율로 스냅되어 useAutoFitBox가 박스를 항상
-// 정확히 꽉 채운다.
-function applyLayoutToWidgets(widgets, newLayout, containerWidth) {
+function applyLayoutToWidgets(widgets, newLayout) {
   let changed = false;
   const next = widgets.map((w) => {
     const pos = newLayout.find((l) => l.i === w.uid);
     if (!pos) return w;
     if (pos.x !== w.x || pos.y !== w.y || pos.w !== w.w || pos.h !== w.h) {
       changed = true;
-      const { w: lockedW, h: lockedH } = lockAspectRatioSize(w.type, containerWidth, w.w, w.h, pos.w, pos.h);
-      return { ...w, x: pos.x, y: pos.y, w: lockedW, h: lockedH };
+      return { ...w, x: pos.x, y: pos.y, w: pos.w, h: pos.h };
     }
     return w;
   });
   return changed ? next : widgets;
-}
-
-// ResponsiveGridLayout(WidthProvider)이 내부적으로 재는 것과 같은 컨테이너
-// 폭을 여기서도 재서(형제 레벨 ResizeObserver) lockAspectRatioSize의 픽셀
-// 환산에 넘긴다 - WidthProvider가 잰 값은 컴포넌트 바깥에서 직접 못 읽어서
-// 같은 값을 주는 같은 위치(그리드를 감싸는 div)에 별도로 측정한다.
-function useContainerWidth() {
-  const ref = useRef(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    const ro = new ResizeObserver(([e]) => setWidth(e.contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width];
 }
 
 // 왼쪽 위젯 팔레트 + 빈(또는 기존) 캔버스에 드래그로 위젯을 추가/재배치하고,
@@ -2551,9 +2474,61 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   const [widgets, setWidgets] = useState(() => (baseDashboard ? baseDashboard.widgets.map((w) => ({ ...w })) : []));
   const [name, setName] = useState(baseDashboard ? baseDashboard.name : "");
   const [draggingType, setDraggingType] = useState(null);
-  const [gridContainerRef, containerWidth] = useContainerWidth();
+  // 2026-07-19 요청: 캔버스 높이가 드래그/리사이즈 중엔 안 따라오고 손을 뗀
+  // 순간(onLayoutChange, widgets 상태 커밋 시점)에만 갱신돼서 한 박자 늦게
+  // 느껴진다는 피드백 - onDrag/onResize(react-grid-layout이 마우스를 움직일
+  // 때마다 계속 쏘는 콜백, widgets 상태를 커밋하는 onDragStop/onLayoutChange와
+  // 별개)로 "지금 드래그/리사이즈 중인 위치"를 바로바로 반영해서 캔버스가
+  // 실시간으로 따라오게 한다. 손을 떼면(Stop) widgets 상태 자체가 그 값을
+  // 반영하므로 0으로 리셋 - 안 그러면 다른 위젯을 짧게 만들었을 때 예전 드래그
+  // 위치가 유령처럼 남아 캔버스가 안 줄어든다.
+  const [liveBottomRow, setLiveBottomRow] = useState(0);
+  const handleLiveDrag = (_layout, _oldItem, newItem) => setLiveBottomRow(newItem.y + newItem.h);
+  const handleLiveDragStop = () => setLiveBottomRow(0);
+  const canvasRef = useRef(null);
 
+  // 2026-07-19 버그 수정: 팔레트 위젯을 이미 놓인 위젯 위로 끌고 오면 초록
+  // 박스가 그 위젯과 겹쳐 보이는 문제 - 최종 배치(item.x/item.y)는 팀원
+  // main 버전 그대로 라이브러리를 믿고 쓰되(그 부분은 안 건드림), 겹친
+  // 위젯이 "화면에서" 아래로 비켜나 보이도록 어떤 위젯 위에 커서가 있는지만
+  // 그리드 단위로 가볍게 계산해서 CSS transform으로 밀어준다 - 최종 저장
+  // 로직과는 무관한 순수 시각 효과. 호버한 위젯 하나만 밀면 그 아래 있던
+  // 다른 위젯과 새로 겹쳐버리는 문제가 있어서("밀려난 위젯이 자기 아래
+  // 위젯과 겹침"), 호버한 위젯 "그리고 그 아래로 이어지는 모든 위젯"을 같은
+  // 양만큼 다 같이 민다(handleDrop의 캐스케이드 push와 같은 조건).
+  const [shiftedUids, setShiftedUids] = useState(new Set());
+  const handleDropDragOver = (e) => {
+    const entry = draggingType ? catalogEntry(draggingType) : null;
+    const gridEl = canvasRef.current?.querySelector(".react-grid-layout");
+    if (!entry || !gridEl) {
+      setShiftedUids(new Set());
+      return;
+    }
+    const rect = gridEl.getBoundingClientRect();
+    const colWidth = (rect.width - 16 * 11 - 16 * 2) / 12; // cols=12, margin=16, containerPadding=16(margin과 동일값 기본 사용)
+    const rawX = Math.round((e.clientX - rect.left - 16) / (colWidth + 16));
+    const rawY = Math.round((e.clientY - rect.top - 16) / (20 + 16));
+    const hovered = widgets.find(
+      (w) => rawX < w.x + w.w && rawX + entry.w > w.x && rawY >= w.y && rawY < w.y + w.h
+    );
+    if (!hovered) {
+      setShiftedUids(new Set());
+      return;
+    }
+    const targetX = Math.max(0, Math.min(12 - entry.w, hovered.x));
+    const insertY = rawY < hovered.y + hovered.h / 2 ? hovered.y : hovered.y + hovered.h;
+    const affected = widgets.filter(
+      (w) => w.x < targetX + entry.w && w.x + w.w > targetX && w.y >= insertY
+    );
+    setShiftedUids(new Set(affected.map((w) => w.uid)));
+  };
+  const clearHover = () => setShiftedUids(new Set());
+
+  // 팀원 main 버전 그대로: react-grid-layout이 넘겨주는 item.x/item.y를 그대로
+  // 믿고 쓴다 - 우리가 직접 좌표를 계산해서 끼어들면(computeDropTarget 등)
+  // 오히려 라이브러리 자체 상태와 어긋나 이상하게 보이는 부작용이 있었다.
   const handleDrop = (_newLayout, item, e) => {
+    clearHover();
     const type = e.dataTransfer.getData("text/plain");
     const entry = catalogEntry(type);
     if (!entry) return;
@@ -2572,7 +2547,7 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   };
 
   const handleLayoutChange = (newLayout) => {
-    setWidgets((prev) => applyLayoutToWidgets(prev, newLayout, containerWidth));
+    setWidgets((prev) => applyLayoutToWidgets(prev, newLayout));
   };
 
   const removeWidget = (uid) => setWidgets((prev) => prev.filter((w) => w.uid !== uid));
@@ -2580,21 +2555,28 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
     setWidgets((prev) => prev.map((w) => (w.uid === uid ? { ...w, chartType: type } : w)));
   // 2026-07-18: "위젯들 높이도 설정할 수 있게 해달라" 피드백 - 리사이즈 핸들
   // 드래그 대신 -/+ 버튼으로 grid row(h) 단위를 직접 조절. 최소 3(너무 작으면
-  // 헤더도 못 담아 의미 없음)으로 바닥을 둔다. w도 lockAspectRatioSize로 같이
-  // 조절해서 기준선 비율을 유지 - useAutoFitBox 주석 참고.
+  // 헤더도 못 담아 의미 없음)으로 바닥을 둔다.
   const setWidgetHeight = (uid, delta) =>
-    setWidgets((prev) =>
-      prev.map((w) => {
-        if (w.uid !== uid) return w;
-        const newH = Math.max(3, w.h + delta);
-        return { ...w, ...lockAspectRatioSize(w.type, containerWidth, w.w, w.h, w.w, newH) };
-      })
-    );
+    setWidgets((prev) => prev.map((w) => (w.uid === uid ? { ...w, h: Math.max(3, w.h + delta) } : w)));
 
   const gridLayout = widgets.map((w) => {
     const entry = catalogEntry(w.type);
     return { i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h, minW: entry?.minW, minH: entry?.minH };
   });
+  // 2026-07-19 요청: 캔버스 여유 공간을 화면 배수(예: 1.2배) 같은 고정값이
+  // 아니라, 실제로 배치된 위젯이 아래로 내려가면 그만큼 캔버스도 늘어나고
+  // 위로 올리면 다시 줄어드는 식으로 - 가장 아래에 있는 위젯의 y+h(그리드 행
+  // 기준, liveBottomRow가 있으면 그것도 같이 고려 - 드래그/리사이즈 도중
+  // 실시간 반영용)를 실제 px로 환산(rowHeight=20, margin=16 - 아래
+  // ResponsiveGridLayout prop과 반드시 맞출 것)한 뒤, 계속 이어서 쌓을 수
+  // 있을 만큼(DROP_BUFFER_PX, 위젯 한두 개 분량) 여유를 더한다. autoSize
+  // (react-grid-layout 기본값)가 이미 콘텐츠 높이만큼 컨테이너를 줄이므로,
+  // 여기서는 "그 자연 높이 + 드롭 여유분"만 바닥값으로 얹어주면 된다.
+  const DROP_BUFFER_PX = 480;
+  const committedBottomRow = widgets.length === 0 ? 0 : Math.max(...widgets.map((w) => w.y + w.h));
+  const gridBottomRow = Math.max(committedBottomRow, liveBottomRow);
+  const gridContentHeightPx = gridBottomRow * 20 + Math.max(0, gridBottomRow - 1) * 16;
+  const canvasMinHeight = gridContentHeightPx + DROP_BUFFER_PX;
   const dropEntry = draggingType ? catalogEntry(draggingType) : null;
   const canSave = widgets.length > 0 && name.trim().length > 0;
   // 2026-07-18: "중복 제거해서 사용한 위젯은 안 나오게" 피드백 - 캔버스에 이미
@@ -2622,7 +2604,10 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
               e.dataTransfer.setData("text/plain", w.type);
               e.dataTransfer.effectAllowed = "copy";
             }}
-            onDragEnd={() => setDraggingType(null)}
+            onDragEnd={() => {
+              setDraggingType(null);
+              clearHover();
+            }}
             className="cursor-grab active:cursor-grabbing flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none"
           >
             <WidgetPreviewIcon kind={w.icon} />
@@ -2660,7 +2645,7 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
           </button>
         </div>
 
-        <div className="relative" ref={gridContainerRef}>
+        <div className="relative" ref={canvasRef}>
           {widgets.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center text-dash-faint text-xs pointer-events-none border border-dashed border-dash-mint/25 rounded-2xl px-6 text-center">
               왼쪽 목록에서 위젯을 이 캔버스로 드래그해서 추가하세요.
@@ -2670,18 +2655,34 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
             className="layout"
             layout={gridLayout}
             onLayoutChange={handleLayoutChange}
+            onDrag={handleLiveDrag}
+            onDragStop={handleLiveDragStop}
+            onResize={handleLiveDrag}
+            onResizeStop={handleLiveDragStop}
             cols={12}
             rowHeight={20}
             margin={[16, 16]}
             draggableHandle=".widget-drag-handle"
-            // compactType={null} - 2026-07-17 요청: 위젯을 그리드가 아니라 자유로운
-            // 위치에 놓을 수 있게. "vertical"이면 드래그를 끝낼 때마다 위쪽으로
-            // 자동 압축(gravity)돼서 원하는 자리에 그대로 안 있었다. null이어도
-            // react-grid-layout은 겹치는 자리로 드래그하면 그 자리의 다른 위젯을
-            // 밀어내는 충돌 방지는 그대로 동작한다(allowOverlap 기본값 false).
-            compactType={null}
+            // compactType="vertical"(팀원 버전으로 되돌림, 2026-07-18) - 위젯을
+            // 지우거나 옮기면 그 아래 위젯들이 자동으로 위 빈자리를 채운다.
+            // null로 자유 배치를 시도했었는데("위치 그대로 유지") 지운 자리가
+            // 안 채워져서 오히려 더 불편하다는 피드백으로 되돌림.
+            //
+            // 2026-07-19: 팔레트 드래그 중에만 compactType을 껐다가(null)
+            // 놓으면 되돌리는 시도를 했었는데 - onDrop이 dragend보다 먼저
+            // 발생해서(draggingType이 아직 true인 시점) 정작 "드롭 확정"
+            // 순간에도 compactType이 꺼진 상태로 react-grid-layout이 item.x/
+            // item.y를 계산해버려, 충돌 회피 없이 기존 위젯과 겹친 채로 그냥
+            // 설치되는 훨씬 심각한 문제를 만들었다(실측 확인) - compactType/
+            // preventCollision은 항상 원래 값(팀원 main 그대로)으로 고정해서
+            // 드롭 계산 자체는 항상 정상 동작하게 하고, 겹침 시 CSS로 미는
+            // 시각 효과(아래 shiftedUids)에서 홀드 중 위젯이 1칸이 아니라
+            // 가끔 2칸 밀리는 부작용이 남더라도, 그건 설치 자체가 깨지는 것보다
+            // 훨씬 가벼운 문제라 감수한다.
+            compactType="vertical"
             isDroppable
             onDrop={handleDrop}
+            onDropDragOver={handleDropDragOver}
             droppingItem={{
               i: "__dropping__",
               w: dropEntry?.w ?? 4,
@@ -2689,21 +2690,39 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
               minW: dropEntry?.minW,
               minH: dropEntry?.minH,
             }}
-            style={{ minHeight: widgets.length === 0 ? 220 : undefined }}
+            // 2026-07-19 요청: 위젯이 화면 절반쯤 채워지면 그 아래로 새 위젯을
+            // 놓을 여유 공간이 안 보여서(react-grid-layout의 autoSize가 기본값
+            // true라 컨테이너가 콘텐츠 높이에 딱 맞게 줄어듦) 어디에 드롭해야
+            // 할지 헷갈린다는 피드백 - 처음엔 화면 높이의 1.2~1.5배 같은 고정
+            // 배수를 항상 깔아뒀는데, "위젯을 옮길 때마다 그에 맞춰 캔버스가
+            // 늘고 줄어야 한다"는 후속 피드백으로 방향을 바꿨다. 이제
+            // canvasMinHeight(위 gridBottomRow 기반, 가장 아래 위젯 바로 밑에
+            // DROP_BUFFER_PX만큼만 여유)를 바닥값으로 써서, 위젯을 아래로
+            // 옮기면 그만큼 캔버스가 커지고 위로 올리면 다시 줄어든다.
+            style={{ minHeight: widgets.length === 0 ? 220 : canvasMinHeight }}
           >
             {widgets.map((w) => (
               <div key={w.uid}>
-                <WidgetFrame
-                  widgetType={w.type}
-                  title={catalogEntry(w.type)?.label}
-                  chartType={w.chartType}
-                  onChartTypeChange={(type) => setWidgetChartType(w.uid, type)}
-                  height={w.h}
-                  onHeightChange={(delta) => setWidgetHeight(w.uid, delta)}
-                  onRemove={() => removeWidget(w.uid)}
+                <div
+                  className="h-full w-full"
+                  style={
+                    shiftedUids.has(w.uid)
+                      ? { transform: `translateY(${(dropEntry?.h ?? 6) * 36}px)`, transition: "transform 150ms ease-out" }
+                      : undefined
+                  }
                 >
-                  {renderWidgetContent(w.type, w.chartType)}
-                </WidgetFrame>
+                  <WidgetFrame
+                    widgetType={w.type}
+                    title={catalogEntry(w.type)?.label}
+                    chartType={w.chartType}
+                    onChartTypeChange={(type) => setWidgetChartType(w.uid, type)}
+                    height={w.h}
+                    onHeightChange={(delta) => setWidgetHeight(w.uid, delta)}
+                    onRemove={() => removeWidget(w.uid)}
+                  >
+                    {renderWidgetContent(w.type, w.chartType)}
+                  </WidgetFrame>
+                </div>
               </div>
             ))}
           </ResponsiveGridLayout>
@@ -2717,14 +2736,13 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
 // ("위젯 편집" 없이도 배치만 다듬는 건 즉시 반영), 위젯을 추가/제거하려면
 // "위젯 편집" 버튼으로 DashboardBuilder를 연다.
 function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, onChartTypeCommit }) {
-  const [gridContainerRef, containerWidth] = useContainerWidth();
   const gridLayout = dashboard.widgets.map((w) => {
     const entry = catalogEntry(w.type);
     return { i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h, minW: entry?.minW, minH: entry?.minH };
   });
 
   const handleLayoutChange = (newLayout) => {
-    const next = applyLayoutToWidgets(dashboard.widgets, newLayout, containerWidth);
+    const next = applyLayoutToWidgets(dashboard.widgets, newLayout);
     if (next !== dashboard.widgets) onLayoutCommit(next);
   };
 
@@ -2734,16 +2752,12 @@ function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, o
 
   const handleHeightChange = (uid, delta) => {
     onLayoutCommit(
-      dashboard.widgets.map((w) => {
-        if (w.uid !== uid) return w;
-        const newH = Math.max(3, w.h + delta);
-        return { ...w, ...lockAspectRatioSize(w.type, containerWidth, w.w, w.h, w.w, newH) };
-      })
+      dashboard.widgets.map((w) => (w.uid === uid ? { ...w, h: Math.max(3, w.h + delta) } : w))
     );
   };
 
   return (
-    <div className="space-y-3" ref={gridContainerRef}>
+    <div className="space-y-3">
       {dashboard.widgets.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-dash-mint/20 py-16 text-center text-dash-faint text-xs">
           이 대시보드엔 위젯이 없습니다. "위젯 편집"에서 추가하세요.
@@ -2757,7 +2771,7 @@ function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, o
           rowHeight={20}
           margin={[16, 16]}
           draggableHandle=".widget-drag-handle"
-          compactType={null}
+          compactType="vertical"
         >
           {dashboard.widgets.map((w) => (
             <div key={w.uid}>
@@ -2959,6 +2973,14 @@ export function DashboardContent() {
   // 인스턴스별 chartType을 받아 JSX를 만든다. 기본 모드는 이 함수를 전혀 쓰지
   // 않고 아래의 고정 변수들(kpiTotalWidget 등, chartType 없음)만 참조한다 —
   // 그래야 커스텀 대시보드에서 뭘 바꾸든 기본 모드가 절대 영향받지 않는다.
+  // 2026-07-19 요청: 커스텀 대시보드(이 함수로만 렌더링됨, 위 주석 참고)에서는
+  // Errors/Total Logs/Warnings/탐지 시나리오 카드를 클릭해도 아무 반응이 없어야
+  // 한다 - 기본 모드(아래 kpiTotalWidget 등, 이 함수를 안 거침)에서는 클릭하면
+  // KPI 필터가 걸리는 기존 동작이 그대로 유지된다. onClick을 아예 안 넘기면
+  // KpiCard가 자동으로 button 대신 div로 렌더링하고 hover/커서 스타일도 꺼진다
+  // (KpiCard 정의의 `const Tag = onClick ? "button" : "div"` 참고) - 드래그로
+  // 옮기거나 리사이즈하는 건 WidgetFrame의 별도 드래그 핸들이 담당해서 이 카드
+  // 자체의 onClick 유무와 무관하게 그대로 가능하다.
   function renderWidgetContent(type, chartType) {
     switch (type) {
       case "kpi-total":
@@ -2968,8 +2990,6 @@ export function DashboardContent() {
             value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
-            onClick={() => setKpiFilter("ALL")}
-            active={kpiFilter === "ALL"}
           />
         );
       case "kpi-errors":
@@ -2979,8 +2999,6 @@ export function DashboardContent() {
             value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
-            onClick={() => setKpiFilter("ERROR")}
-            active={kpiFilter === "ERROR"}
             accent="critical"
           />
         );
@@ -2991,8 +3009,6 @@ export function DashboardContent() {
             value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
-            onClick={() => setKpiFilter("WARNING")}
-            active={kpiFilter === "WARNING"}
           />
         );
       case "kpi-sources":
@@ -3000,8 +3016,6 @@ export function DashboardContent() {
           <KpiCard
             label="탐지 시나리오"
             value={scenariosStatus === "ready" ? `${enabledScenarioCount}/${totalScenarioCount}개` : "-"}
-            onClick={() => setKpiFilter("SOURCES")}
-            active={kpiFilter === "SOURCES"}
           />
         );
       case "log-volume":

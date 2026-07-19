@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAttackCoverage } from "../hooks/useAttackCoverage";
 import { useTechniqueIncidents } from "../hooks/useTechniqueIncidents";
 import { useIncidentTimeline } from "../hooks/useIncidentTimeline";
@@ -55,7 +55,86 @@ export default function AttackMatrixView({ onNavigateToIncident } = {}) {
     setSelected(firstDetected || flat[0] || null);
   }, [coverageStatus, tactics, selected]);
 
-  const { incidents, status: incidentsStatus, error: incidentsError } = useTechniqueIncidents(selected?.id);
+  const {
+    incidents,
+    status: incidentsStatus,
+    error: incidentsError,
+    loadingMore: loadingMoreIncidents,
+    loadMore: loadMoreIncidents,
+  } = useTechniqueIncidents(selected?.id);
+
+  // 2026-07-19: onScroll에서 매 스크롤 이벤트마다 scrollTop/scrollHeight를 직접
+  // 읽는 방식은 브라우저가 그때마다 강제로 레이아웃을 다시 계산하게 만들어서
+  // (forced synchronous layout) 스크롤 중 버벅임의 원인이 됐다 - "바닥에 닿기
+  // 직전"을 IntersectionObserver로 감시하는 쪽이 표준적인 해법.
+  //
+  // 스크롤바를 드래그해서 스페이서 한가운데로 훅 뛰어버리면 더 안 불러와지는
+  // 문제(2026-07-19) - IntersectionObserver는 "안 겹침 -> 겹침"으로 상태가
+  // *바뀔 때* 딱 한 번만 콜백을 준다. 스페이서가 아직 크게 남아있으면 로드
+  // 한 페이지로는 sentinel이 겹친 상태를 벗어나지 못해서(계속 겹쳐있는 동안은
+  // 재발화 안 함) 딱 한 번 불러오고 멈춰버렸다. isIntersectingRef에 최신
+  // 겹침 상태를 계속 기록해두고, 로드가 끝날 때마다 "아직도 겹쳐있고 더
+  // 남았으면"(useTechniqueIncidents.loadMore가 resolve하는 값) 바로 이어서
+  // 또 로드하는 pump()로 체인을 걸어서, 사용자가 얼마나 멀리 뛰었든 sentinel이
+  // 시야에서 벗어날 때까지(=실제 콘텐츠가 따라잡을 때까지) 연속으로 페이지를
+  // 당겨온다. hasMore state 대신 이 resolve 값을 쓰는 이유는 state 업데이트가
+  // 다음 렌더까지 반영이 늦어(비동기) 방금 끝난 요청 결과를 아직 못 볼 수
+  // 있어서 - resolve 값은 렌더 타이밍과 무관하게 항상 최신이다.
+  const scrollBoxRef = useRef(null);
+  const bottomSentinelRef = useRef(null);
+  const loadMoreRef = useRef(loadMoreIncidents);
+  loadMoreRef.current = loadMoreIncidents;
+  const isIntersectingRef = useRef(false);
+
+  useEffect(() => {
+    const root = scrollBoxRef.current;
+    const target = bottomSentinelRef.current;
+    if (!root || !target) return;
+
+    function pump() {
+      if (!isIntersectingRef.current) return;
+      loadMoreRef.current().then((hasMore) => hasMore && pump());
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isIntersectingRef.current = entry.isIntersecting;
+        if (entry.isIntersecting) pump();
+      },
+      { root, rootMargin: "200px 0px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [selected?.id]);
+
+  // 스크롤바 "툭 튀는" 문제(2026-07-19) - 새 페이지가 로드되면 scrollHeight가
+  // 늘어나는데 scrollTop은 그대로라, 스크롤바 thumb는 "바닥에 붙어있다가" 다음
+  // 순간 트랙 중간으로 튕겨 올라간 것처럼 보인다. IntersectionObserver로
+  // 미리 당겨와도(rootMargin) 근본 원인은 그대로다 - "전체 크기를 모르는 채로
+  // 계속 늘어나는 목록"이라 브라우저가 thumb 크기/위치를 다시 계산할 때마다
+  // 매번 이 순간이 반복된다.
+  //
+  // 해법: 이미 알고 있는 총 개수(selected.hits, /attck/coverage가 COUNT(*)로
+  // 미리 계산해둔 값)만큼 "이 다음에 올 자리"를 빈 스페이서로 미리 확보해둔다.
+  // 그러면 스크롤 가능한 총 높이(scrollHeight)가 기법을 고른 순간부터 이미
+  // 최종 크기에 가깝게 잡혀 있어서, 페이지가 하나씩 들어올 때마다 스페이서가
+  // 그만큼 줄어들 뿐 총 높이는 거의 안 바뀐다 - thumb가 안 튄다. react-window
+  // 같은 가상 스크롤 라이브러리가 쓰는 것과 같은 원리(itemCount로 총 높이를
+  // 먼저 확정)를 라이브러리 없이 최소한으로 흉내낸 것.
+  //
+  // 행 높이는 고정값이 아니라(제목 줄바꿈 등으로 가변) 실제 렌더된 높이를
+  // 매 페이지 로드 후 재서(rowsWrapperRef) 평균을 갱신한다 - 완벽히 정확할
+  // 필요는 없고, 스페이서가 줄어드는 만큼 실제 콘텐츠가 늘어나서 총합만
+  // 안정적이면 된다.
+  const rowsWrapperRef = useRef(null);
+  const [avgRowHeight, setAvgRowHeight] = useState(36);
+  useLayoutEffect(() => {
+    if (!rowsWrapperRef.current || incidents.length === 0) return;
+    const measured = rowsWrapperRef.current.scrollHeight / incidents.length;
+    if (measured > 0 && Math.abs(measured - avgRowHeight) > 1) setAvgRowHeight(measured);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidents.length]);
+  const estimatedRemaining = Math.max(0, (selected?.hits ?? incidents.length) - incidents.length);
 
   // 펼쳐진 인시던트 행 하나("자세히보기")에 대해서만 실제 원본 로그(타임라인)를
   // 불러온다 — expandedIdx가 곧 "지금 펼쳐진 행"이라 별도 상태 없이 그대로 파생.
@@ -143,17 +222,26 @@ export default function AttackMatrixView({ onNavigateToIncident } = {}) {
               <span className="text-dash-mint text-xs font-semibold">{selected.id}</span>
               <span className="text-dash-fg text-sm font-medium">{selected.name}</span>
             </div>
-            <span className="text-dash-muted text-xs">{incidents.length} matched incidents</span>
+            <span className="text-dash-muted text-xs">
+              {incidents.length}
+              {typeof selected.hits === "number" && selected.hits > incidents.length ? ` / ${selected.hits}` : ""} matched
+              incidents
+            </span>
           </div>
           {/* 2026-07-17: 같은 기법으로 매칭된 인시던트가 계속 쌓이면 이 목록이
               끝없이 늘어나서 페이지 전체가 하염없이 길어지던 문제 - IncidentsView의
-              좌측 리스트와 같은 패턴(높이 고정 + 내부 스크롤)으로 통일. */}
-          <div className="space-y-1 max-h-[520px] overflow-y-auto pr-2">
+              좌측 리스트와 같은 패턴(높이 고정 + 내부 스크롤)으로 통일.
+              2026-07-19: "더 보기" 버튼 대신 무한 스크롤 - 바닥 감지는 아래
+              IntersectionObserver(scrollBoxRef/bottomSentinelRef)가 담당.
+              space-y-1을 rowsWrapperRef 쪽으로 옮김 - 스페이서/센티넬까지 같은
+              간격 규칙을 타면 스페이서 높이 계산이 그만큼 어긋난다. */}
+          <div ref={scrollBoxRef} className="max-h-[520px] overflow-y-auto pr-2">
             {incidentsStatus === "loading" && <p className="text-dash-muted text-xs">인시던트를 불러오는 중...</p>}
             {incidentsStatus === "error" && <p className="text-dash-critical text-xs">{incidentsError}</p>}
             {incidentsStatus === "ready" && incidents.length === 0 && (
               <p className="text-dash-muted text-xs">이 기법으로 연결된 인시던트가 아직 없습니다.</p>
             )}
+            <div ref={rowsWrapperRef} className="space-y-1">
             {incidents.map((incident, i) => {
               const isOpen = expandedIdx === i;
               const inProgress = statusDotStatus(incident.status) === "IN_PROGRESS";
@@ -263,6 +351,17 @@ export default function AttackMatrixView({ onNavigateToIncident } = {}) {
                 </div>
               );
             })}
+            </div>
+            {/* 스페이서 겸 IntersectionObserver 타깃 - 높이를 estimatedRemaining
+                (아직 안 불러온 인시던트 수) * avgRowHeight로 잡아서 스크롤 총
+                높이를 처음부터 최종 크기에 가깝게 맞춘다(위 큰 주석 참고). ref는
+                selected?.id가 바뀔 때 한 번만 옵저버에 잡히므로 조건 없이 항상
+                렌더 - loadMore 자체는 훅 내부에서 커서가 없으면 no-op이라 남은
+                게 0이어도(높이 1px) 안전하다. */}
+            <div ref={bottomSentinelRef} style={{ height: Math.max(1, Math.round(estimatedRemaining * avgRowHeight)) }} />
+            {loadingMoreIncidents && (
+              <p className="text-dash-faint text-[11px] text-center py-1.5">불러오는 중...</p>
+            )}
           </div>
         </div>
       )}
