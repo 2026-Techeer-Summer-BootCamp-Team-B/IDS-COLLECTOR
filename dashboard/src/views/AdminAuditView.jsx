@@ -621,12 +621,14 @@ function ReportTimePicker({ value, onChange }) {
   const [hourText = "09", minuteText = "00"] = String(value ?? "09:00").split(":");
   const hour = Math.min(23, Math.max(0, Number(hourText) || 0));
   const minute = Math.min(59, Math.max(0, Number(minuteText) || 0));
+  const isPm = hour >= 12;
+  const displayHour = hour % 12 || 12;
   const update = (nextHour, nextMinute) => onChange(`${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`);
+  const to24Hour = (nextDisplayHour, nextIsPm) => (nextDisplayHour % 12) + (nextIsPm ? 12 : 0);
   const positionPopup = () => {
     const rect = anchorRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const popupHeight = 126;
-    setPosition({ left: Math.max(8, rect.left), top: rect.top - popupHeight >= 8 ? rect.top - popupHeight : rect.bottom + 6 });
+    setPosition({ left: Math.max(8, rect.left), top: rect.bottom + 6 });
   };
   const toggle = () => {
     if (!open) positionPopup();
@@ -650,10 +652,10 @@ function ReportTimePicker({ value, onChange }) {
 
   return <span ref={anchorRef} className="inline-flex h-8 w-[5.5rem] shrink-0">
     <button type="button" aria-label="시간 선택" onClick={toggle} className="relative h-8 w-full rounded bg-dash-bg px-1 pr-6 text-left text-xs text-dash-fg">
-      {`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`}
+      {`${isPm ? "오후" : "오전"} ${displayHour}:${String(minute).padStart(2, "0")}`}
       <svg viewBox="0 0 20 20" className="absolute right-1 top-2 h-4 w-4 text-dash-mint fill-none stroke-current" strokeWidth="1.8"><circle cx="10" cy="10" r="7.25" /><path d="M10 5.8v4.6l3 1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
     </button>
-    {open && createPortal(<div ref={popupRef} style={position} className="fixed z-[9999] flex gap-2 rounded-lg border border-dash-surfaceAlt bg-dash-surface p-2 shadow-xl"><TimeAdjuster label="시간" value={hour} min={0} max={23} onChange={(next) => update(next, minute)} /><TimeAdjuster label="분" value={minute} min={0} max={59} onChange={(next) => update(hour, next)} /></div>, document.body)}
+    {open && createPortal(<div ref={popupRef} style={position} className="fixed z-[9999] rounded-lg border border-dash-surfaceAlt bg-dash-surface p-2 shadow-xl"><div className="mb-2 flex overflow-hidden rounded border border-dash-surfaceAlt text-[10px]"><button type="button" onClick={() => update(to24Hour(displayHour, false), minute)} className={`h-6 flex-1 px-2 ${!isPm ? "bg-dash-mint/15 text-dash-mint" : "text-dash-muted hover:bg-dash-surfaceAlt"}`}>오전</button><button type="button" onClick={() => update(to24Hour(displayHour, true), minute)} className={`h-6 flex-1 px-2 ${isPm ? "bg-dash-mint/15 text-dash-mint" : "text-dash-muted hover:bg-dash-surfaceAlt"}`}>오후</button></div><div className="flex gap-2"><TimeAdjuster label="시간" value={displayHour} min={1} max={12} onChange={(next) => update(to24Hour(next, isPm), minute)} /><TimeAdjuster label="분" value={minute} min={0} max={59} onChange={(next) => update(hour, next)} /></div></div>, document.body)}
   </span>;
 }
 
