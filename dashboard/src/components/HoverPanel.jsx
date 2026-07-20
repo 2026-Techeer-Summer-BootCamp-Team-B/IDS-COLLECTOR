@@ -20,7 +20,18 @@ import React from "react";
 // useTheme()을 직접 안 쓰고 항상 명시적 prop으로만 theme을 받는다.
 const PANEL_FONT =
   '"Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif';
-const PANEL_BG = { light: "#FFFFFF", dark: "#F0F0F4" };
+const PANEL_BG = { light: "#FFFFFF", dark: "#F0F1F4" };
+const PANEL_TEXT = { light: "#111827", dark: "#1F2937" };
+const PANEL_LABEL = { light: "#9CA3AF", dark: "#687386" };
+const PANEL_BORDER = { light: "#E5EAF2", dark: "#D9DCE4" };
+const PANEL_SHADOW = {
+  light: "0 5px 20px rgba(15, 23, 42, 0.10)",
+  dark: "0 6px 22px rgba(15, 23, 42, 0.14)",
+};
+// 패널 배경도 테마별로 다르므로 지역/도시 보조 문구도 같은 회색을 재사용하지
+// 않는다. light는 흰 배경에서 또렷한 청회색, dark는 눈부심을 낮춘 패널 위에서
+// 충분히 진한 중성 회색을 쓴다.
+const PANEL_SUBTITLE = { light: "#475569", dark: "#4B5563" };
 
 export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, className = "", theme = "light" }) {
   return (
@@ -28,20 +39,26 @@ export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, class
       className={`rounded-2xl px-4 py-3 ${className}`}
       style={{
         backgroundColor: PANEL_BG[theme] ?? PANEL_BG.light,
-        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+        border: `1px solid ${PANEL_BORDER[theme] ?? PANEL_BORDER.light}`,
+        boxShadow: PANEL_SHADOW[theme] ?? PANEL_SHADOW.light,
         fontFamily: PANEL_FONT,
         minWidth: 96,
         ...style,
       }}
     >
       {title != null && title !== "" && (
-        <div className="flex items-center gap-1.5 text-[13px] font-semibold text-gray-900 whitespace-nowrap leading-tight">
+        <div
+          className="flex items-center gap-1.5 text-[13px] font-semibold whitespace-nowrap leading-tight"
+          style={{ color: PANEL_TEXT[theme] ?? PANEL_TEXT.light }}
+        >
           {titleFlag && <span className={`fi fi-${titleFlag} text-base leading-none`} aria-hidden="true" />}
           <span>{title}</span>
         </div>
       )}
       {subtitle != null && subtitle !== "" && (
-        <div className="text-[11px] text-gray-400 mt-0.5 whitespace-nowrap">{subtitle}</div>
+        <div className="text-[11px] mt-0.5 whitespace-nowrap" style={{ color: PANEL_SUBTITLE[theme] ?? PANEL_SUBTITLE.light }}>
+          {subtitle}
+        </div>
       )}
       {rows.length > 0 && (
         <div className={`space-y-1.5 ${title != null && title !== "" ? "mt-2" : ""}`}>
@@ -50,8 +67,10 @@ export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, class
               {r.color && (
                 <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ background: r.color }} />
               )}
-              <span className="text-sm font-bold text-gray-900">{r.value}</span>
-              {r.label != null && r.label !== "" && <span className="text-xs text-gray-400">{r.label}</span>}
+              <span className="text-sm font-bold" style={{ color: PANEL_TEXT[theme] ?? PANEL_TEXT.light }}>{r.value}</span>
+              {r.label != null && r.label !== "" && (
+                <span className="text-xs" style={{ color: PANEL_LABEL[theme] ?? PANEL_LABEL.light }}>{r.label}</span>
+              )}
             </div>
           ))}
         </div>

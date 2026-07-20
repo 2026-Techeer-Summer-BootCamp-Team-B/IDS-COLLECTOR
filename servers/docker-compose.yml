@@ -120,6 +120,8 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       INTERNAL_GATEWAY_SECRET: ${INTERNAL_GATEWAY_SECRET}
+      REPORT_TOKEN_ENCRYPTION_KEY: ${REPORT_TOKEN_ENCRYPTION_KEY}
+      DASHBOARD_BASE_URL: ${DASHBOARD_BASE_URL}
     ports:
       - "127.0.0.1:8400:8400" # 로컬 디버깅 편의용 직결 포트(호스트 루프백에만 바인딩, forwardAuth 미적용) - 실제 진입 경로는 Traefik(:80/api). 원격 호스트에서 직결하려면 SSH 터널 필요(예: ssh -L 8400:localhost:8400 <host>)
     networks:

@@ -40,23 +40,43 @@ const STORAGE_ACTIVE_KEY = "sentinelops_overview_active_v2";
 // 기본 크기도 같이 올렸다 - 안 그러면 캔버스에 처음 놓는 순간부터 이미
 // 최소치보다 작은 상태가 된다.
 //
+// 2026-07-19(2차 재측정): "리사이즈로 줄이면 여전히 스크롤이 생긴다"는 재현
+// 피드백 - 위 1차 측정이 있던 시점 이후 useAutoFitBox(박스 크기에 맞춰
+// 콘텐츠를 transform:scale로 동기화하는 시도)가 한 번 얹혔다가 race condition
+// 버그로 다시 빠지면서(LogDashboard.jsx의 WidgetFrame 주석 참고 - "팀원
+// 버전(overflow로 그냥 넘치면 스크롤)으로 되돌림") 실제 반영된 값과 이 파일의
+// 주석이 어긋나 있었다. Playwright로 각 위젯을 캔버스에 단독으로 놓고
+// react-grid-layout의 .react-grid-item에 폭/높이를 직접 주입(드래그가 아니라
+// 스타일 직접 조작 - ResizeObserver 기반 recharts ResponsiveContainer는 그래도
+// 정상 반응함)한 뒤 WidgetFrame의 overflow-auto wrapper에서 scrollWidth/
+// scrollHeight > clientWidth/clientHeight를 이분탐색으로 재확인했다(chartType이
+// 여러 개인 위젯은 옵션마다 다 재고 더 큰 쪽을 채택). 새로 측정한 값이 기존
+// 값보다 클 때만 올렸다(작게 나온 경우 - 예: latency-stats/geo-summary는
+// "스크롤이 안 생기는" 기준으로는 기존 선언값보다 더 작게 잡을 수 있었지만,
+// 그건 지도/게이지처럼 내용 자체가 박스 크기에 맞춰 그냥 줄어들 뿐이라 "안
+// 잘림"이지 "알아볼 수 있음"이 아니다 - 이 요청의 목적은 축소이지 확대가
+// 아니므로 기존 값을 그대로 유지). log-volume/module-volume/recent-logs/
+// geo-summary/activity-flow는 특히 크게 올랐다(예: module-volume 10 -> 23,
+// activity-flow 13 -> 22) - 전부 기본 배치 크기(w/h)도 새 최소치 밑으로
+// 떨어지지 않게 같이 올렸다.
+//
 // icon: 위젯 설정 팔레트에서 라벨 글씨만으로는 뭔지 안 보인다는 2026-07-18
 // 피드백으로 추가 - LogDashboard.jsx의 WidgetPreviewIcon이 이 값으로 작은
 // 미리보기 아이콘을 그린다(실제 차트를 그대로 축소하는 대신, 종류를 대표하는
 // 간단한 도형 - 실제 위젯 렌더링은 데이터 fetch가 필요해서 팔레트 단계에선
 // 무겁고, chartTypeOptions가 있는 위젯은 그 중 첫 옵션 모양을 대표로 쓴다).
 export const WIDGET_CATALOG = [
-  { type: "kpi-total", label: "Total Logs", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
-  { type: "kpi-errors", label: "Errors", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
-  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
-  { type: "kpi-sources", label: "탐지 시나리오", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
+  { type: "kpi-total", label: "Total Logs", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
+  { type: "kpi-errors", label: "Errors", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
+  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
+  { type: "kpi-sources", label: "탐지 시나리오", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
   {
     type: "log-volume",
     label: "Log Volume",
     w: 8,
-    h: 9,
+    h: 14,
     minW: 6,
-    minH: 9,
+    minH: 14,
     icon: "area",
     chartTypeOptions: [
       { value: "area", label: "영역" },
@@ -67,9 +87,9 @@ export const WIDGET_CATALOG = [
     type: "level-distribution",
     label: "Log Levels",
     w: 4,
-    h: 9,
+    h: 10,
     minW: 3,
-    minH: 9,
+    minH: 10,
     icon: "bar",
     chartTypeOptions: [
       { value: "bar", label: "막대" },
@@ -82,7 +102,7 @@ export const WIDGET_CATALOG = [
     w: 4,
     h: 9,
     minW: 3,
-    minH: 6,
+    minH: 8,
     icon: "donut",
     chartTypeOptions: [
       { value: "donut", label: "도넛" },
@@ -107,16 +127,16 @@ export const WIDGET_CATALOG = [
   // LayerAttackStatsCompact 참고). 이 type을 바꾸면 이미 저장된 커스텀
   // 대시보드(localStorage)에 이 타입으로 박혀있는 위젯이 CATALOG_BY_TYPE에서
   // 안 찾아져서 통째로 사라진다 - 그래서 라벨/차트타입만 바꾸고 키는 안 건드림.
-  { type: "donut-k8s-namespace", label: "계층별 공격 통계", w: 4, h: 9, minW: 3, minH: 6, icon: "hbar" },
-  { type: "latency-stats", label: "API Latency", w: 12, h: 5, minW: 8, minH: 4, icon: "gauge" },
-  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 10, minW: 6, minH: 10, icon: "area" },
-  { type: "recent-logs", label: "Recent Logs", w: 8, h: 14, minW: 6, minH: 14, icon: "list" },
-  { type: "top-sources", label: "Top Sources", w: 4, h: 8, minW: 3, minH: 8, icon: "list" },
-  { type: "error-rate", label: "Error Rate", w: 4, h: 7, minW: 3, minH: 7, icon: "gauge" },
-  { type: "geo-summary", label: "지역별 분포", w: 12, h: 11, minW: 4, minH: 6, icon: "map" },
+  { type: "donut-k8s-namespace", label: "계층별 공격 통계", w: 4, h: 9, minW: 3, minH: 8, icon: "hbar" },
+  { type: "latency-stats", label: "API Latency", w: 12, h: 6, minW: 8, minH: 6, icon: "gauge" },
+  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 23, minW: 6, minH: 23, icon: "area" },
+  { type: "recent-logs", label: "Recent Logs", w: 8, h: 20, minW: 6, minH: 20, icon: "list" },
+  { type: "top-sources", label: "Top Sources", w: 4, h: 11, minW: 3, minH: 11, icon: "list" },
+  { type: "error-rate", label: "Error Rate", w: 4, h: 8, minW: 3, minH: 8, icon: "gauge" },
+  { type: "geo-summary", label: "지역별 분포", w: 12, h: 17, minW: 4, minH: 17, icon: "map" },
   // 2026-07-16(8차)에 기본 화면에서 뺐던 위젯 - 2026-07-18, "위젯 목록에 다시
   // 추가해달라"는 요청으로 선택적 위젯(카탈로그에만)으로 복원.
-  { type: "activity-flow", label: "실시간 탐지", w: 12, h: 13, minW: 6, minH: 13, icon: "pulse" },
+  { type: "activity-flow", label: "실시간 탐지", w: 12, h: 22, minW: 6, minH: 22, icon: "pulse" },
 ];
 
 const CATALOG_BY_TYPE = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w]));

@@ -99,8 +99,18 @@ export default function Globe3D({ points = [], theme = "dark" }) {
     const C = CHART_COLORS[theme];
 
     const scene = new THREE.Scene();
+    // 2026-07-19 버그 수정 - "카드를 키웠는데 지구본 위/아래가 그대로 잘린다":
+    // FOV(42°)와 카메라 거리(2.7)의 조합 자체가 원래부터 지구본(대기광 셸까지
+    // 포함한 반지름 1.06)보다 좁았다 - asin(1.06/2.7)≈23.1°는 세로 FOV의 절반
+    // (21°)보다 큼, 즉 카드/컨테이너 크기와 무관하게 항상 각도상으로 살짝
+    // 잘리는 구조였다(카드를 키우면 잘리는 절대 픽셀 수만 커져서 더 눈에 띔).
+    // 컨테이너를 더 키운다고 고쳐지는 게 아니라 카메라를 더 물러세워야 한다 -
+    // asin(1.06/distance)가 세로 FOV 절반의 90%(여유 10%) 안에 들어오도록
+    // distance를 2.7 -> 3.3으로 늘렸다(대기광 셸까지 포함해 프레임 안에 다
+    // 들어옴). FOV를 넓히는 대신 거리를 늘린 이유: FOV를 바꾸면 구체가
+    // 어안렌즈처럼 왜곡되는데, 거리만 늘리면 원근감은 그대로 유지된다.
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-    camera.position.set(0, 0, 2.7);
+    camera.position.set(0, 0, 3.3);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -220,7 +230,12 @@ export default function Globe3D({ points = [], theme = "dark" }) {
       pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointerNdc, camera);
-      const hit = raycaster.intersectObjects(markerSprites)[0];
+      // Sprite raycast는 깊이 버퍼를 보지 않아 지구 반대편 마커까지 맞을 수 있다.
+      // 같은 광선이 지구 표면을 먼저 만난 뒤에 있는 마커는 뒤편이므로 제외한다.
+      const earthHit = raycaster.intersectObject(earth)[0];
+      const hit = raycaster
+        .intersectObjects(markerSprites)
+        .find((markerHit) => !earthHit || markerHit.distance <= earthHit.distance + 0.03);
       if (hit) {
         clearTimeout(hoverResumeTimer);
         hoverPaused = true;

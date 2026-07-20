@@ -1,10 +1,11 @@
 """AlertConfig API (/alert-configs) - Slack/Discord 알림 설정 CRUD.
 app/notifications.py가 이 테이블을 조회해서 실제 발송 여부/대상(channel_type,
 webhook_url, enabled, min_severity)을 결정한다."""
+import json
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.audit import record_action
 from app.auth import current_user_id
@@ -34,6 +35,19 @@ class AlertConfigIn(BaseModel):
     webhook_url: str
     enabled: bool = True
     min_severity: int = 4
+    receive_incidents: bool = True
+    receive_trend_report: bool = False
+    trend_report_time: Optional[str] = None
+    trend_report_schedule: List[dict] = []
+
+    @field_validator("trend_report_time")
+    @classmethod
+    def validate_trend_report_time(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or value == "":
+            return None
+        if len(value) != 5 or value[2] != ":" or not (value[:2] + value[3:]).isdigit() or not (0 <= int(value[:2]) <= 23 and 0 <= int(value[3:]) <= 59):
+            raise ValueError("trend_report_time must be HH:MM")
+        return value
 
 
 class AlertConfigOut(AlertConfigIn):
@@ -47,6 +61,10 @@ def _row_to_out(row) -> AlertConfigOut:
         webhook_url=row["webhook_url"],
         enabled=row["enabled"],
         min_severity=row["min_severity"],
+        receive_incidents=row["receive_incidents"],
+        receive_trend_report=row["receive_trend_report"],
+        trend_report_time=row["trend_report_time"],
+        trend_report_schedule=json.loads(row["trend_report_schedule"]) if isinstance(row["trend_report_schedule"], str) else row["trend_report_schedule"],
     )
 
 
@@ -54,7 +72,7 @@ def _row_to_out(row) -> AlertConfigOut:
 async def list_alert_configs():
     async with pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, channel_type, webhook_url, enabled, min_severity FROM alert_configs ORDER BY created_at"
+            "SELECT id, channel_type, webhook_url, enabled, min_severity, receive_incidents, receive_trend_report, trend_report_time, trend_report_schedule FROM alert_configs ORDER BY created_at"
         )
     return [_row_to_out(r) for r in rows]
 
@@ -65,14 +83,18 @@ async def create_alert_config(body: AlertConfigIn, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO alert_configs (channel_type, webhook_url, enabled, min_severity)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, channel_type, webhook_url, enabled, min_severity
+            INSERT INTO alert_configs (channel_type, webhook_url, enabled, min_severity, receive_incidents, receive_trend_report, trend_report_time, trend_report_schedule)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+            RETURNING id, channel_type, webhook_url, enabled, min_severity, receive_incidents, receive_trend_report, trend_report_time, trend_report_schedule
             """,
             body.channel_type,
             body.webhook_url,
             body.enabled,
             body.min_severity,
+            body.receive_incidents,
+            body.receive_trend_report,
+            body.trend_report_time,
+            __import__("json").dumps(body.trend_report_schedule),
         )
     await record_action(
         "ALERT_CONFIG_CREATED",
@@ -91,15 +113,20 @@ async def update_alert_config(config_id: str, body: AlertConfigIn, request: Requ
         row = await conn.fetchrow(
             """
             UPDATE alert_configs
-            SET channel_type = $2, webhook_url = $3, enabled = $4, min_severity = $5, updated_at = now()
+            SET channel_type = $2, webhook_url = $3, enabled = $4, min_severity = $5,
+                receive_incidents = $6, receive_trend_report = $7, trend_report_time = $8, trend_report_schedule = $9::jsonb, updated_at = now()
             WHERE id = $1
-            RETURNING id, channel_type, webhook_url, enabled, min_severity
+            RETURNING id, channel_type, webhook_url, enabled, min_severity, receive_incidents, receive_trend_report, trend_report_time, trend_report_schedule
             """,
             config_id,
             body.channel_type,
             body.webhook_url,
             body.enabled,
             body.min_severity,
+            body.receive_incidents,
+            body.receive_trend_report,
+            body.trend_report_time,
+            __import__("json").dumps(body.trend_report_schedule),
         )
     if not row:
         raise HTTPException(status_code=404, detail="alert config not found")

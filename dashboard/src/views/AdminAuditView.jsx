@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
-import { CHART_COLORS, DONUT_PALETTE, donutPalette } from "../data/theme";
+import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
@@ -11,6 +11,9 @@ import { useScenarios } from "../hooks/useScenarios";
 import { useAlertConfigs } from "../hooks/useAlertConfigs";
 import { useLogPolicies } from "../hooks/useLogPolicies";
 import { useTrendReport } from "../hooks/useTrendReport";
+import { useReportIntegrations } from "../hooks/useReportIntegrations";
+import { useReportNotificationHistory } from "../hooks/useReportNotificationHistory";
+import { connectSlack, connectDiscord } from "../lib/reportIntegrationsMock";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
 import { renderMarkdownLite } from "../lib/markdownLite";
 import { usePollInterval } from "../context/PollIntervalContext";
@@ -116,7 +119,7 @@ function RuleRow({ rule, rank, onToggle }) {
 // 피드백 - 전체 목록(스크롤)은 그대로 두고 그 위에 적중 건수 상위 5개만 뽑아
 // 가로 막대로 보여준다. 룰 이름이 길어서 Y축 라벨을 잘라 보여주고, 잘린 이름은
 // Tooltip에서 전체를 다시 보여준다.
-function RuleRankingBarChart({ data, C, theme }) {
+function RuleRankingBarChart({ data, C }) {
   return (
     <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44)}>
       <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
@@ -134,14 +137,15 @@ function RuleRankingBarChart({ data, C, theme }) {
         />
         <Tooltip
           contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+          labelStyle={{ color: C.fg }}
+          itemStyle={{ color: C.fg }}
           cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
           formatter={(value) => [`${value}건`, "적중 건수"]}
           labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
-          isAnimationActive={false}
         />
         <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
           {data.map((d, i) => (
-            <Cell key={d.id} fill={donutPalette(theme)[i % DONUT_PALETTE.length]} />
+            <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
           ))}
         </Bar>
       </BarChart>
@@ -555,14 +559,48 @@ function AdminTabSwitcher({ active, onChange }) {
 }
 
 const CHANNEL_LABEL = { slack: "Slack", discord: "Discord" };
+const REPORT_DAYS = ["월", "화", "수", "목", "금", "토", "일"];
+const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
+
+function ReportScheduleEditor({ schedule, disabled, onChange }) {
+  const rows = schedule?.length ? schedule : [{ days: EVERY_DAY, time: "09:00" }];
+  function update(index, patch) { onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row))); }
+  return <div className={`space-y-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}>
+    {rows.map((row, index) => <div key={index} className="flex flex-wrap items-center gap-1">
+      <input type="time" value={row.time} onChange={(e) => update(index, { time: e.target.value })} className="bg-dash-bg text-xs text-dash-fg rounded px-1 py-0.5" />
+      {REPORT_DAYS.map((label, day) => <label key={day} className="text-[10px] text-dash-muted"><input type="checkbox" checked={row.days.includes(day)} onChange={(e) => update(index, { days: e.target.checked ? [...row.days, day].sort() : row.days.filter((d) => d !== day) })} />{label}</label>)}
+      {rows.length > 1 ? <button type="button" onClick={() => onChange(rows.filter((_, i) => i !== index))} className="w-8 text-[10px] text-dash-critical">삭제</button> : <span className="w-8" />}
+    </div>)}
+    <button type="button" onClick={() => onChange([...rows, { days: EVERY_DAY, time: "09:00" }])} className="text-[10px] text-dash-mint">+ 시간 추가</button>
+  </div>;
+}
+
+function AlertConfigRow({ config, onSave, onToggleActive, onDelete }) {
+  const [draft, setDraft] = useState(config);
+  useEffect(() => setDraft(config), [config]);
+  const patch = (value) => setDraft((current) => ({ ...current, ...value }));
+  const changed = JSON.stringify(draft) !== JSON.stringify(config);
+  return <tr className="border-t border-dash-surfaceAlt">
+    <td className="py-2.5 pr-3 text-dash-fg text-xs align-top">{CHANNEL_LABEL[draft.channel_type] ?? draft.channel_type}</td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top">Webhook URL 설정됨</td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label><input type="checkbox" checked={Boolean(draft.receive_incidents)} onChange={(e) => patch({ receive_incidents: e.target.checked })} /> 수신</label><select disabled={!draft.receive_incidents} value={draft.min_severity} onChange={(e) => patch({ min_severity: Number(e.target.value) })} className="ml-2 bg-dash-bg text-xs text-dash-fg rounded px-1 py-0.5 disabled:opacity-40">{[4,3,2,1].map((n) => <option key={n} value={n}>severity≥{n}</option>)}</select></td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label className="inline-block"><input type="checkbox" checked={Boolean(draft.receive_trend_report)} onChange={(e) => patch({ receive_trend_report: e.target.checked })} /> 수신</label><span className="inline-block align-top ml-2"><ReportScheduleEditor schedule={draft.trend_report_schedule} disabled={!draft.receive_trend_report} onChange={(schedule) => patch({ trend_report_schedule: schedule, trend_report_time: schedule[0]?.time ?? null })} /></span></td>
+    <td className="py-2.5 pr-3 align-top"><button onClick={() => onToggleActive(config)} className={`w-16 text-[10px] px-2 py-1 rounded-md ${config.enabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"}`}>{config.enabled ? "Active" : "Inactive"}</button></td>
+    <td className="py-2.5 align-top"><div className="flex gap-1"><button disabled={!changed} onClick={() => onSave(config, draft)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-mint/15 text-dash-mint disabled:opacity-35 disabled:cursor-not-allowed">저장</button><button onClick={() => onDelete(config)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-critical">삭제</button></div></td>
+  </tr>;
+}
 
 // Slack/Discord 알림 채널 설정. targets/allow-list와 달리 "장부용"이 아니라
 // app/notifications.py가 실제로 이 테이블을 읽어서 발송한다 — 여기서 켠 채널은
 // severity가 min_severity 이상인 인시던트가 생기면 바로 웹훅이 나간다.
-function AlertConfigsPanel({ configs, status, error, onCreate, onToggleActive, onDelete }) {
+function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggleActive, onDelete }) {
   const [channelType, setChannelType] = useState("slack");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [minSeverity, setMinSeverity] = useState(4);
+  const [receiveIncidents, setReceiveIncidents] = useState(true);
+  const [receiveTrendReport, setReceiveTrendReport] = useState(false);
+  const [trendReportTime, setTrendReportTime] = useState("09:00");
+  const [trendReportSchedule, setTrendReportSchedule] = useState([{ days: EVERY_DAY, time: "09:00" }]);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e) {
@@ -570,7 +608,7 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onToggleActive, o
     if (!webhookUrl.trim()) return;
     setSubmitting(true);
     try {
-      await onCreate({ channel_type: channelType, webhook_url: webhookUrl.trim(), enabled: true, min_severity: Number(minSeverity) });
+      await onCreate({ channel_type: channelType, webhook_url: webhookUrl.trim(), enabled: true, min_severity: Number(minSeverity), receive_incidents: receiveIncidents, receive_trend_report: receiveTrendReport, trend_report_time: receiveTrendReport ? trendReportTime : null, trend_report_schedule: receiveTrendReport ? trendReportSchedule : [] });
       setWebhookUrl("");
     } finally {
       setSubmitting(false);
@@ -583,10 +621,10 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onToggleActive, o
         <div>
           <h3 className="text-dash-fg text-sm font-semibold">알림 채널 (Slack / Discord)</h3>
           <p className="text-dash-muted text-xs mt-0.5">
-            GET/POST/PATCH/DELETE /alert-configs · 활성 채널은 min_severity 이상 인시던트 발생 시 실제로 웹훅 발송됨
+            채널별로 인시던트 즉시 알림과 AI 리포트 일일 발송을 따로 설정합니다. 리포트 시각은 한국 시간(KST)입니다.
           </p>
         </div>
-        <form onSubmit={handleSubmit} className="flex flex-wrap gap-1.5">
+        <form onSubmit={handleSubmit} className="flex flex-wrap items-start gap-1.5">
           <select
             value={channelType}
             onChange={(e) => setChannelType(e.target.value)}
@@ -595,24 +633,28 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onToggleActive, o
             <option value="slack">Slack</option>
             <option value="discord">Discord</option>
           </select>
+          <label className="flex items-center gap-1 text-xs text-dash-muted px-1">
+            <input type="checkbox" checked={receiveIncidents} onChange={(e) => setReceiveIncidents(e.target.checked)} /> 인시던트
+          </label>
+          <select
+            value={minSeverity}
+            onChange={(e) => setMinSeverity(e.target.value)}
+            disabled={!receiveIncidents}
+            title="이 severity 이상일 때만 인시던트 발송"
+            className="bg-dash-bg text-sm text-dash-fg rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint disabled:opacity-40"
+          >
+            {[4, 3, 2, 1].map((n) => <option key={n} value={n}>severity≥{n}</option>)}
+          </select>
+          <label className="flex items-center gap-1 text-xs text-dash-muted px-1">
+            <input type="checkbox" checked={receiveTrendReport} onChange={(e) => setReceiveTrendReport(e.target.checked)} /> AI 리포트
+          </label>
+          <span className="self-start"><ReportScheduleEditor schedule={trendReportSchedule} disabled={!receiveTrendReport} onChange={setTrendReportSchedule} /></span>
           <input
             value={webhookUrl}
             onChange={(e) => setWebhookUrl(e.target.value)}
             placeholder="webhook URL"
             className="bg-dash-bg text-sm text-dash-fg placeholder-dash-muted rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint w-64"
           />
-          <select
-            value={minSeverity}
-            onChange={(e) => setMinSeverity(e.target.value)}
-            title="이 severity 이상일 때만 발송"
-            className="bg-dash-bg text-sm text-dash-fg rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-dash-mint"
-          >
-            {[4, 3, 2, 1].map((n) => (
-              <option key={n} value={n}>
-                severity≥{n}
-              </option>
-            ))}
-          </select>
           <button
             type="submit"
             disabled={submitting || !webhookUrl.trim()}
@@ -631,17 +673,27 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onToggleActive, o
               <tr className="text-dash-muted text-xs uppercase tracking-wide">
                 <th className="text-left font-medium pb-2">채널</th>
                 <th className="text-left font-medium pb-2">Webhook URL</th>
-                <th className="text-left font-medium pb-2">기준</th>
+                <th className="text-left font-medium pb-2">인시던트</th>
+                <th className="text-left font-medium pb-2">AI 리포트</th>
                 <th className="text-left font-medium pb-2">상태</th>
                 <th className="text-left font-medium pb-2">조치</th>
               </tr>
             </thead>
             <tbody>
               {configs.map((c) => (
-                <tr key={c.id} className="border-t border-dash-surfaceAlt">
+                <AlertConfigRow key={c.id} config={c} onSave={onUpdate} onToggleActive={onToggleActive} onDelete={onDelete} />
+                /*
+                <tr className="border-t border-dash-surfaceAlt">
                   <td className="py-2.5 pr-3 text-dash-fg text-xs">{CHANNEL_LABEL[c.channel_type] ?? c.channel_type}</td>
-                  <td className="py-2.5 pr-3 text-dash-muted font-mono text-xs truncate max-w-xs">{c.webhook_url}</td>
-                  <td className="py-2.5 pr-3 text-dash-muted text-xs">severity≥{c.min_severity}</td>
+                  <td className="py-2.5 pr-3 text-dash-muted text-xs">Webhook URL 설정됨</td>
+                  <td className="py-2.5 pr-3 text-dash-muted text-xs">
+                    <label className="whitespace-nowrap"><input type="checkbox" checked={Boolean(c.receive_incidents)} onChange={(e) => onUpdate(c, { receive_incidents: e.target.checked })} /> 수신</label>
+                    {c.receive_incidents && <select value={c.min_severity} onChange={(e) => onUpdate(c, { min_severity: Number(e.target.value) })} className="ml-2 bg-dash-bg text-xs text-dash-fg rounded px-1 py-0.5"><option value={4}>severity≥4</option><option value={3}>severity≥3</option><option value={2}>severity≥2</option><option value={1}>severity≥1</option></select>}
+                  </td>
+                  <td className="py-2.5 pr-3 text-dash-muted text-xs">
+                    <label className="whitespace-nowrap"><input type="checkbox" checked={Boolean(c.receive_trend_report)} onChange={(e) => onUpdate(c, { receive_trend_report: e.target.checked, trend_report_time: e.target.checked ? (c.trend_report_time ?? "09:00") : null })} /> 수신</label>
+                    <ReportScheduleEditor schedule={c.trend_report_schedule} disabled={!c.receive_trend_report} onChange={(schedule) => onUpdate(c, { trend_report_schedule: schedule, trend_report_time: schedule[0]?.time ?? null })} />
+                  </td>
                   <td className="py-2.5 pr-3">
                     <button
                       onClick={() => onToggleActive(c)}
@@ -660,7 +712,7 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onToggleActive, o
                       삭제
                     </button>
                   </td>
-                </tr>
+                </tr>*/
               ))}
             </tbody>
           </table>
@@ -732,6 +784,141 @@ function TrendReportPanel({ scenarios }) {
   );
 }
 
+const REPORT_PLATFORM_LABEL = { slack: "Slack", discord: "Discord" };
+const REPORT_PLATFORMS = ["slack", "discord"];
+const REPORT_HISTORY_STATUS_LABEL = { success: "성공", failed: "실패" };
+
+// 스케줄 AI 트렌드 리포트 전용 Slack/Discord 연동(P8, OAuth는 목업) - AlertConfigsPanel
+// (인시던트 실시간, 고정 webhook)과 달리 계정별로 연동하고 access_token은 서버에서
+// 암호화 저장한다(app/report_notifications_api.py). "연결하기"는 실제 OAuth 리다이렉트
+// 대신 dashboard/src/lib/reportIntegrationsMock.js의 목업 함수로 즉시 더미 토큰을 받아
+// 그 값을 그대로 저장 API에 넘긴다.
+function ReportIntegrationsPanel({
+  connections,
+  status,
+  error,
+  onConnect,
+  onToggleEnabled,
+  onDisconnect,
+  history,
+  historyStatus,
+  historyError,
+}) {
+  const [connectingPlatform, setConnectingPlatform] = useState(null);
+  const connectionByPlatform = useMemo(() => {
+    const map = {};
+    connections.forEach((c) => (map[c.platform] = c));
+    return map;
+  }, [connections]);
+
+  async function handleConnect(platform) {
+    setConnectingPlatform(platform);
+    try {
+      await onConnect(platform);
+    } finally {
+      setConnectingPlatform(null);
+    }
+  }
+
+  return (
+    <div className="bg-dash-surface rounded-2xl p-5">
+      <h3 className="text-dash-fg text-sm font-semibold mb-1">리포트 알림 연동 (Slack / Discord)</h3>
+      <p className="text-dash-muted text-xs mb-3">
+        GET/POST/PATCH/DELETE /report-notifications/connections · 스케줄로 자동 생성되는 AI 트렌드
+        리포트만 이 연동 채널로 발송됨(대시보드에서 직접 보기는 발송 안 함) · OAuth는 목업 상태
+      </p>
+
+      {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
+      {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
+      {status === "ready" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+          {REPORT_PLATFORMS.map((platform) => {
+            const conn = connectionByPlatform[platform];
+            return (
+              <div key={platform} className="bg-dash-bg rounded-xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-dash-fg text-sm font-medium">{REPORT_PLATFORM_LABEL[platform]}</span>
+                  {conn ? (
+                    <button
+                      onClick={() => onToggleEnabled(conn)}
+                      className={`text-[10px] px-2 py-1 rounded-md whitespace-nowrap ${
+                        conn.enabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"
+                      }`}
+                    >
+                      {conn.enabled ? "연결됨" : "연결됨 (꺼짐)"}
+                    </button>
+                  ) : (
+                    <span className="text-[10px] px-2 py-1 rounded-md bg-dash-surfaceAlt text-dash-muted whitespace-nowrap">
+                      미연결
+                    </span>
+                  )}
+                </div>
+                {conn ? (
+                  <>
+                    <p className="text-dash-muted text-xs truncate">{conn.workspace_or_server_name}</p>
+                    <p className="text-dash-muted text-[11px] font-mono truncate mb-3">채널: {conn.channel_id}</p>
+                    <button
+                      onClick={() => onDisconnect(conn)}
+                      className="text-[10px] px-2.5 py-1.5 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-critical whitespace-nowrap"
+                    >
+                      연동 해제
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => handleConnect(platform)}
+                    disabled={connectingPlatform === platform}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint hover:bg-dash-mint/25 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {connectingPlatform === platform ? "연결 중..." : "연결하기"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <h4 className="text-dash-fg text-xs font-semibold mb-2">최근 전송 내역</h4>
+      {historyStatus === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
+      {historyStatus === "error" && <p className="text-dash-critical text-xs py-2">{historyError}</p>}
+      {historyStatus === "ready" && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-dash-muted text-xs uppercase tracking-wide">
+                <th className="text-left font-medium pb-2">시각</th>
+                <th className="text-left font-medium pb-2">채널</th>
+                <th className="text-left font-medium pb-2">상태</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.id} className="border-t border-dash-surfaceAlt">
+                  <td className="py-2 pr-3 text-dash-muted text-xs">
+                    {new Date(h.sent_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
+                  </td>
+                  <td className="py-2 pr-3 text-dash-fg text-xs">
+                    {REPORT_PLATFORM_LABEL[h.platform] ?? h.platform} · {h.channel_id}
+                    {h.mocked && <span className="text-dash-muted"> (mock)</span>}
+                  </td>
+                  <td className="py-2 text-xs">
+                    <span className={h.status === "success" ? "text-dash-mint" : "text-dash-critical"}>
+                      {REPORT_HISTORY_STATUS_LABEL[h.status] ?? h.status}
+                    </span>
+                    {h.error_message && <span className="text-dash-muted"> — {h.error_message}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {history.length === 0 && <p className="text-dash-muted text-xs py-3">전송 내역이 없습니다.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminAuditView({ pushToast }) {
   // GET /audit-logs 실데이터 — 예전엔 App.jsx가 들고 있던 mock auditLog를 prop으로
   // 받았는데, 다른 뷰들(Incidents/WAS/Falco/K8sAudit)과 같은 패턴으로 이 뷰가 직접
@@ -745,6 +932,17 @@ export default function AdminAuditView({ pushToast }) {
   const { scenarios, status: scenariosStatus, error: scenariosError, reload: reloadScenarios } = useScenarios();
   const { configs: alertConfigs, status: alertConfigsStatus, error: alertConfigsError, reload: reloadAlertConfigs } =
     useAlertConfigs();
+  const {
+    connections: reportIntegrations,
+    status: reportIntegrationsStatus,
+    error: reportIntegrationsError,
+    reload: reloadReportIntegrations,
+  } = useReportIntegrations();
+  const {
+    history: reportNotificationHistory,
+    status: reportNotificationHistoryStatus,
+    error: reportNotificationHistoryError,
+  } = useReportNotificationHistory({ limit: 20 });
   const {
     policies: logPolicies,
     status: logPoliciesStatus,
@@ -797,11 +995,24 @@ export default function AdminAuditView({ pushToast }) {
         webhook_url: config.webhook_url,
         enabled: !config.enabled,
         min_severity: config.min_severity,
+        receive_incidents: config.receive_incidents,
+        receive_trend_report: config.receive_trend_report,
+        trend_report_time: config.trend_report_time,
+        trend_report_schedule: config.trend_report_schedule ?? [],
       });
       toast(`알림 채널을 ${config.enabled ? "비활성화" : "활성화"}했습니다.`, "success");
       reloadAlertConfigs();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "알림 채널 상태 변경에 실패했습니다.", "error");
+    }
+  }
+
+  async function handleUpdateAlertConfig(config, patch) {
+    try {
+      await apiPatch(`/alert-configs/${config.id}`, { ...config, ...patch });
+      reloadAlertConfigs();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "알림 설정 변경에 실패했습니다.", "error");
     }
   }
 
@@ -812,6 +1023,38 @@ export default function AdminAuditView({ pushToast }) {
       reloadAlertConfigs();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "알림 채널 삭제에 실패했습니다.", "error");
+    }
+  }
+
+  const REPORT_CONNECT_FN = { slack: connectSlack, discord: connectDiscord };
+
+  async function handleConnectReportIntegration(platform) {
+    try {
+      const mockAuth = await REPORT_CONNECT_FN[platform]();
+      await apiPost("/report-notifications/connections", { platform, ...mockAuth });
+      toast(`${REPORT_PLATFORM_LABEL[platform]} 연동을 완료했습니다.`, "success");
+      reloadReportIntegrations();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "연동에 실패했습니다.", "error");
+    }
+  }
+
+  async function handleToggleReportIntegrationEnabled(connection) {
+    try {
+      await apiPatch(`/report-notifications/connections/${connection.id}`, { enabled: !connection.enabled });
+      reloadReportIntegrations();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "연동 상태 변경에 실패했습니다.", "error");
+    }
+  }
+
+  async function handleDisconnectReportIntegration(connection) {
+    try {
+      await apiDelete(`/report-notifications/connections/${connection.id}`);
+      toast("연동을 해제했습니다.", "success");
+      reloadReportIntegrations();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "연동 해제에 실패했습니다.", "error");
     }
   }
 
@@ -942,7 +1185,7 @@ export default function AdminAuditView({ pushToast }) {
             {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
             {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
             {scenariosStatus === "ready" && top5Scenarios.length > 0 && (
-              <RuleRankingBarChart data={top5Scenarios} C={C} theme={theme} />
+              <RuleRankingBarChart data={top5Scenarios} C={C} />
             )}
             {scenariosStatus === "ready" && top5Scenarios.length === 0 && (
               <p className="text-dash-muted text-xs py-3">등록된 탐지 룰이 없습니다.</p>
@@ -1004,11 +1247,24 @@ export default function AdminAuditView({ pushToast }) {
             status={alertConfigsStatus}
             error={alertConfigsError}
             onCreate={handleCreateAlertConfig}
+            onUpdate={handleUpdateAlertConfig}
             onToggleActive={handleToggleAlertConfigActive}
             onDelete={handleDeleteAlertConfig}
           />
 
           <TrendReportPanel scenarios={scenarios} />
+
+          <ReportIntegrationsPanel
+            connections={reportIntegrations}
+            status={reportIntegrationsStatus}
+            error={reportIntegrationsError}
+            onConnect={handleConnectReportIntegration}
+            onToggleEnabled={handleToggleReportIntegrationEnabled}
+            onDisconnect={handleDisconnectReportIntegration}
+            history={reportNotificationHistory}
+            historyStatus={reportNotificationHistoryStatus}
+            historyError={reportNotificationHistoryError}
+          />
         </div>
       )}
 

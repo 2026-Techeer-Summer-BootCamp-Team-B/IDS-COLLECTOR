@@ -73,7 +73,7 @@ async def _matching_alert_configs(severity: int) -> List[Any]:
     async with pool().acquire() as conn:
         return await conn.fetch(
             "SELECT channel_type, webhook_url FROM alert_configs "
-            "WHERE enabled AND min_severity <= $1",
+            "WHERE enabled AND receive_incidents AND min_severity <= $1",
             severity,
         )
 

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { LoaderCircle } from "lucide-react";
 import { SOURCE_META } from "./badges";
 import { forTheme } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
-import { fetchEventIncident } from "../lib/authApi";
+import { fetchEventIncident, fetchIncidentTimeline } from "../lib/authApi";
 
 // 화면 좌측 하단 고정 CRITICAL 알림 스택. 예전엔 App.jsx의 SidebarCriticalAlert가
 // 사이드바 nav 흐름 안에 알림 1건만 꽂아뒀는데(사이드바를 접으면 같이 사라짐,
@@ -31,6 +32,11 @@ const EXIT_DURATION_MS = 300;
 // 인덱스로 정확히 답함). FALLBACK_LIFETIME_MS 안에서 자연히 몇 번 재시도되다가
 // 카드가 사라지면 같이 멈춘다 - 별도 타임아웃 설계가 필요 없다.
 const INCIDENT_POLL_MS = 1200;
+// "스토리라인 보기" 클릭 시 바로 탭을 전환하지 않고, GET /incidents/{id}/timeline이
+// 먼저 성공하는 걸 확인한 뒤 이동한다(2026-07-19 요청) - 그래야 Incidents 탭으로
+// 넘어간 순간 이미 데이터가 채워진 화면이 보인다(예전엔 즉시 이동 후 그쪽 화면에서
+// 따로 로딩 스피너가 떴었음). 실패하면 이 시간만큼 "다시 시도"를 보여주고 원복.
+const NAV_ERROR_DISPLAY_MS = 1800;
 
 // 같은 종류의 공격(=화면에 보이는 메시지가 같음)이 짧은 시간에 몰려오면 카드를
 // 새로 쌓지 않고 기존 카드의 카운트만 올린다 - 안 그러면 시나리오 하나가
@@ -242,6 +248,34 @@ export default function CriticalToastStack({ events, onInvestigate, onGoToIncide
     startExit(id, "dismiss");
   }
 
+  // "스토리라인 보기" 클릭 → GET /incidents/{id}/timeline이 실제로 데이터를 내려줄
+  // 때까지 버튼을 loading 상태로 두고, 성공하면 그제서야 dismiss+탭 전환한다.
+  // 실패하면 error를 잠깐(NAV_ERROR_DISPLAY_MS) 보여주고 idle로 되돌린다 - 그
+  // 동안도 버튼은 그대로 눌러서 즉시 재시도할 수 있다. toasts 배열에서 이미 사라진
+  // (자동소멸/닫기로 지워진) id에 대한 setToasts는 map이 그대로 통과시켜서
+  // 안전하게 no-op된다.
+  const setNavState = useCallback((id, navState) => {
+    setToasts((prev) => prev.map((x) => (x.id === id ? { ...x, navState } : x)));
+  }, []);
+
+  const handleGoToIncident = useCallback(
+    (t) => {
+      if (t.navState === "loading" || !t.incidentId) return;
+      setNavState(t.id, "loading");
+      fetchIncidentTimeline(t.incidentId)
+        .then(() => {
+          dismiss(t.id);
+          onGoToIncident?.(t.incidentId);
+        })
+        .catch(() => {
+          setNavState(t.id, "error");
+          setTimeout(() => setNavState(t.id, "idle"), NAV_ERROR_DISPLAY_MS);
+        });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onGoToIncident, setNavState]
+  );
+
   if (toasts.length === 0) return null;
 
   return (
@@ -258,8 +292,7 @@ export default function CriticalToastStack({ events, onInvestigate, onGoToIncide
             onInvestigate?.(t.event);
           }}
           onGoToIncident={() => {
-            dismiss(t.id);
-            onGoToIncident?.(t.incidentId);
+            handleGoToIncident(t);
           }}
           onMouseEnter={() => pause(t.id)}
           onMouseLeave={() => resume(t.id)}
@@ -280,7 +313,7 @@ function ToastCard({
   onMouseLeave,
 }) {
   const [entered, setEntered] = useState(false);
-  const { event, exiting, count, incidentId } = toast;
+  const { event, exiting, count, incidentId, navState } = toast;
   const src = SOURCE_META[event.source] || { label: event.source, color: "#8890B5" };
 
   // 마운트 직후 한 프레임 쉬고 entered를 true로 올려서 grid-rows/opacity 트랜지션이
@@ -354,16 +387,21 @@ function ToastCard({
             </button>
             <button
               onClick={onGoToIncident}
-              disabled={!incidentId}
+              disabled={!incidentId || navState === "loading"}
               title={incidentId ? undefined : "아직 인시던트로 묶이지 않았어요"}
               className={
-                "text-[11px] font-medium px-2 py-1 rounded-lg flex-1 transition-colors " +
-                (incidentId
+                "text-[11px] font-medium px-2 py-1 rounded-lg flex-1 transition-colors flex items-center justify-center gap-1 " +
+                (navState === "error"
+                  ? "bg-dash-critical/15 text-dash-critical cursor-pointer"
+                  : navState === "loading"
+                  ? "bg-dash-mint/15 text-dash-mint cursor-not-allowed"
+                  : incidentId
                   ? "bg-dash-mint/15 text-dash-mint hover:bg-dash-mint/25 cursor-pointer"
                   : "bg-dash-muted/10 text-dash-muted cursor-not-allowed")
               }
             >
-              스토리라인 보기
+              {navState === "loading" && <LoaderCircle size={12} className="animate-spin shrink-0" />}
+              {navState === "loading" ? "스토리 라인 분석중" : navState === "error" ? "다시 시도" : "스토리라인 보기"}
             </button>
           </div>
         </div>

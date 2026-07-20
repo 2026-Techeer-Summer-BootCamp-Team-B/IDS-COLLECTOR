@@ -39,6 +39,7 @@ import { useLogVolume } from "../hooks/useLogVolume";
 import { useLogLevels } from "../hooks/useLogLevels";
 import { useDetectionSources } from "../hooks/useDetectionSources";
 import { useLogs } from "../hooks/useLogs";
+import { usePersistedOverviewLogRange } from "../hooks/usePersistedLogRange";
 import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, REAL_WARNING_SEVERITY, getRealSeverityMeta } from "../data/realSeverity";
 import { getModuleMeta } from "../data/moduleMeta";
 import { useLiveAttackFeed } from "../hooks/useLiveFeed";
@@ -402,13 +403,21 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
           </span>
         ) : null
       }
-      className="h-80"
+      className="h-80 flex flex-col"
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">Log Volume을 불러오지 못했습니다.</p>}
       {status === "ready" && (
         <>
-          <ResponsiveContainer width="100%" height="76%">
+          {/* 2026-07-19: 고정 비율(height="76%")로는 범례 줄(아래 flex-wrap 행)이
+              길어져서 2줄로 접힐 때(모듈 5개 + "색상 초기화" 버튼이 좁은 폭에서
+              흔히 그럼) 그 몫만큼을 안 빼주니까 Card의 고정 h-80을 넘어 카드
+              밖으로 글자가 삐져나왔다(Card 자체엔 overflow 제어가 없음) - Card를
+              flex-col로 바꾸고 차트를 flex-1 min-h-0으로 줘서, 범례가 먼저 자기
+              콘텐츠 높이(몇 줄이든)를 그대로 확보하고 차트가 나머지 공간만
+              쓰게 한다. */}
+          <div className="flex-1 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data}>
               <defs>
                 {stackSeries.map((s) => (
@@ -457,7 +466,8 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
               )}
             </ComposedChart>
           </ResponsiveContainer>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-dash-muted mt-2">
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-dash-muted mt-2 shrink-0">
             {series.map((s) => (
               <label
                 key={s.key}
@@ -548,13 +558,19 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
           )}
         </div>
       }
-      className={isControlled ? "min-h-80 h-full" : "h-80"}
+      className={isControlled ? "min-h-80 h-full flex flex-col" : "h-80 flex flex-col"}
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && (
         <>
-          <ResponsiveContainer width="100%" height="82%">
+          {/* 2026-07-19: WAS/WAF/Falco/K8s Audit 상세 페이지가 쓰는 module 지정
+              버전 - Overview 전용 LogVolumeBreakdownBody/ModuleVolumeStackedChart와
+              같은 버그(고정 비율 height + flex-wrap 없는 범례가 카드 밖으로
+              삐져나옴)가 이 갈래엔 안 고쳐진 채 남아있었다. 급증 배지까지 켜지면
+              범례가 3개(전체 로그/Major~Critical/급증 구간)라 더 쉽게 넘쳤다. */}
+          <div className="flex-1 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
             {chartType === "bar" ? (
               <BarChart data={data}>
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
@@ -596,7 +612,8 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
               </AreaChart>
             )}
           </ResponsiveContainer>
-          <div className="flex gap-4 text-xs text-dash-muted mt-2">
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-dash-muted mt-2 shrink-0">
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: totalColor }} /> 전체 로그
             </span>
@@ -668,13 +685,20 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
       icon={Layers}
       subtitle={`Last ${preset.label} · WAS / WAF / Falco / K8s Audit 적층`}
       action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
-      className={fillHeight ? "min-h-80 h-full" : "h-80"}
+      className={fillHeight ? "min-h-80 h-full flex flex-col" : "h-80 flex flex-col"}
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">모듈별 로그량을 불러오지 못했습니다.</p>}
       {status === "ready" && (
         <>
-          <ResponsiveContainer width="100%" height="82%">
+          {/* 2026-07-19: LogVolumeBreakdownBody와 같은 버그 - 고정 비율(height="82%")
+              로는 아래 범례 행이 필요로 하는 높이를 안 빼주고, 게다가 이 범례 행은
+              flex-wrap조차 없어서 좁은 폭에서는 줄바꿈도 안 되고 그냥 오른쪽/아래로
+              넘쳤다(Card에 overflow 제어가 없어 카드 밖으로 삐져나와 보임). 차트를
+              flex-1 min-h-0으로 감싸고 범례에 flex-wrap을 추가해서 실제로 필요한
+              공간을 항상 확보하게 한다. */}
+          <div className="flex-1 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data}>
               <defs>
                 <linearGradient id="moduleWasFill" x1="0" y1="0" x2="0" y2="1">
@@ -736,7 +760,8 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
               />
             </AreaChart>
           </ResponsiveContainer>
-          <div className="flex gap-4 text-xs text-dash-muted mt-2">
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-dash-muted mt-2 shrink-0">
             {[metaWas, metaWaf, metaFalco, metaK8s].map((m) => (
               <span key={m.label} className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: m.color }} /> {m.label}
@@ -752,7 +777,13 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
 // Log Levels 차트 실데이터 버전 — event.severity 1~4 그대로 4개 막대(기존
 // LevelDistributionChart의 9단계는 FalcoView 등 여전히 mock인 다른 뷰가
 // 재사용 중이라 그대로 두고, Overview 전용으로 새로 뺐다).
-export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", chartType: chartTypeProp }) {
+export function RealLevelDistributionChart({
+  hours,
+  module,
+  kpiFilter = "ALL",
+  chartType: chartTypeProp,
+  onChartTypeChangeExternal,
+}) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { pollMs } = usePollInterval();
@@ -788,8 +819,12 @@ export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", c
           : "불러오는 중..."
       }
       action={
-        !isControlled && (
-          <ChartTypeToggle options={chartTypeOptionsFor("level-distribution")} value={chartType} onChange={setInternalType} />
+        (!isControlled || onChartTypeChangeExternal) && (
+          <ChartTypeToggle
+            options={chartTypeOptionsFor("level-distribution")}
+            value={chartType}
+            onChange={onChartTypeChangeExternal ?? setInternalType}
+          />
         )
       }
       // 2026-07-19: isControlled일 때 flex-col + flex-1 min-h-0 조합으로 바꿨다 -
@@ -812,28 +847,41 @@ export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", c
             // 요청 - "박스 리사이즈해도 내부 도넛이 안 따라온다"). 기본(고정 레이아웃)
             // 모드는 계속 고정 132px 그대로 둬서 이전에 잡은 "ResponsiveContainer가
             // 불필요하다"는 콘솔 워닝도 그대로 안 남는다.
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-                <Pie
-                  data={data}
-                  dataKey="count"
-                  nameKey="label"
-                  innerRadius="49%"
-                  outerRadius="79%"
-                  startAngle={90}
-                  endAngle={-270}
-                  stroke="none"
-                  activeIndex={activeIndex}
-                  activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
-                  onMouseEnter={(_, i) => focusIndex(i)}
-                  onMouseLeave={blurIndex}
-                >
-                  {data.map((d, i) => (
-                    <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
+            //
+            // 2026-07-19: ResponsiveContainer를 flex 행(위 143번째 줄)의 자식으로
+            // width="100%"만 주면, 박스가 넓어질수록 이 컨테이너가 남는 가로
+            // 공간을 전부 차지해버리고 그 안에서 도넛은 (기본적으로 cx/cy="50%")
+            // 정중앙에 그려진다 - 결과적으로 도넛과 범례 사이에 빈 공간만 넓어지고
+            // 도넛 자체는 계속 가운데로 밀려 보였다(기본 모드는 고정 132px라
+            // 이 문제 자체가 없음). aspect-square + h-full로 감싸서 이 컨테이너의
+            // 가로 폭을 세로 높이에 맞춰 정사각형으로 고정 - 도넛은 여전히 박스
+            // 높이에 따라 커지고 작아지지만(리사이즈 대응 유지), 가로로는 자기
+            // 크기만큼만 차지해서 범례 바로 옆(기본 모드와 같은 위치)에 붙는다.
+            <div className="h-full aspect-square shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                  <Pie
+                    data={data}
+                    dataKey="count"
+                    nameKey="label"
+                    innerRadius="49%"
+                    outerRadius="79%"
+                    startAngle={90}
+                    endAngle={-270}
+                    stroke="none"
+                    isAnimationActive={false}
+                    activeIndex={activeIndex}
+                    activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                    onMouseEnter={(_, i) => focusIndex(i)}
+                    onMouseLeave={blurIndex}
+                  >
+                    {data.map((d, i) => (
+                      <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
@@ -845,13 +893,14 @@ export function RealLevelDistributionChart({ hours, module, kpiFilter = "ALL", c
                 startAngle={90}
                 endAngle={-270}
                 stroke="none"
+                isAnimationActive={false}
                 activeIndex={activeIndex}
                 activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
                 onMouseEnter={(_, i) => focusIndex(i)}
                 onMouseLeave={blurIndex}
               >
                 {data.map((d, i) => (
-                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
+                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
                 ))}
               </Pie>
             </PieChart>
@@ -1567,7 +1616,7 @@ function ActivityLayerDiagram({ layers, C }) {
 // 탐지 소스별(WAS/Falco/K8s Audit) 도넛 — 3계층 상관분석 프로젝트의 핵심 축이라
 // Overview 요약에도 반드시 있어야 하는 지표. GET /stats(by_module) 연동 - WAF는
 // 비활성화 상태라 보통 안 잡히거나 0건(정상).
-function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType: chartTypeProp }) {
+function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType: chartTypeProp, onChartTypeChangeExternal }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-source"));
@@ -1608,8 +1657,12 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
           : "불러오는 중..."
       }
       action={
-        !isControlled && (
-          <ChartTypeToggle options={chartTypeOptionsFor("donut-source")} value={chartType} onChange={setInternalType} />
+        (!isControlled || onChartTypeChangeExternal) && (
+          <ChartTypeToggle
+            options={chartTypeOptionsFor("donut-source")}
+            value={chartType}
+            onChange={onChartTypeChangeExternal ?? setInternalType}
+          />
         )
       }
       // 2026-07-19: isControlled일 때 flex-col + flex-1 min-h-0 조합 - Card가
@@ -1642,28 +1695,37 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
             // 불필요하다"는 콘솔 워닝도 그대로 안 남는다. WidgetFrame은 이 위젯
             // 내부를 그대로(overflow-auto로만) 감싸므로 이 컴포넌트가 직접
             // 박스 크기에 반응해야 한다.
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-                <Pie
-                  data={data}
-                  dataKey="count"
-                  nameKey="label"
-                  innerRadius="49%"
-                  outerRadius="79%"
-                  startAngle={90}
-                  endAngle={-270}
-                  stroke="none"
-                  activeIndex={activeIndex}
-                  activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
-                  onMouseEnter={(_, i) => focusIndex(i)}
-                  onMouseLeave={blurIndex}
-                >
-                  {data.map((d, i) => (
-                    <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
+            //
+            // 2026-07-19: aspect-square + h-full로 감싸서 가로 폭을 세로 높이에
+            // 맞춘다 - 안 그러면 이 컨테이너가 flex 행의 남는 가로 공간을 전부
+            // 차지해서 도넛이 정중앙으로 밀리고 범례와 멀어져 보였다(기본 모드는
+            // 고정 132px라 이 문제가 없음). 자세한 설명은 RealLevelDistributionChart
+            // 쪽 같은 주석 참고.
+            <div className="h-full aspect-square shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                  <Pie
+                    data={data}
+                    dataKey="count"
+                    nameKey="label"
+                    innerRadius="49%"
+                    outerRadius="79%"
+                    startAngle={90}
+                    endAngle={-270}
+                    stroke="none"
+                    isAnimationActive={false}
+                    activeIndex={activeIndex}
+                    activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                    onMouseEnter={(_, i) => focusIndex(i)}
+                    onMouseLeave={blurIndex}
+                  >
+                    {data.map((d, i) => (
+                      <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
@@ -1675,13 +1737,14 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
                 startAngle={90}
                 endAngle={-270}
                 stroke="none"
+                isAnimationActive={false}
                 activeIndex={activeIndex}
                 activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
                 onMouseEnter={(_, i) => focusIndex(i)}
                 onMouseLeave={blurIndex}
               >
                 {data.map((d, i) => (
-                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
+                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
                 ))}
               </Pie>
             </PieChart>
@@ -1731,7 +1794,7 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
 // 같은 데이터(GET /stats/levels)를 비율로 한눈에 보여주는 버전. 탐지 소스별
 // 분포 도넛과 나란히 둬서 "어느 계층에서" + "얼마나 심각한 로그가 많은지"를
 // 같은 화면에서 비교할 수 있게 한다.
-function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
+function SeverityDonutCompact({ hours, chartType: chartTypeProp, onChartTypeChangeExternal }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { pollMs } = usePollInterval();
@@ -1768,8 +1831,12 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
       icon={AlertTriangle}
       subtitle={status === "ready" ? `선택 구간 · 총 ${total}건` : "불러오는 중..."}
       action={
-        !isControlled && (
-          <ChartTypeToggle options={chartTypeOptionsFor("donut-severity")} value={chartType} onChange={setInternalType} />
+        (!isControlled || onChartTypeChangeExternal) && (
+          <ChartTypeToggle
+            options={chartTypeOptionsFor("donut-severity")}
+            value={chartType}
+            onChange={onChartTypeChangeExternal ?? setInternalType}
+          />
         )
       }
       // 2026-07-19: isControlled일 때 flex-col + flex-1 min-h-0 조합 - Card가
@@ -1802,28 +1869,37 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
             // 불필요하다"는 콘솔 워닝도 그대로 안 남는다. WidgetFrame은 이 위젯
             // 내부를 그대로(overflow-auto로만) 감싸므로 이 컴포넌트가 직접
             // 박스 크기에 반응해야 한다.
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-                <Pie
-                  data={data}
-                  dataKey="count"
-                  nameKey="label"
-                  innerRadius="49%"
-                  outerRadius="79%"
-                  startAngle={90}
-                  endAngle={-270}
-                  stroke="none"
-                  activeIndex={activeIndex}
-                  activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
-                  onMouseEnter={(_, i) => focusIndex(i)}
-                  onMouseLeave={blurIndex}
-                >
-                  {data.map((d, i) => (
-                    <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
+            //
+            // 2026-07-19: aspect-square + h-full로 감싸서 가로 폭을 세로 높이에
+            // 맞춘다 - 안 그러면 이 컨테이너가 flex 행의 남는 가로 공간을 전부
+            // 차지해서 도넛이 정중앙으로 밀리고 범례와 멀어져 보였다(기본 모드는
+            // 고정 132px라 이 문제가 없음). 자세한 설명은 RealLevelDistributionChart
+            // 쪽 같은 주석 참고.
+            <div className="h-full aspect-square shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                  <Pie
+                    data={data}
+                    dataKey="count"
+                    nameKey="label"
+                    innerRadius="49%"
+                    outerRadius="79%"
+                    startAngle={90}
+                    endAngle={-270}
+                    stroke="none"
+                    isAnimationActive={false}
+                    activeIndex={activeIndex}
+                    activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                    onMouseEnter={(_, i) => focusIndex(i)}
+                    onMouseLeave={blurIndex}
+                  >
+                    {data.map((d, i) => (
+                      <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
               <Pie
@@ -1835,13 +1911,14 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp }) {
                 startAngle={90}
                 endAngle={-270}
                 stroke="none"
+                isAnimationActive={false}
                 activeIndex={activeIndex}
                 activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
                 onMouseEnter={(_, i) => focusIndex(i)}
                 onMouseLeave={blurIndex}
               >
                 {data.map((d, i) => (
-                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={1.5} />
+                  <Cell key={d.key} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
                 ))}
               </Pie>
             </PieChart>
@@ -1964,7 +2041,7 @@ function GeoSummaryCard() {
   // 있게 해달라" - Infrastructure 패널과 같은 2D(Google Maps)/3D(지구본) 전환을
   // 여기도 그대로 적용. 기본은 지금까지 써왔던 3D(지구본)를 유지해서 랜딩 화면의
   // "화려한" 첫인상은 그대로 두고, 자세히 보고 싶을 때만 2D로 바꾸게 했다.
-  const [mapMode, setMapMode] = useState("3d");
+  const [mapMode, setMapMode] = useState("2d");
 
   return (
     <Card
@@ -1994,11 +2071,15 @@ function GeoSummaryCard() {
           ))}
         </div>
       }
+      // 2026-07-19 요청: 카드와 지도 둘 다 아래로 넓혀달라 - h-[360px] 고정이던
+      // 지도 영역을 flex-1로 바꿔서 카드 자체가 커진 만큼 지도도 그대로 따라
+      // 커지게 했다(전에 도넛 위젯에서 겪은 것과 같은 이유로 Card를 flex-col +
+      // 내부를 flex-1 min-h-0으로 - block 레이아웃이면 height:100%가 카드
+      // 전체 기준으로 계산돼서 타이틀 행만큼 넘친다).
+      className="h-[560px] flex flex-col"
     >
       {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
-      {/* 2026-07-16(6차): 지구본이 카드 하단에서 살짝 잘린다는 피드백 - h-80(320px)
-          에서 조금만 늘렸다. */}
-      <div className="h-[360px]">
+      <div className="flex-1 min-h-0">
         {mapMode === "2d" ? (
           <GoogleGeoMap points={countries} />
         ) : (
@@ -2386,7 +2467,16 @@ function WidgetFrame({ widgetType, title, chartType, onChartTypeChange, onRemove
 
   return (
     <div className="group relative h-full w-full">
-      <div className="h-full w-full overflow-auto">{children}</div>
+      {/* 2026-07-19: overflow-auto -> overflow-clip - WIDGET_CATALOG의 minW/minH를
+          실측으로 다시 맞춰서 이제 정상 사용 중엔 스크롤이 필요할 일이 없어야
+          한다. 그래도 혹시 측정이 어긋나는 경우(새 위젯 추가, 데이터에 따라
+          텍스트 길이가 달라지는 경우 등)에 스크롤바가 노출되는 대신 조용히
+          잘리게 하는 안전장치일 뿐 - 이게 필요해지는 상황 자체가 생기면 그건
+          이 안전장치가 아니라 minW/minH 실측값을 다시 고쳐야 한다는 신호다.
+          내부에 자체 스크롤 영역(예: Recent Logs 테이블 본문)이 있는 위젯은
+          그 안쪽 요소가 따로 overflow-y-auto를 갖고 있어 여기서 clip으로
+          바꿔도 영향 없다. */}
+      <div className="h-full w-full overflow-clip">{children}</div>
       <div
         className="widget-drag-handle cursor-move absolute top-1.5 right-1.5 z-10 flex items-center gap-1.5 max-w-[92%] px-2 py-1 rounded-lg bg-dash-bg/95 border border-dash-mint/25 shadow-lg text-dash-muted text-[10px] uppercase tracking-wide select-none opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
       >
@@ -2732,28 +2822,31 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   );
 }
 
-// 저장된 커스텀 대시보드 보기 - 드래그/리사이즈/차트타입 전환은 바로바로 저장되고
-// ("위젯 편집" 없이도 배치만 다듬는 건 즉시 반영), 위젯을 추가/제거하려면
-// "위젯 편집" 버튼으로 DashboardBuilder를 연다.
-function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, onChartTypeCommit }) {
+// 저장해둔 커스텀 대시보드를 "적용해서 보기"만 하는 뷰 - 레이아웃을 짜는
+// DashboardBuilder(편집 캔버스)와는 다른 상태다. 처음 만들 때는 이 둘을 구분
+// 안 하고 편집 캔버스와 완전히 같은 방식(자유 드래그/리사이즈 + KPI 카드 클릭
+// 무효화 + hover 오버레이)으로 렌더링했는데, 몇 차례 피드백을 거쳐 최종적으로:
+//   - 레이아웃(위치/크기)은 기본 모드처럼 고정 - isDraggable/isResizable=false.
+//     바꾸려면 "위젯 편집"으로 DashboardBuilder를 열어야 한다.
+//   - KPI 카드는 기본 모드와 동일하게 클릭되는 필터 버튼 - renderWidgetContent에
+//     interactive=true를 넘겨서 onClick/active(kpiFilter)를 받는다.
+//   - WidgetFrame(hover하면 우상단에 뜨는 드래그핸들/제거 버튼 오버레이)은 아예
+//     안 쓴다 - "커스텀 세팅(편집 캔버스)할 때만 떠야 하는 게 적용된 화면에서도
+//     뜬다"는 피드백으로 제거.
+//   - 차트 종류 전환(도넛↔막대 등)은 WidgetFrame 오버레이가 없어지면서 같이
+//     사라졌던 걸 복구 - 기본 모드 위젯처럼 각 차트 자체의 Card 헤더에 항상
+//     보이는 토글로 다시 붙였다(handleChartType, renderWidgetContent의 4번째
+//     인자로 각 차트 컴포넌트까지 흘려보냄 - 각 컴포넌트의 onChartTypeChangeExternal
+//     prop 참고).
+// 으로 정리됐다.
+function CustomDashboardView({ dashboard, renderWidgetContent, onChartTypeCommit }) {
   const gridLayout = dashboard.widgets.map((w) => {
     const entry = catalogEntry(w.type);
     return { i: w.uid, x: w.x, y: w.y, w: w.w, h: w.h, minW: entry?.minW, minH: entry?.minH };
   });
 
-  const handleLayoutChange = (newLayout) => {
-    const next = applyLayoutToWidgets(dashboard.widgets, newLayout);
-    if (next !== dashboard.widgets) onLayoutCommit(next);
-  };
-
   const handleChartType = (uid, type) => {
     onChartTypeCommit(dashboard.widgets.map((w) => (w.uid === uid ? { ...w, chartType: type } : w)));
-  };
-
-  const handleHeightChange = (uid, delta) => {
-    onLayoutCommit(
-      dashboard.widgets.map((w) => (w.uid === uid ? { ...w, h: Math.max(3, w.h + delta) } : w))
-    );
   };
 
   return (
@@ -2766,25 +2859,25 @@ function CustomDashboardView({ dashboard, renderWidgetContent, onLayoutCommit, o
         <ResponsiveGridLayout
           className="layout"
           layout={gridLayout}
-          onLayoutChange={handleLayoutChange}
+          isDraggable={false}
+          isResizable={false}
           cols={12}
           rowHeight={20}
           margin={[16, 16]}
-          draggableHandle=".widget-drag-handle"
           compactType="vertical"
         >
           {dashboard.widgets.map((w) => (
             <div key={w.uid}>
-              <WidgetFrame
-                widgetType={w.type}
-                title={catalogEntry(w.type)?.label}
-                chartType={w.chartType}
-                onChartTypeChange={(type) => handleChartType(w.uid, type)}
-                height={w.h}
-                onHeightChange={(delta) => handleHeightChange(w.uid, delta)}
-              >
-                {renderWidgetContent(w.type, w.chartType)}
-              </WidgetFrame>
+              {/* WidgetFrame을 안 쓴다 - hover하면 우상단에 드래그 핸들/제거 버튼이
+                  뜨는 편집용 오버레이라, 드래그·리사이즈·제거를 이미 다 막아놨어도
+                  hover 패널 자체는 계속 나타나서 "편집 캔버스에서만 떠야 하는 게
+                  적용된 화면에서도 뜬다"는 피드백을 받았다. overflow-clip 안전장치
+                  (WidgetFrame 쪽 주석 참고)만 유지한 얇은 wrapper로 대체. 차트
+                  타입 전환은 이 오버레이가 아니라 각 차트 자체의 Card 헤더 토글로
+                  옮겨 살아있다(위 handleChartType, onChartTypeChangeExternal). */}
+              <div className="h-full w-full overflow-clip">
+                {renderWidgetContent(w.type, w.chartType, true, (type) => handleChartType(w.uid, type))}
+              </div>
             </div>
           ))}
         </ResponsiveGridLayout>
@@ -2880,7 +2973,7 @@ function WidgetSettingsMenu({ dashboards, activeId, setActiveId, deleteDashboard
 }
 
 export function DashboardContent() {
-  const [rangeKey, setRangeKey] = useState("24h");
+  const [rangeKey, setRangeKey] = usePersistedOverviewLogRange();
   const [kpiFilter, setKpiFilter] = useState("ALL");
   // 검색 결과 패널 펼침 여부 — SearchDiscoverView 안의 "N hits" 배지뿐 아니라
   // 그 아래(= Total Logs KPI 행 위)에 놓는 전용 버튼으로도 열고 닫을 수 있게
@@ -2958,6 +3051,20 @@ export function DashboardContent() {
     setBuilderOpen(false);
     setEditingDashboardId(null);
   }
+  // 2026-07-19 버그 수정 - "커스텀 대시보드로 이동하면 편집 패널이 뜬다": 편집
+  // 캔버스(DashboardBuilder)를 연 채로(저장/취소 안 하고) 상단 "위젯 설정"
+  // 드롭다운에서 다른 항목(기본 모드 포함)을 고르면, activeId는 바뀌는데
+  // builderOpen은 그대로 true라 DashboardBuilder가 계속 떠 있었다(헤더 라벨만
+  // "기본 모드"로 바뀌고 화면은 여전히 위젯 팔레트/저장 버튼이 있는 편집 캔버스).
+  // WidgetSettingsMenu에 원본 setActiveId를 그대로 안 넘기고, 드롭다운에서
+  // 뭘 고르든(기본 모드/다른 커스텀 대시보드) 항상 builderOpen부터 닫는 래퍼를
+  // 넘긴다 - 그래야 항상 기본 모드처럼 깔끔한 뷰(CustomDashboardView 또는
+  // 고정 JSX)로 이동한다.
+  function selectDashboardFromMenu(id) {
+    setBuilderOpen(false);
+    setEditingDashboardId(null);
+    setActiveId(id);
+  }
   function handleBuilderSave(name, widgets) {
     if (editingDashboardId) {
       updateDashboard(editingDashboardId, { name, widgets });
@@ -2973,15 +3080,34 @@ export function DashboardContent() {
   // 인스턴스별 chartType을 받아 JSX를 만든다. 기본 모드는 이 함수를 전혀 쓰지
   // 않고 아래의 고정 변수들(kpiTotalWidget 등, chartType 없음)만 참조한다 —
   // 그래야 커스텀 대시보드에서 뭘 바꾸든 기본 모드가 절대 영향받지 않는다.
-  // 2026-07-19 요청: 커스텀 대시보드(이 함수로만 렌더링됨, 위 주석 참고)에서는
+  // 2026-07-19 요청: 위젯을 드래그/리사이즈하는 편집 캔버스(DashboardBuilder)에서는
   // Errors/Total Logs/Warnings/탐지 시나리오 카드를 클릭해도 아무 반응이 없어야
-  // 한다 - 기본 모드(아래 kpiTotalWidget 등, 이 함수를 안 거침)에서는 클릭하면
-  // KPI 필터가 걸리는 기존 동작이 그대로 유지된다. onClick을 아예 안 넘기면
-  // KpiCard가 자동으로 button 대신 div로 렌더링하고 hover/커서 스타일도 꺼진다
-  // (KpiCard 정의의 `const Tag = onClick ? "button" : "div"` 참고) - 드래그로
-  // 옮기거나 리사이즈하는 건 WidgetFrame의 별도 드래그 핸들이 담당해서 이 카드
-  // 자체의 onClick 유무와 무관하게 그대로 가능하다.
-  function renderWidgetContent(type, chartType) {
+  // 한다(레이아웃을 짜는 중인데 클릭이 데이터 필터로 새버리면 헷갈린다는 취지) -
+  // 기본 모드(아래 kpiTotalWidget 등)에서는 클릭하면 KPI 필터가 걸리는 기존
+  // 동작이 그대로 유지된다.
+  //
+  // 2026-07-19(2차) 수정: 처음엔 "이 함수로 렌더링되는 모든 곳"을 편집 중으로
+  // 취급해서, 이미 저장해둔 프로필을 그냥 "적용해서 보기만" 하는
+  // CustomDashboardView(레이아웃 편집이 아니라 기본 모드처럼 고정된 뷰)까지도
+  // 버튼이 죽어있었다 - 편집 캔버스(DashboardBuilder)와 적용된 프로필 보기
+  // (CustomDashboardView)는 다른 상태인데 같은 렌더러를 공유하다 보니 편집
+  // 전용으로 만든 "클릭 무효화"가 보기 모드에도 새버린 것. interactive 플래그로
+  // 구분한다 - true면(CustomDashboardView가 넘김) 기본 모드와 똑같이 onClick/
+  // active를 붙여서 KPI 필터가 걸리고, 필터 적용 중이면 눌린 상태(active)도
+  // 정확히 반영된다. false(기본값, DashboardBuilder가 씀)면 기존처럼 onClick을
+  // 아예 안 넘겨서 KpiCard가 button 대신 div로 렌더링된다(KpiCard 정의의
+  // `const Tag = onClick ? "button" : "div"` 참고) - 드래그/리사이즈는
+  // WidgetFrame의 별도 드래그 핸들이 담당해서 이 카드의 onClick 유무와 무관하게
+  // 그대로 가능하다.
+  // onChartTypeChange(2026-07-19): 적용된 커스텀 프로필을 "보기만" 할 때도
+  // 차트 타입 전환은 기본 모드 위젯처럼 카드 헤더에 항상 보이는 버튼으로 하고
+  // 싶다는 요청 - 이전엔 편집 캔버스(DashboardBuilder)의 WidgetFrame hover
+  // 오버레이가 전담했는데, 그 오버레이 자체를 적용된 화면에서 없앴더니
+  // (CustomDashboardView 참고) 전환 수단이 아예 사라져버렸었다. 이 콜백이
+  // 있으면(=CustomDashboardView가 넘김) 각 차트 컴포넌트가 자기 Card 헤더에
+  // 토글을 그대로 띄우고 거기로 변경을 흘려보낸다 - 편집 캔버스(콜백 없이
+  // 호출, WidgetFrame이 hover 토글을 따로 담당)에서는 중복으로 안 뜬다.
+  function renderWidgetContent(type, chartType, interactive = false, onChartTypeChange) {
     switch (type) {
       case "kpi-total":
         return (
@@ -2990,6 +3116,8 @@ export function DashboardContent() {
             value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
+            onClick={interactive ? () => setKpiFilter("ALL") : undefined}
+            active={interactive ? kpiFilter === "ALL" : undefined}
           />
         );
       case "kpi-errors":
@@ -2999,6 +3127,8 @@ export function DashboardContent() {
             value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
+            onClick={interactive ? () => setKpiFilter("ERROR") : undefined}
+            active={interactive ? kpiFilter === "ERROR" : undefined}
             accent="critical"
           />
         );
@@ -3009,6 +3139,8 @@ export function DashboardContent() {
             value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
+            onClick={interactive ? () => setKpiFilter("WARNING") : undefined}
+            active={interactive ? kpiFilter === "WARNING" : undefined}
           />
         );
       case "kpi-sources":
@@ -3016,16 +3148,34 @@ export function DashboardContent() {
           <KpiCard
             label="탐지 시나리오"
             value={scenariosStatus === "ready" ? `${enabledScenarioCount}/${totalScenarioCount}개` : "-"}
+            onClick={interactive ? () => setKpiFilter("SOURCES") : undefined}
+            active={interactive ? kpiFilter === "SOURCES" : undefined}
           />
         );
       case "log-volume":
         return <LogVolumeChart rangeKey={rangeKey} kpiFilter={kpiFilter} chartType={chartType || "area"} />;
       case "level-distribution":
-        return <RealLevelDistributionChart hours={hours} kpiFilter={kpiFilter} chartType={chartType || "bar"} />;
+        return (
+          <RealLevelDistributionChart
+            hours={hours}
+            kpiFilter={kpiFilter}
+            chartType={chartType || "bar"}
+            onChartTypeChangeExternal={onChartTypeChange}
+          />
+        );
       case "donut-source":
-        return <DetectionSourceDonutCompact lookbackMs={preset.lookbackMs} kpiFilter={kpiFilter} chartType={chartType || "donut"} />;
+        return (
+          <DetectionSourceDonutCompact
+            lookbackMs={preset.lookbackMs}
+            kpiFilter={kpiFilter}
+            chartType={chartType || "donut"}
+            onChartTypeChangeExternal={onChartTypeChange}
+          />
+        );
       case "donut-severity":
-        return <SeverityDonutCompact hours={hours} chartType={chartType || "donut"} />;
+        return (
+          <SeverityDonutCompact hours={hours} chartType={chartType || "donut"} onChartTypeChangeExternal={onChartTypeChange} />
+        );
       case "donut-k8s-namespace":
         return <LayerAttackStatsCompact scenarios={scenarios} status={scenariosStatus} error={scenariosError} controlled />;
       case "latency-stats":
@@ -3148,7 +3298,7 @@ export function DashboardContent() {
             <WidgetSettingsMenu
               dashboards={dashboards}
               activeId={activeId}
-              setActiveId={setActiveId}
+              setActiveId={selectDashboardFromMenu}
               deleteDashboard={deleteDashboard}
               onCreateNew={openNewBuilder}
               onEditActive={openEditBuilder}
@@ -3201,7 +3351,6 @@ export function DashboardContent() {
         <CustomDashboardView
           dashboard={activeDashboard}
           renderWidgetContent={renderWidgetContent}
-          onLayoutCommit={(widgets) => updateDashboard(activeDashboard.id, { widgets })}
           onChartTypeCommit={(widgets) => updateDashboard(activeDashboard.id, { widgets })}
         />
       ) : (

@@ -41,6 +41,11 @@
   correlation-engine에 즉시 반영(correlation-engine/app/rules.py ScenarioEngine.evaluate() 참고)
 - AlertConfig API: app/alert_configs_api.py - Slack/Discord 웹훅 설정 CRUD,
   notifications.py가 이 테이블을 조회해서 실제 발송
+- 리포트 알림 연동 API (P8, OAuth는 목업): app/report_notifications_api.py - 사용자별
+  Slack/Discord 연동 CRUD(access_token은 app/crypto_utils.py로 암호화 저장) + 최근
+  발송 이력 조회. AlertConfig(인시던트 실시간, 고정 webhook)와 달리 계정별로 분리되고
+  app/report_notification_service.py(Block Kit/Embed 변환 + 목업 발송)가 소비 -
+  POST /reports/trend/notify가 source='scheduled'일 때만 호출(app/main.py 아래 참고)
 - AuditLog API: app/audit_logs_api.py - 관리자 행위 감사 로그 조회
 - Target API: app/targets_api.py - 보호 대상 애플리케이션 등록 CRUD(파이프라인 소비는 아직 없음)
 - Allow-list API: app/allow_list_api.py - 탐지 예외 IP/대역 CRUD, target_id로 스코프 가능
@@ -102,10 +107,13 @@ from app.events_api import router as events_router
 from app.incident_alerts import poll_loop as incident_alerts_poll_loop
 from app.incidents_api import router as incidents_router
 from app.log_retention import poll_loop as log_retention_poll_loop
+from app.trend_report_scheduler import poll_loop as trend_report_scheduler_poll_loop
 from app.logs_api import router as logs_router
 from app.notifications import notify_text
 from app.pipeline_health_api import router as pipeline_health_router
 from app.poll_intervals_api import router as poll_intervals_router
+from app.report_notification_service import send_report_notification
+from app.report_notifications_api import router as report_notifications_router
 from app.scenarios_api import router as scenarios_router
 from app.stats_api import router as stats_router
 from app.targets_api import router as targets_router
@@ -121,12 +129,6 @@ app.add_middleware(
     allow_origins=settings.cors_allowed_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
-    # X-Next-Cursor(app/pagination.py) - 브라우저는 기본적으로 커스텀 응답
-    # 헤더를 JS에서 못 읽는다(같은 오리진이면 상관없지만, dev 서버처럼
-    # cross-origin으로 API_BASE를 잡은 경우엔 이게 없으면 fetch().headers.get()이
-    # 항상 null을 반환한다 - 2026-07-19, 커서 페이지네이션을 처음 프론트에서
-    # 실제로 소비하면서 발견).
-    expose_headers=["X-Next-Cursor"],
 )
 
 # 게이트웨이 시크릿 강제(감사 S13, 2026-07-16) - 모듈 docstring 및
@@ -202,25 +204,28 @@ app.include_router(allow_list_router)
 app.include_router(events_router)
 app.include_router(router_log_policies)
 app.include_router(poll_intervals_router)
+app.include_router(report_notifications_router)
 
 _alert_poll_task: Optional[asyncio.Task] = None
 _log_retention_task: Optional[asyncio.Task] = None
+_trend_report_scheduler_task: Optional[asyncio.Task] = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global _alert_poll_task, _log_retention_task
+    global _alert_poll_task, _log_retention_task, _trend_report_scheduler_task
     await db.start()
     await clickhouse_client.start()
     await opensearch_client.start()
     await pipeline_health_api.start()
     _alert_poll_task = asyncio.create_task(incident_alerts_poll_loop())
     _log_retention_task = asyncio.create_task(log_retention_poll_loop())
+    _trend_report_scheduler_task = asyncio.create_task(trend_report_scheduler_poll_loop())
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    for task in (_alert_poll_task, _log_retention_task):
+    for task in (_alert_poll_task, _log_retention_task, _trend_report_scheduler_task):
         if task:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -242,6 +247,10 @@ def _dead_task_reason() -> Optional[str]:
         return "log retention poll task not started"
     if _log_retention_task.done():
         return "log retention poll task exited"
+    if _trend_report_scheduler_task is None:
+        return "trend report scheduler task not started"
+    if _trend_report_scheduler_task.done():
+        return "trend report scheduler task exited"
     return None
 
 
@@ -278,6 +287,13 @@ def _report_header_timestamp(generated_at_iso: Optional[str]) -> str:
 
 class TrendReportNotifyIn(BaseModel):
     days: int = 7
+    # 'manual'(대시보드에서 직접 리포트 보기/생성) | 'scheduled'(스케줄 배치 자동 생성).
+    # 이 엔드포인트는 지금까지 schedule 스킬/CronCreate로 구성한 외부 cron만 호출해왔으므로
+    # 기본값이 'scheduled'다 - 그 경우에만 report_notification_service의 Slack/Discord
+    # OAuth 연동 발송(sendReportNotification)을 뒤이어 호출한다. GET /reports/trend(대시보드
+    # "보기" 경로)는 이 필드 자체가 없고 절대 알림을 보내지 않는다 - generate_trend_report()
+    # 자체는 이 구분과 무관하게 그대로 둔다(app/ai_report.py 미변경).
+    source: str = "scheduled"
 
 
 @app.post("/reports/trend/notify")
@@ -298,6 +314,15 @@ async def trend_report_notify(body: TrendReportNotifyIn, request: Request):
     # notify_text() 내부의 min_severity 필터/재시도 정책은 그대로 존중한다.
     notify_result = await notify_text(3, text)
 
+    # 신규 Slack/Discord OAuth 연동(P8) 발송 - source가 명시적으로 'scheduled'일 때만.
+    # 'manual'로 호출되면(예: 관리자가 "지금 테스트 발송" 없이 그냥 리포트만 다시 보고
+    # 싶은 경우) 위 notify_text()의 기존 webhook 알림도, 아래 연동 발송도 건너뛰는 게
+    # 맞지만 notify_text는 이 엔드포인트 자체의 기존 계약이라 손대지 않고, 새로 추가하는
+    # report_notification_service 발송만 이 분기로 게이팅한다.
+    report_notification_result = None
+    if body.source == "scheduled":
+        report_notification_result = await send_report_notification(report, body.days)
+
     await record_action(
         "AI_TREND_REPORT_NOTIFIED",
         None,
@@ -307,10 +332,12 @@ async def trend_report_notify(body: TrendReportNotifyIn, request: Request):
 
     return {
         "days": body.days,
+        "source": body.source,
         "configured": report["configured"],
         "cached": report["cached"],
         "generated_at": report.get("generated_at"),
         "notify_attempted": notify_result["attempted"],
         "notify_succeeded": notify_result["succeeded"],
         "notify_failed": notify_result["failed"],
+        "report_notification": report_notification_result,
     }

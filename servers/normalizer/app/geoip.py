@@ -74,9 +74,14 @@ def _query(ip: str) -> GeoInfo:
     if lat is None or lon is None or not result.country.iso_code:
         return dict(_EMPTY)
 
+    # 도시 단위 데이터가 없는 IP도 시/도·주 같은 행정구역은 수록된 경우가 많다.
+    # 대시보드의 지역 라벨에는 도시명을 우선 쓰고, 없을 때만 가장 구체적인
+    # 행정구역명을 대체값으로 넣어 국가명만 보이는 경우를 줄인다.
+    city_or_region = result.city.name or result.subdivisions.most_specific.name
+
     return {
         "country_iso_code": result.country.iso_code,
-        "city_name": result.city.name,
+        "city_name": city_or_region,
         "lat": lat,
         "lon": lon,
     }

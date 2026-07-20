@@ -155,3 +155,13 @@ export function fetchEventsSince(since, limit = 50) {
 export function fetchEventIncident(eventId) {
   return apiGet(`/events/${encodeURIComponent(eventId)}/incident`);
 }
+
+// ---- /incidents/{id}/timeline (servers/platform-api/app/incidents_api.py) ----
+
+// 공격 스토리라인(원본 로그 타임라인) - CriticalToastStack의 "스토리라인 보기"가
+// 탭을 전환하기 전에 이걸로 먼저 데이터가 있는지 확인해서, 이동하는 순간 바로
+// 채워진 화면이 보이게 한다(useIncidentTimeline.js와 같은 엔드포인트, 이쪽은
+// 버튼의 로딩 상태 표시가 목적이라 훅이 아니라 일회성 호출로 따로 둠).
+export function fetchIncidentTimeline(incidentId) {
+  return apiGet(`/incidents/${encodeURIComponent(incidentId)}/timeline`);
+}

@@ -28,7 +28,11 @@ processors:
     # 기존 5s - 이벤트를 최대 5초까지 묶어뒀다가 Kafka로 내보내는 구조라 저볼륨
     # 트래픽(데모/테스트)에서는 이게 곧 e2e 지연에 그대로 더해짐. 1s로 낮춤.
     timeout: 500ms
-    send_batch_size: 8192
+    # Kafka의 최대 메시지 크기(10MB)보다 충분히 작게 유지한다. K8s audit를
+    # start_at: beginning으로 읽을 때 수천 건이 하나의 OTLP/Kafka 레코드로 묶여
+    # 전체 배치가 거부되는 문제를 막는다.
+    send_batch_size: 128
+    send_batch_max_size: 128
 
   # 크로스-서버 mTLS - otelcol이 직접 검증한 클라 인증서의 CN을 mtlsclientauth
   # 확장이 auth.cn으로 노출해준다(attributesprocessor의 from_context: auth.*는

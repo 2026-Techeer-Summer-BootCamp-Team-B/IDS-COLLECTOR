@@ -45,15 +45,15 @@ function loadGoogleMaps(apiKey) {
 // 앱 다크/라이트 테마와 톤을 맞춘 지도 스타일 - 기본 Google 지도의 파랑/초록
 // POI 색상을 지우고, 무채색+민트 포인트 컬러로 대시보드 전체 톤에 맞춘다.
 const DARK_MAP_STYLE = [
-  { elementType: "geometry", stylers: [{ color: "#0d0f16" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#6b7280" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#0d0f16" }] },
-  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#2a2f3f" }] },
-  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#16161b" }] },
+  { elementType: "geometry", stylers: [{ color: "#111827" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#BAC6D8" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#09111E" }, { weight: 2 }] },
+  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#62748D" }, { weight: 1.2 }] },
+  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#2B3A52" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
   { featureType: "road", stylers: [{ visibility: "off" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#08080a" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0A1424" }] },
 ];
 const LIGHT_MAP_STYLE = [
   { elementType: "labels.text.fill", stylers: [{ color: "#8a8fa3" }] },
@@ -66,6 +66,104 @@ const LIGHT_MAP_STYLE = [
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#D5D9EE" }] },
 ];
 
+function hitPadForZoom(zoom) {
+  return Math.max(0.3, Math.min(1.2, zoom * 0.105));
+}
+
+const CLICK_ZOOM = 6.3;
+// 참고 화면처럼 터키·이집트 사이를 중심으로 유럽·아프리카·아시아가 한 번에
+// 들어오도록 한다. 이 줌에서는 Google 타일의 세계 반복도 의도적으로 보인다.
+const DEFAULT_CENTER = { lat: 32, lng: 30 };
+const DEFAULT_ZOOM = 2.15;
+
+function toMercator({ lat, lng }) {
+  const safeLat = Math.max(-85, Math.min(85, lat));
+  const sinLat = Math.sin((safeLat * Math.PI) / 180);
+  return { x: (lng + 180) / 360, y: 0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI) };
+}
+
+function fromMercator({ x, y }) {
+  return { lat: (Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180) / Math.PI, lng: x * 360 - 180 };
+}
+
+function smoothCameraTo(map, targetCenter, targetZoom, motionRef, duration = 900, onComplete) {
+  const motionId = ++motionRef.current;
+  const startCenter = map.getCenter();
+  const startZoom = map.getZoom();
+  const startPoint = toMercator({ lat: startCenter.lat(), lng: startCenter.lng() });
+  const targetPoint = toMercator(targetCenter);
+  const startedAt = performance.now();
+  const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+  const step = (now) => {
+    if (motionId !== motionRef.current) return;
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = easeInOutCubic(progress);
+    map.moveCamera({
+      center: fromMercator({ x: startPoint.x + (targetPoint.x - startPoint.x) * eased, y: startPoint.y + (targetPoint.y - startPoint.y) * eased }),
+      zoom: startZoom + (targetZoom - startZoom) * eased,
+    });
+    if (progress < 1) window.requestAnimationFrame(step);
+    else onComplete?.();
+  };
+  window.requestAnimationFrame(step);
+}
+
+function smoothFocusMarker(map, markerPosition, targetZoom, motionRef, duration = 900, onComplete) {
+  const motionId = ++motionRef.current;
+  const startCenter = map.getCenter();
+  const startZoom = map.getZoom();
+  const markerPoint = toMercator(markerPosition);
+  const centerPoint = toMercator({ lat: startCenter.lat(), lng: startCenter.lng() });
+  const startScale = 256 * 2 ** startZoom;
+  const offset = { x: (markerPoint.x - centerPoint.x) * startScale, y: (markerPoint.y - centerPoint.y) * startScale };
+  const startedAt = performance.now();
+  const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+  const step = (now) => {
+    if (motionId !== motionRef.current) return;
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = easeInOutCubic(progress);
+    const zoom = startZoom + (targetZoom - startZoom) * eased;
+    const scale = 256 * 2 ** zoom;
+    map.moveCamera({
+      center: fromMercator({ x: markerPoint.x - (offset.x * (1 - eased)) / scale, y: markerPoint.y - (offset.y * (1 - eased)) / scale }),
+      zoom,
+    });
+    if (progress < 1) window.requestAnimationFrame(step);
+    else onComplete?.();
+  };
+  window.requestAnimationFrame(step);
+}
+
+function smoothReturnFromMarker(map, savedView, motionRef, duration = 900, onComplete) {
+  const motionId = ++motionRef.current;
+  const startCenter = map.getCenter();
+  const startZoom = map.getZoom();
+  const markerPoint = toMercator(savedView.markerPosition);
+  const startCenterPoint = toMercator({ lat: startCenter.lat(), lng: startCenter.lng() });
+  const targetCenterPoint = toMercator(savedView.center);
+  const startScale = 256 * 2 ** startZoom;
+  const targetScale = 256 * 2 ** savedView.zoom;
+  const startOffset = { x: (markerPoint.x - startCenterPoint.x) * startScale, y: (markerPoint.y - startCenterPoint.y) * startScale };
+  const targetOffset = { x: (markerPoint.x - targetCenterPoint.x) * targetScale, y: (markerPoint.y - targetCenterPoint.y) * targetScale };
+  const startedAt = performance.now();
+  const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+  const step = (now) => {
+    if (motionId !== motionRef.current) return;
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = easeInOutCubic(progress);
+    const zoom = startZoom + (savedView.zoom - startZoom) * eased;
+    const scale = 256 * 2 ** zoom;
+    const offset = {
+      x: startOffset.x + (targetOffset.x - startOffset.x) * eased,
+      y: startOffset.y + (targetOffset.y - startOffset.y) * eased,
+    };
+    map.moveCamera({ center: fromMercator({ x: markerPoint.x - offset.x / scale, y: markerPoint.y - offset.y / scale }), zoom });
+    if (progress < 1) window.requestAnimationFrame(step);
+    else onComplete?.();
+  };
+  window.requestAnimationFrame(step);
+}
+
 export default function GoogleGeoMap({ points, compact = false }) {
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   const { theme } = useTheme();
@@ -73,7 +171,17 @@ export default function GoogleGeoMap({ points, compact = false }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef([]);
+  const hitMarkersRef = useRef([]); // [{ marker, baseRadius }]
+  const zoomRef = useRef(compact ? 1 : 2);
   const infoWindowRef = useRef(null);
+  const pinnedMarkerRef = useRef(null);
+  const zoomMotionRef = useRef(0);
+  const refreshHitMarkerRangesRef = useRef(null);
+  const savedFocusRef = useRef(null);
+  const isCameraMotionRef = useRef(false);
+  const pendingResetTimerRef = useRef(null);
+  const ignoreBackgroundPointerRef = useRef(false);
+  const backgroundResetInProgressRef = useRef(false);
   const [status, setStatus] = useState(apiKey ? "loading" : "no-key"); // loading | ready | error | no-key
 
   // 지도 최초 1회 생성
@@ -85,9 +193,10 @@ export default function GoogleGeoMap({ points, compact = false }) {
       .then((maps) => {
         if (cancelled || !containerRef.current) return;
         mapRef.current = new maps.Map(containerRef.current, {
-          center: { lat: 20, lng: 10 },
-          zoom: compact ? 1 : 2,
-          minZoom: 2,
+          center: DEFAULT_CENTER,
+          zoom: DEFAULT_ZOOM,
+          minZoom: 1.5,
+          isFractionalZoomEnabled: true,
           styles: theme === "light" ? LIGHT_MAP_STYLE : DARK_MAP_STYLE,
           disableDefaultUI: true,
           zoomControl: true,
@@ -114,6 +223,60 @@ export default function GoogleGeoMap({ points, compact = false }) {
             el.style.display = "none";
           });
         });
+        zoomRef.current = mapRef.current.getZoom();
+        const refreshHitMarkerRanges = () => {
+          const zoom = mapRef.current.getZoom();
+          zoomRef.current = zoom;
+          const padding = hitPadForZoom(zoom);
+          hitMarkersRef.current.forEach(({ marker, baseRadius }) => {
+            marker.setIcon({
+              path: maps.SymbolPath.CIRCLE,
+              scale: baseRadius + padding,
+              fillOpacity: 0,
+              strokeOpacity: 0,
+            });
+          });
+        };
+        refreshHitMarkerRangesRef.current = refreshHitMarkerRanges;
+        maps.event.addListener(mapRef.current, "zoom_changed", () => {
+          zoomRef.current = mapRef.current.getZoom();
+          // moveCamera는 애니메이션 중 zoom_changed를 매 프레임 발생시킨다.
+          // 이때 모든 투명 hit marker의 아이콘을 다시 만들면 복귀 모션이 끊긴다.
+          // 움직임이 끝난 뒤 한 번만 갱신하고, 사용자의 일반 줌에서만 즉시 갱신한다.
+          if (!isCameraMotionRef.current) refreshHitMarkerRanges();
+          if (!isCameraMotionRef.current && pinnedMarkerRef.current) infoWindowRef.current.close();
+        });
+        maps.event.addListener(mapRef.current, "dragstart", () => {
+          window.clearTimeout(pendingResetTimerRef.current);
+          if (!isCameraMotionRef.current && pinnedMarkerRef.current) {
+            infoWindowRef.current.close();
+          }
+        });
+        const returnToSavedView = () => {
+          if (backgroundResetInProgressRef.current) return;
+          if (!pinnedMarkerRef.current && !savedFocusRef.current) return;
+          backgroundResetInProgressRef.current = true;
+          pinnedMarkerRef.current = null;
+          infoWindowRef.current.close();
+          isCameraMotionRef.current = true;
+          savedFocusRef.current = null;
+          smoothCameraTo(mapRef.current, DEFAULT_CENTER, DEFAULT_ZOOM, zoomMotionRef, 900, () => {
+            isCameraMotionRef.current = false;
+            refreshHitMarkerRangesRef.current?.();
+            backgroundResetInProgressRef.current = false;
+          });
+        };
+        maps.event.addListener(mapRef.current, "mousedown", () => {
+          window.clearTimeout(pendingResetTimerRef.current);
+          pendingResetTimerRef.current = window.setTimeout(() => {
+            if (!ignoreBackgroundPointerRef.current) returnToSavedView();
+          }, 80);
+        });
+        maps.event.addListener(mapRef.current, "click", () => {
+          window.clearTimeout(pendingResetTimerRef.current);
+          if (!ignoreBackgroundPointerRef.current) returnToSavedView();
+          ignoreBackgroundPointerRef.current = false;
+        });
         setStatus("ready");
       })
       .catch(() => {
@@ -122,6 +285,8 @@ export default function GoogleGeoMap({ points, compact = false }) {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(pendingResetTimerRef.current);
+      refreshHitMarkerRangesRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey]);
@@ -140,12 +305,27 @@ export default function GoogleGeoMap({ points, compact = false }) {
 
     markersRef.current.forEach((m) => m.setMap(null));
     markersRef.current = [];
+    hitMarkersRef.current = [];
 
     if (points.length === 0) return;
 
     const maxCount = Math.max(...points.map((p) => p.count), 1);
-    const bounds = new maps.LatLngBounds();
-
+    const showInfoWindow = async (point, marker, requirePinned = false) => {
+      const content = await renderHoverPanelHTML({
+        title: point.country,
+        titleFlag: resolveFlagCode(point.countryCode, point.country),
+        subtitle: point.city || undefined,
+        rows: [{ color: C.critical, value: `${point.count}건`, label: "탐지" }],
+        theme,
+      });
+      // 확대 완료 직후 패널을 열려는 사이에 사용자가 배경을 클릭하거나 다른
+      // 마커를 선택했으면, 이전 선택의 비동기 패널이 다시 나타나지 않게 한다.
+      if (requirePinned && pinnedMarkerRef.current !== marker) return;
+      infoWindowRef.current.setContent(
+        content
+      );
+      infoWindowRef.current.open({ anchor: marker, map: mapRef.current });
+    };
     points.forEach((p) => {
       const r = 4 + Math.sqrt(p.count / maxCount) * (compact ? 10 : 16);
       const position = { lat: p.lat, lng: p.lon };
@@ -182,38 +362,40 @@ export default function GoogleGeoMap({ points, compact = false }) {
       const hitMarker = new maps.Marker({
         position,
         map: mapRef.current,
-        icon: { path: maps.SymbolPath.CIRCLE, scale: r + 16, fillOpacity: 0, strokeOpacity: 0 },
+        icon: { path: maps.SymbolPath.CIRCLE, scale: r + hitPadForZoom(zoomRef.current), fillOpacity: 0, strokeOpacity: 0 },
         zIndex: Math.round(p.count) + 2000,
       });
 
       hitMarker.addListener("mouseover", async () => {
-        infoWindowRef.current.setContent(
-          await renderHoverPanelHTML({
-            title: p.country,
-            titleFlag: resolveFlagCode(p.countryCode, p.country),
-            subtitle: p.city || undefined,
-            rows: [{ color: C.critical, value: `${p.count}건`, label: "탐지" }],
-            theme,
-          })
-        );
-        infoWindowRef.current.open({ anchor: hitMarker, map: mapRef.current });
+        if (!pinnedMarkerRef.current || pinnedMarkerRef.current === hitMarker) showInfoWindow(p, hitMarker);
       });
-      hitMarker.addListener("mouseout", () => infoWindowRef.current.close());
+      hitMarker.addListener("mouseout", () => {
+        if (pinnedMarkerRef.current !== hitMarker) infoWindowRef.current.close();
+      });
+      hitMarker.addListener("click", () => {
+        // 지도 background mousedown 예약이 마커 클릭을 복귀로 오인하지 않게 한다.
+        ignoreBackgroundPointerRef.current = true;
+        window.setTimeout(() => {
+          ignoreBackgroundPointerRef.current = false;
+        }, 120);
+        pinnedMarkerRef.current = hitMarker;
+        // 이동 중에는 패널을 비워 두고, 목적지에 도착한 순간에만 표시한다.
+        infoWindowRef.current.close();
+        isCameraMotionRef.current = true;
+        smoothFocusMarker(mapRef.current, position, CLICK_ZOOM, zoomMotionRef, 900, () => {
+          isCameraMotionRef.current = false;
+          refreshHitMarkerRangesRef.current?.();
+          // InfoWindow 콘텐츠는 비동기로 만들어진다. 먼 위치에서 카메라를 크게
+          // 이동하면 첫 open 요청이 지도 프레임 갱신과 경합해 사라질 수 있으므로,
+          // 확대가 끝난 뒤에도 같은 마커가 선택되어 있을 때 한 번 더 확정한다.
+          if (pinnedMarkerRef.current === hitMarker) showInfoWindow(p, hitMarker, true);
+        });
+      });
 
       markersRef.current.push(marker, coreDot, hitMarker);
-      bounds.extend(position);
+      hitMarkersRef.current.push({ marker: hitMarker, baseRadius: r });
     });
-
-    // 점이 몇 개 안 되면 전체 화면에 맞춰 자동으로 프레이밍 - 흩어진 지역들이
-    // 한눈에 들어오게 하고, 그 상태에서 사용자가 직접 스크롤/드래그로 더
-    // 확대해서 자세히 볼 수 있다.
-    if (points.length > 1) {
-      mapRef.current.fitBounds(bounds, 40);
-    } else if (points.length === 1) {
-      mapRef.current.setCenter({ lat: points[0].lat, lng: points[0].lon });
-      mapRef.current.setZoom(4);
-    }
-  }, [points, status, compact, C.critical]);
+  }, [points, status, compact, C.critical, theme]);
 
   if (status === "no-key" || status === "error") {
     // 키가 없거나 로드 실패 시 기존 평면 지도로 조용히 대체 - 화면이 깨지는 것보다 낫다.
