@@ -287,3 +287,56 @@ class TestNormalizeAuditEndToEnd:
         )
         event = normalize_audit(payload, "e20", "{}")
         assert event.audit_binding_role_name == ["cluster-admin"]
+
+    def test_binding_subject_for_single_subject(self, base_audit_event):
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "rolebindings", "namespace": "default", "name": "grant-a"},
+            responseStatus={"code": 201},
+            requestObject={
+                "roleRef": {"kind": "Role", "name": "edit"},
+                "subjects": [
+                    {"kind": "ServiceAccount", "namespace": "default", "name": "sa-a"}
+                ],
+            },
+        )
+        event = normalize_audit(payload, "e21", "{}")
+        assert event.audit_binding_subject == "ServiceAccount:default:sa-a"
+
+    def test_binding_subject_combines_multiple_subjects_sorted(self, base_audit_event):
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "rolebindings", "namespace": "default", "name": "grant-multi"},
+            responseStatus={"code": 201},
+            requestObject={
+                "roleRef": {"kind": "Role", "name": "edit"},
+                "subjects": [
+                    {"kind": "ServiceAccount", "namespace": "default", "name": "sa-b"},
+                    {"kind": "ServiceAccount", "namespace": "default", "name": "sa-a"},
+                ],
+            },
+        )
+        event = normalize_audit(payload, "e22", "{}")
+        assert event.audit_binding_subject == "ServiceAccount:default:sa-a,ServiceAccount:default:sa-b"
+
+    def test_binding_subject_missing_returns_none(self, base_audit_event):
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "rolebindings", "namespace": "default", "name": "grant-none"},
+            responseStatus={"code": 201},
+            requestObject={"roleRef": {"kind": "Role", "name": "edit"}},
+        )
+        event = normalize_audit(payload, "e23", "{}")
+        assert event.audit_binding_subject is None
+
+    def test_binding_subject_only_computed_for_binding_resources(self, base_audit_event):
+        # role_rule_flags 테스트와 대칭 - roles 리소스는 RBAC_BINDING_RESOURCES가
+        # 아니라 _audit_binding_subject를 아예 호출하지 않는다.
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "roles", "namespace": "default", "name": "role-with-subjects-key"},
+            responseStatus={"code": 201},
+            requestObject={"subjects": [{"kind": "ServiceAccount", "namespace": "default", "name": "sa-a"}]},
+        )
+        event = normalize_audit(payload, "e24", "{}")
+        assert event.audit_binding_subject is None

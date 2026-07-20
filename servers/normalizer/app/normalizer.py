@@ -265,6 +265,37 @@ def _audit_binding_role_name(payload: Dict[str, Any]) -> Any:
     return sorted(names) if names else None
 
 
+def _audit_binding_subject(payload: Dict[str, Any]) -> Any:
+    """rolebinding/clusterrolebinding의 request body에서 subjects[].{kind,namespace,name}을
+    뽑아 "kind:namespace:name" 형태의 스칼라 문자열 하나로 합친다(2026-07-20, 여러
+    계층 시나리오 Notion 페이지의 M26 - S96 재료: "이 관리자가 서로 다른 몇 개의
+    주체에게 권한을 부여했는지"를 correlation-engine의 cardinality distinct_field로
+    센다). _audit_binding_role_name과 달리 List[str]이 아니라 스칼라를 반환한다 -
+    cardinality distinct_field는 getattr() 결과를 그대로 Redis SADD 멤버로 쓰므로
+    리스트 필드를 못 받는다(schemas.py의 audit_binding_subject 주석 참고).
+
+    한 바인딩 요청 안에 subject가 여러 개 있는 경우(드묾 - kubectl로 바인딩을 만들
+    때 보통 --serviceaccount/--user를 하나만 지정)는 정렬 후 쉼표로 합쳐서 "이
+    조합 자체"를 하나의 distinct 값으로 센다 - 개별 subject 단위로 정확히 쪼개
+    세지는 못하지만(알려진 한계), S96이 노리는 공격 패턴(계정별로 나눠서 여러 번
+    바인딩) 자체가 "한 바인딩 = 한 subject"를 전제로 하므로 실전 영향은 작다.
+    requestObject가 JSON Patch 배열인 경우 배열 안의 모든 dict 원소에서 나온
+    subject를 전부 합쳐 하나의 값으로 만든다(다른 _audit_* 함수처럼 원소별로
+    쪼개지 않는다 - 이 필드는 "이 이벤트 전체를 대표하는 값 하나"가 목적이라서)."""
+    subjects = set()
+    for request_object in _audit_request_objects(payload):
+        for subject in request_object.get("subjects") or []:
+            if not isinstance(subject, dict):
+                continue
+            kind = subject.get("kind") or ""
+            namespace = subject.get("namespace") or ""
+            name = subject.get("name") or ""
+            if kind or name:
+                subjects.add(f"{kind}:{namespace}:{name}")
+
+    return ",".join(sorted(subjects)) if subjects else None
+
+
 def _audit_pod_security_flags(payload: Dict[str, Any]) -> Any:
     """새로 생성되는 pod의 request body(spec)를 훑어서 컨테이너 이스케이프
     벡터를 태깅한다 (privileged/hostNetwork/hostPID/hostIPC/hostPath 마운트).
@@ -394,6 +425,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
 
     role_rule_flags = _audit_role_rule_flags(payload) if resource in RBAC_ROLE_RESOURCES else None
     binding_role_name = _audit_binding_role_name(payload) if resource in RBAC_BINDING_RESOURCES else None
+    binding_subject = _audit_binding_subject(payload) if resource in RBAC_BINDING_RESOURCES else None
     pod_security_flags = _audit_pod_security_flags(payload) if (resource == "pods" and verb == "create") else None
 
     # event.action에 위험 플래그를 붙여서 "create pods"(severity=2, 일반 생성)와
@@ -452,6 +484,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "kubernetes.audit.user.groups": user.get("groups"),
             "kubernetes.audit.role.rule_flags": role_rule_flags,
             "kubernetes.audit.binding.role_name": binding_role_name,
+            "kubernetes.audit.binding.subject": binding_subject,
             "kubernetes.audit.pod.security_flags": pod_security_flags,
             "kubernetes.audit.service.type": service_type,
             "kubernetes.audit.configmap.has_credentials": configmap_has_credentials,

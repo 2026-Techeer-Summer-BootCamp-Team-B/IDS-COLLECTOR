@@ -867,9 +867,23 @@ scenarios:
   # 요구하지만, "프로세스 실행 확인"(falco, join_on=pod)까지 추가하면 5단계가
   # 되고 그 전환에 pod 축이 필요한데, 이 시퀀스는 stage1~4 전체가 user_or_sa
   # 하나로 통일돼야 한다(엔진은 시나리오 전체에 단일 join_on만 지원, 모듈
-  # docstring 참고) - 그래서 stage4는 S16의 "위험한 설정을 가진 pod 생성"까지만
-  # 보고, 그 pod 안에서 실제로 이상행동이 확인됐는지(S1 후반부)는 별도로
-  # `S67`/`S68`류 pod-axis 체인이 이어서 잡아줄 몫으로 남긴다.
+  # docstring 참고) - stage4는 S16의 "위험한 설정을 가진 pod 생성"까지만 본다.
+  #
+  # 2026-07-20 추가: 그 pod 안에서 실제로 이상행동이 확인됐는지(S1 후반부)는
+  # 5번째 stage로 억지로 우겨넣는 대신, workload.yaml의 `S94`가
+  # requires_recent_fire 메커니즘(rules.py 모듈 docstring, discovery.yaml
+  # S92→S93이 최초 사용 사례)으로 이어받는다 - 그래서 이 시나리오가
+  # stamps_fired_marker: true + fired_marker_join_on: pod를 켠다. sequence가
+  # 마지막 단계(stage4)까지 완주해 발화하는 순간, 그 stage4 이벤트("create
+  # pods" 감사 로그 - orchestrator_resource_name에 새로 생성된 pod 이름을
+  # 신뢰성 있게 담는다, S67/S68 주석이 이미 확인한 원칙) 자체를 pod 축으로 마킹한다
+  # - 이 시나리오 자신의 join_on(user_or_sa)과 다른 축이라 fired_marker_join_on
+  # override가 필요하다(discovery.yaml S92와 같은 이유, S31→S62처럼 축이 같으면
+  # 필요 없다). `S67`/`S68`(같은 pod-axis 체인이지만 다른 전조 - 임시 컨테이너/
+  # 시스템 네임스페이스 배치)과 달리, `S94`는 이 시나리오가 실제로 완주해 발화했을
+  # 때만 매칭되므로 "웹 계층 침투 → RBAC 상승 → 위험한 pod 생성"이라는 이
+  # 시나리오의 전체 서사와 "그 pod에서 실제 악성 행위 확인"을 명시적으로 인과적으로
+  # 잇는다(S67/S68은 각자 독립된 전조와 이어질 뿐 S85와는 무관).
   #
   # join_on=user_or_sa: stage1/2(WAS)의 actor_identity → stage3/4(k8s_audit)의
   # user.name 브릿지는 S59/S83이 이미 증명한 것과 같은 메커니즘(enrichment.py의
@@ -885,6 +899,8 @@ scenarios:
     correlation_key_type: "user.name"
     required_modules: [was, k8s_audit]
     window_seconds: 300
+    stamps_fired_marker: true
+    fired_marker_join_on: pod
     stage1:
       event_module: was
       url_path_prefix: "/rest/admin/application-configuration"
@@ -937,3 +953,80 @@ scenarios:
       event_module: waf
     severity: 4
     mitre_technique_id: "T1190"
+
+  # S97/S98 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층
+  # 시나리오" M29 구현, S17/S24 후속): S17(NodePort Service 노출)/S24(TLS 없는
+  # Ingress 노출)은 둘 다 threshold=1·cooldown_seconds=600이라, 같은 이름의
+  # 리소스를 반복 노출해도 쿨다운 동안은 조용하다 - 공격자(또는 내부자)가 매번
+  # 다른 이름으로 만들었다 지우기를 반복하면(각 이름은 처음 등장이라 매번 S17/S24
+  # 자체는 계속 개별 발화하지만, "이름이 계속 바뀐다"는 반복 패턴 자체는 아무도
+  # 못 본다) 쿨다운을 우회하면서 계속 새 노출 경로를 만들어낼 수 있다. `S17`/`S24`의
+  # 개별 발화를 대체하는 게 아니라, 그 반복 패턴을 보완하는 별개 시나리오다 -
+  # `S62`(M19)/`S96`(M26)과 같은 "쿨다운/threshold 우회 대응" 계열.
+  #
+  # distinct_field=orchestrator_resource_name - 새 필드가 필요 없었다. k8s_audit
+  # 이벤트는 objectRef.name을 이미 이 필드로 채우고 있어서(schemas.py, 모든
+  # 리소스 타입에 공통) "노출된 리소스 이름" 자체가 바로 이 값이다(S96의
+  # audit_binding_subject처럼 request body를 새로 파싱할 필요가 없는 가장 단순한
+  # 경우).
+  #
+  # S17/S24를 하나로 합치지 않고 둘로 나눈 이유 - 두 시나리오의 match 조건이
+  # 구조적으로 다른 필드(services는 audit_service_type, ingresses는
+  # audit_ingress_has_tls)를 요구해서 한 이벤트가 둘 다 가질 수 없다(_matches()는
+  # match의 모든 키를 AND로 검사하므로, 한 match에 두 조건을 같이 넣으면 어느
+  # 쪽도 항상 불충족된다) - S45~S49(민감 파일 각 액션별로 별도 시나리오)와 같은
+  # 이유로 분리 유지. S98의 audit_verb를 create만으로 좁힌 것도 S24와 동일한
+  # 이유 - normalizer.py의 _audit_ingress_has_tls는 verb=="create"에서만
+  # 계산되므로(update/patch는 이 필드가 항상 None) S24의 verb 범위를 그대로
+  # 물려받아야 한다.
+  #
+  # window_seconds/cooldown_seconds=1800은 S62/S96과 같은 low-and-slow 시간
+  # 스케일 - 이름을 바꿔가며 반복하는 회피 전략 자체가 S17/S24의 600초 쿨다운보다
+  # 넓은 시간에 걸쳐 진행될 걸 전제한다. threshold=3은 S96(5)보다 낮게 잡았다 -
+  # 개별 노출(S17/S24) 각각이 이미 그 자체로 위험 신호(severity=3)라, 그런
+  # 신호가 서로 다른 이름으로 3번만 반복돼도 "우연히 여러 개 만들었다"보다는
+  # "의도적으로 이름을 바꿔가며 반복한다"는 패턴으로 보기에 충분하다고 판단했다.
+  # ⚠️ 다른 cardinality 시나리오와 같은 이유로 실측 기준선이 아직 없어 오탐
+  # 튜닝이 필요하다 - 특히 CI/CD가 배포마다 임시 이름(해시 접미사 등)으로
+  # Service/Ingress를 재생성하는 정상 운영과 겹칠 수 있음.
+  #
+  # mitre_technique_id=T1133: S17/S24의 태그를 그대로 물려받는다(S60/S61이
+  # 이미 쓰는 컨벤션). severity=4는 S17/S24(3)보다 위 - 개별 노출 하나하나도
+  # 위험하지만, "쿨다운을 우회하려고 이름을 계속 바꾸는" 패턴 자체가 우연이
+  # 아니라 의도적 회피 시도라는 더 확정적인 신호를 더한다(S62가 S31 대비
+  # severity를 올린 것과 같은 논리).
+  - id: S97
+    name: "이름을 바꿔가며 반복되는 NodePort Service 노출 정황"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 1800
+    threshold: 3
+    cooldown_seconds: 1800
+    distinct_field: orchestrator_resource_name
+    match:
+      event_module: k8s_audit
+      audit_verb: [create, update, patch]
+      orchestrator_resource_type: services
+      audit_service_type: NodePort
+    severity: 4
+    mitre_technique_id: "T1133"
+
+  - id: S98
+    name: "이름을 바꿔가며 반복되는 TLS 없는 Ingress 노출 정황"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 1800
+    threshold: 3
+    cooldown_seconds: 1800
+    distinct_field: orchestrator_resource_name
+    match:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: ingresses
+      audit_ingress_has_tls: false
+    severity: 4
+    mitre_technique_id: "T1133"

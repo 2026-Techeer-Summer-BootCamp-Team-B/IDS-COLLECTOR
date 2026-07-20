@@ -986,3 +986,96 @@ scenarios:
       event_action: ["Drop and execute new binary in container", "Netcat Remote Code Execution in Container"]
     severity: 4
     mitre_technique_id: "T1543"
+
+  # S94 (threshold, threshold=1, join_on=pod, 2026-07-20, network.yaml S85의
+  # 잘려나간 5번째 stage를 requires_recent_fire로 복원): S85(WAF/WAS 인증 우회 →
+  # 관리 콘솔 접근 → RBAC 권한 상승 → 위험한 pod 생성, join_on=user_or_sa 4단계
+  # sequence)의 원안은 "그 신규 pod 안에서 실제 비정상 프로세스 실행까지
+  # 확인"(S1 stage2 재료)하는 5번째 stage를 요구했지만, sequence는 시나리오
+  # 전체에 단일 join_on만 지원해서 stage1~4(user_or_sa)에서 stage5(pod)로 축이
+  # 바뀌는 걸 표현할 수 없었다(S85 주석 참고) - discovery.yaml S92→S93(M4)에서
+  # 만든 requires_recent_fire 메커니즘(rules.py 모듈 docstring)으로 그 5번째
+  # stage를 별도 시나리오로 분리해 복원한다.
+  #
+  # match는 S1의 stage2(Pod Exec 권한 사용 이후 컨테이너 내 이상행동)를 그대로
+  # 재사용한다 - "신규 생성된 위험한 pod에서 터미널 셸/API 서버 접촉/셸 실행이
+  # 확인됐다"는 동일한 이상행동 신호이기 때문(S1과 이 시나리오는 전조만 다르고
+  # - S1은 "exec 권한 사용", 이건 "S85 전체 체인의 완주" - 결론 신호는 같다).
+  #
+  # requires_recent_fire: S85 - S85가 실제로 stage4(위험한 pod 생성)까지 완주해
+  # 발화한 그 이벤트 자체(fired_marker_join_on: pod)의 orchestrator_resource_name을
+  # 키로 남긴 흔적을 조회한다. join_on=pod는 S1/S67/S68과 같은 이유 - "create
+  # pods"/"pods/exec" 계열 이벤트는 orchestrator_resource_name에 pod 이름을
+  # 신뢰성 있게 담는다.
+  #
+  # mitre_technique_id=T1609: S1의 stage2가 물려주는 태그(Container Administration
+  # Command)를 그대로 재사용 - 같은 falco 신호, 같은 결론(컨테이너 내 이상행동
+  # 확인). severity=4는 S85 자체(이미 4, 확정적 전체 침해 체인)와 같은 최상위
+  # 급 - "그 체인이 실제로 악성 행위까지 이어졌다"는 확인이 더해져도 S85보다
+  # 높일 등급 자체가 없다.
+  - id: S94
+    name: "웹 계층 침투 체인 완주 이후 신규 Pod의 실제 이상행동 확인 (S85 후속)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 300
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: ["Terminal shell in container", "Contact K8S API Server From Container", "Run shell untrusted"]
+      requires_recent_fire: S85
+    severity: 4
+    mitre_technique_id: "T1609"
+
+  # S100 (cardinality, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오" M42
+  # 구현, S40/S44 재활용, M35와 같은 "신호 다양성 카디널리티" 계열): S40(PTRACE
+  # 부착)은 디버깅 도구(strace/gdb)의 정상 사용과 겹칠 수 있어 오탐 가능성이
+  # 있다고 이미 스스로 명시하고 있다(실측 확인 결과 falco 이력상 283건으로 가장
+  # 빈번한 미탐 룰이었음, S40 주석 참고) - 그런데 PTRACE 부착과 안티디버깅(S44)이
+  # 같은 pod에서 함께 나타나면(공격자가 자기 프로세스를 다른 프로세스에
+  # 주입하면서 동시에 분석 도구를 피하려는 시도), 우연한 정상 디버깅 도구 사용과는
+  # 구분되는 훨씬 정교한 멀웨어 활동의 신호가 된다. S40/S44를 대체하지 않고
+  # (개별 발화는 그대로 유지) 그 두 신호가 겹치는지를 별도로 얹어 보는 시나리오다 -
+  # M35(S99, S45~S49 5종 신호 다양성)와 동일한 메커니즘이지만, S40의 이미 알려진
+  # 오탐 문제를 다른 독립 신호와의 동시 발생으로 보정하려는 구체적 동기가 있다는
+  # 점에서 M35보다 목적이 더 뚜렷하다.
+  #
+  # distinct_field=event_action - 새 필드가 필요 없었다(S99와 동일한 이유).
+  # 다만 이 시나리오는 재료가 S40/S44 딱 2개뿐이라 distinct 값의 최댓값도 2 -
+  # threshold를 5개 중 3개(S99)처럼 부분집합으로 못 잡고, threshold=2(=가능한
+  # 전부)로 "둘 다 나타나야만" 발화한다.
+  #
+  # threshold=2/window_seconds=120은 "동시에"라는 티켓 표현을 반영해 S99(300초)
+  # 보다 짧게 잡았다 - 인젝션과 안티디버깅은 같은 프로세스 조작 흐름 안에서 거의
+  # 연이어 나타날 신호라고 판단했다. cooldown_seconds=600은 S40/S44 개별과
+  # 동일하게 맞췄다.
+  #
+  # mitre_technique_id=T1055(Process Injection, S40의 태그 재사용) - S44의
+  # T1622(Debugger Evasion)보다 이 시나리오의 헤드라인("인젝션이 실제로
+  # 확인됐다")에 더 가까운 쪽을 택했다(S69가 stage2 태그를 앵커로 삼은 것과 같은
+  # 논리 - 안티디버깅은 그 인젝션 시도를 뒷받침하는 정황 증거). T1055/T1622 둘
+  # 다 공식 Containers 매트릭스 30개 목록 밖이라 CONTAINERS_MATRIX엔 없지만
+  # (2026-07-20 WebFetch로 재확인), ids_shared/mitre_mapping.py의
+  # SCENARIO_TACTIC_OVERRIDE에 Enterprise 전체 매트릭스 기준 공식 전술을 채워둬서
+  # (T1055/T1622 문단 참고) mitre_tactics가 빈 값으로 나오지 않는다. severity=4는
+  # S40(3)/S44(2)보다 위 - 개별 신호 하나하나보다
+  # "짧은 시간 안에 서로 다른 두 종류의 프로세스 조작 신호가 함께 확인됐다"는
+  # 응집이 훨씬 확정적인 증거라는 이 카탈로그 전반의 일관된 논리(S62/S93/S96/S99와
+  # 동일).
+  - id: S100
+    name: "PTRACE 부착과 안티디버깅 시도 동시 발생 (정교한 멀웨어 활동 정황)"
+    type: cardinality
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 120
+    threshold: 2
+    cooldown_seconds: 600
+    distinct_field: event_action
+    match:
+      event_module: falco
+      event_action: ["PTRACE attached to process", "PTRACE anti-debug attempt"]
+    severity: 4
+    mitre_technique_id: "T1055"

@@ -110,3 +110,62 @@ def test_absent_recent_seconds_does_not_exceed_recency_marker_ttl(all_scenarios)
                 f"{s['id']}: absent_recent_seconds({seconds}) > "
                 f"_RECENCY_MARKER_TTL_SECONDS({_RECENCY_MARKER_TTL_SECONDS})"
             )
+
+
+def test_requires_recent_seconds_does_not_exceed_recency_marker_ttl(all_scenarios):
+    """absent_recent_seconds와 동일한 이유(rules.py의 requires_recent_fire 섹션
+    참고) - requires_recent_seconds(또는 window_seconds 기본값)가
+    _RECENCY_MARKER_TTL_SECONDS를 넘으면 _stamp_fired_marker()가 남긴 마커가 그
+    전에 먼저 만료돼 실제로는 선행 발화가 있었는데 "없었다"고 오판할 수 있다."""
+    for s in all_scenarios:
+        window = s.get("window_seconds")
+        patterns = list(_stage_patterns(s))
+        if "match" in s:
+            patterns.append(s["match"])
+        for pattern in patterns:
+            if "requires_recent_fire" not in pattern:
+                continue
+            seconds = pattern.get("requires_recent_seconds", window)
+            assert seconds <= _RECENCY_MARKER_TTL_SECONDS, (
+                f"{s['id']}: requires_recent_seconds({seconds}) > "
+                f"_RECENCY_MARKER_TTL_SECONDS({_RECENCY_MARKER_TTL_SECONDS})"
+            )
+
+
+def test_requires_recent_fire_references_a_scenario_that_stamps_the_same_axis(all_scenarios):
+    """requires_recent_fire가 가리키는 scenario id는 (1) 실제로 카탈로그에
+    존재해야 하고, (2) stamps_fired_marker=true여야 마커를 남기며, (3) 그 마커의
+    축(scenario.get("fired_marker_join_on", scenario["join_on"]))이 소비 쪽
+    시나리오 자신의 join_on과 정확히 일치해야 한다 - rules.py의
+    _passes_requires_recent_fire는 항상 소비 쪽 자신의 join_on으로만 조회하므로
+    (모듈 docstring의 requires_recent_fire 섹션 참고), 축이 어긋나면 조건이
+    조용히 영원히 불충족돼 그 패턴은 절대 매칭되지 않는다(죽은 코드가 조용히
+    묻히는 걸 카탈로그 로드 단계에서 막는다)."""
+    by_id = {s["id"]: s for s in all_scenarios}
+    for s in all_scenarios:
+        patterns = list(_stage_patterns(s))
+        if "match" in s:
+            patterns.append(s["match"])
+        for pattern in patterns:
+            required = pattern.get("requires_recent_fire")
+            if not required:
+                continue
+            if isinstance(required, str):
+                required = [required]
+            for producer_id in required:
+                producer = by_id.get(producer_id)
+                assert producer is not None, (
+                    f"{s['id']}: requires_recent_fire가 가리키는 {producer_id!r}가 "
+                    "카탈로그에 없음"
+                )
+                assert producer.get("stamps_fired_marker"), (
+                    f"{s['id']}: requires_recent_fire가 가리키는 {producer_id!r}는 "
+                    "stamps_fired_marker=true가 아니라 마커를 절대 남기지 않음"
+                )
+                marker_axis = producer.get("fired_marker_join_on", producer["join_on"])
+                assert marker_axis == s["join_on"], (
+                    f"{s['id']}(join_on={s['join_on']!r})가 요구하는 "
+                    f"{producer_id!r}의 마커 축은 {marker_axis!r}이라 서로 어긋남 - "
+                    f"{producer_id!r}에 fired_marker_join_on: {s['join_on']!r}을 "
+                    "추가할 것"
+                )

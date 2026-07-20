@@ -51,6 +51,44 @@ absent_recent_module (2026-07-19, "동시 부재" 확인): match(threshold/cardi
            기다려야 하는 지연 부재는 이 메커니즘으로 못 한다(별도 스케줄러 필요,
            아직 미구현).
 
+requires_recent_fire(2026-07-20, "선행 발화 확인"): match(threshold/cardinality) 패턴에
+           이 키를 추가하면, "지정된 scenario id가 이 조건을 보는 시나리오 자신의
+           join_on 축으로 최근(기본값: 이 시나리오의 window_seconds, override는
+           requires_recent_seconds) 실제로 발화한 적이 있어야" 이 패턴을 매칭으로
+           친다 - absent_recent_module(부재 요구)의 정반대(존재 요구)다. 만든 이유
+           (여러 계층 시나리오 Notion 페이지의 M4: WAS 카디널리티 정찰 -> Falco
+           민감 파일 접근): sequence의 stageN은 (a) 정적 1건 매칭(_matches)만
+           지원해 threshold/cardinality의 "누적/distinct 카운트가 문턱을
+           넘었는지"를 스테이지 조건으로 못 가져오고(M48이 지적), (b) 시나리오
+           전체가 단일 join_on만 지원해서 stage1(source_ip 축 - "동일 IP가 스캔")과
+           stage2(pod 축 - "그 결과로 침해된 pod")처럼 도중에 축이 바뀌는 체인을
+           표현할 수 없다 - 이 두 제약을 동시에 우회해야 해서 threshold/sequence
+           어느 쪽도 아닌 별도 메커니즘으로 만들었다.
+
+           발화 쪽 시나리오가 scenario["stamps_fired_marker"]=true면, 실제로
+           발화하는 순간(threshold/cardinality는 문턱을 막 넘은 실제 발화 경로 -
+           쿨다운 중 재발화 경로는 제외, sequence는 마지막 단계까지 완주해 체인이
+           완성되는 순간) 그 이벤트에서 scenario.get("fired_marker_join_on",
+           scenario["join_on"])이 가리키는 축의 값을 _join_key()로 뽑아 키로
+           "fired:{scenario_id}:{axis}:{value}" 흔적을 TTL=_RECENCY_MARKER_TTL_SECONDS로
+           남긴다(_stamp_fired_marker). 그 축의 값이 이벤트에 없으면(예: pod 축을
+           요구했는데 k8s_audit 클러스터 범위 리소스라 pod가 없음) 남길 게 없어
+           건너뛴다.
+
+           축이 두 갈래로 갈리는 이유(2026-07-20, 일반화 - 최초 구현은
+           "언제나 pod"로 고정돼 있었다):
+             - 소비 쪽과 공급 쪽이 원래 같은 join_on을 쓰는 경우(예: discovery.yaml
+               S31->S62, 둘 다 user_or_sa): fired_marker_join_on을 안 써도
+               scenario["join_on"] 기본값이 그대로 맞아떨어진다.
+             - 공급 쪽과 소비 쪽의 join_on 축 자체가 다른 경우(M4의 S92
+               [source_ip] -> S93 [pod]): 공급 쪽이 fired_marker_join_on으로
+               "내 발화 이벤트에서 소비 쪽이 실제로 쓸 축의 값"을 명시적으로
+               지정해야 한다 - 소비 쪽은 항상 자기 자신의 join_on으로만 조회하므로
+               (_passes_requires_recent_fire), 이 override가 없으면 공급 쪽
+               join_on(source_ip)으로 남긴 마커를 소비 쪽(pod)이 영원히 못 찾는다.
+           카탈로그 무결성 테스트(test_scenario_catalog.py)가 이 두 축이 실제로
+           일치하는지 로드 단계에서 강제한다.
+
 evaluate()가 반환하는 "발화" 결과는 PostgreSQL의 Incident/IncidentEvent 스키마에
 그대로 대응한다 (scenario_db_id=matched_scenario_rule_id, correlation_key_type/
 join_key=Incident의 correlation_key_type/correlation_key_value, events=IncidentEvent
@@ -64,11 +102,18 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from ids_shared.schemas import NormalizedEvent
 
 
-# "동시 부재"(absent_recent_module) 마커의 절대 상한 TTL - absent_recent_seconds(또는
-# window_seconds 기본값)가 이 값을 넘으면 마커가 그 전에 먼저 Redis에서 사라져 실제로는
-# 있었는데 "부재"로 오판할 수 있다. test_scenario_catalog.py가 카탈로그 로드 단계에서
-# 이 상한을 강제한다.
-_RECENCY_MARKER_TTL_SECONDS = 900
+# "동시 부재"(absent_recent_module) 마커와 "선행 발화"(requires_recent_fire, 아래
+# _stamp_fired_marker) 마커 공통의 절대 상한 TTL - absent_recent_seconds/
+# requires_recent_seconds(또는 각각의 window_seconds 기본값)가 이 값을 넘으면 마커가
+# 그 전에 먼저 Redis에서 사라져 실제로는 있었는데 "없었다"고 오판할 수 있다(전자는
+# 거짓 부재, 후자는 거짓으로 조건 불충족). test_scenario_catalog.py가 카탈로그 로드
+# 단계에서 이 상한을 강제한다. 900에서 3600으로 상향(2026-07-20, discovery.yaml
+# S62 재작업과 함께) - S62가 requires_recent_fire로 요구하는 lookback이 원안 그대로
+# 1800초(low-and-slow 정찰 탐지 취지상 짧게 줄이면 안 됨)라 900으로는 부족했다.
+# 더 길게 사는 마커가 다른 시나리오의 정확성을 해치지는 않는다(상한은 "충분히 길게"만
+# 보장하면 되는 값이라, 올린다고 기존 로직이 깨지지 않는다 - Redis 메모리 비용만
+# 소폭 늘 뿐).
+_RECENCY_MARKER_TTL_SECONDS = 3600
 
 # _stamp_recency()가 매 이벤트마다 흔적을 남기는 join_on 축 전체 - 어떤 시나리오가
 # 나중에 absent_recent_module로 이 이벤트의 부재를 어느 축으로 물어볼지 미리 알 수
@@ -291,16 +336,77 @@ class ScenarioEngine:
                 return False
         return True
 
+    async def _stamp_fired_marker(self, scenario: Dict[str, Any], event: NormalizedEvent) -> None:
+        """이 시나리오가 발화했다는 사실 자체를 다른 시나리오가 나중에
+        requires_recent_fire로 조회할 수 있게 흔적으로 남긴다 -
+        scenario["stamps_fired_marker"]가 true인 시나리오만(모든 발화가 다른
+        시나리오의 전제조건이 되는 건 아니므로 명시적 opt-in, _stamp_recency처럼
+        무조건 남기지 않는다).
+
+        어느 축으로 남길지(2026-07-20, 일반화 - 최초 구현은 pod로 고정돼 있었다)는
+        scenario["fired_marker_join_on"]으로 override하고, 없으면 이 시나리오
+        자신의 join_on을 그대로 쓴다 - 소비 쪽이 같은 축(예: S31/S62처럼 둘 다
+        user_or_sa)이면 이 기본값만으로 충분하고, 소비 쪽이 다른 축을 쓴다면(예:
+        S92는 join_on=source_ip지만 "정찰당한 pod"를 남겨야 S93이 pod 축으로 조회할
+        수 있음) 명시적으로 override한다. _join_key()로 그 축의 값을 이 이벤트에서
+        뽑아내는데(pod/user_or_sa/source_ip/rule_id 아무 축이나 가능), 값이 없으면
+        (예: k8s_audit 클러스터 범위 리소스에 pod 축을 요구) 남길 게 없어 건너뛴다.
+
+        threshold/cardinality는 실제 발화(문턱을 막 넘은) 경로에서, sequence는
+        마지막 단계까지 완주해 체인이 완성되는 순간(_eval_sequence)에 호출한다 -
+        어느 쪽이든 "쿨다운 중 재발화" 경로는 제외(그 시점엔 최초 발화 때 이미 남긴
+        흔적이 아직 살아있다고 보고 갱신하지 않는다)."""
+        if not scenario.get("stamps_fired_marker"):
+            return
+        axis = scenario.get("fired_marker_join_on", scenario["join_on"])
+        value = _join_key(event, axis)
+        if value is None:
+            return
+        await self._redis.set(
+            f"fired:{scenario['id']}:{axis}:{value}",
+            str(event.timestamp.timestamp()),
+            ex=_RECENCY_MARKER_TTL_SECONDS,
+        )
+
+    async def _passes_requires_recent_fire(
+        self, pattern: Dict[str, Any], scenario: Dict[str, Any], join_key: str, now_ts: float
+    ) -> bool:
+        """pattern에 requires_recent_fire가 없으면 통과. 있으면 지정된 scenario id(들)가
+        "이 패턴을 평가 중인 시나리오 자신의 join_on 축"으로 최근(기본값: 이
+        시나리오의 window_seconds, override는 requires_recent_seconds)
+        _stamp_fired_marker로 발화 흔적을 남긴 적이 있어야 매칭으로 친다 -
+        absent_recent_module의 반대(부재가 아니라 존재를 요구)다. 조회 축은 항상
+        "지금 이 조건을 보는 쪽"의 join_on이다 - 발화(공급) 쪽이 그 축으로
+        마커를 남겼는지는 scenario["fired_marker_join_on"]에 달렸으므로(위
+        _stamp_fired_marker docstring 참고), 둘이 어긋나면(공급 쪽이 다른 축에
+        남겼는데 소비 쪽이 엉뚱한 축을 조회) 이 조건은 조용히 영원히 불충족이
+        된다 - 카탈로그 무결성 테스트가 이 정합성을 강제한다."""
+        required = pattern.get("requires_recent_fire")
+        if not required:
+            return True
+        if isinstance(required, str):
+            required = [required]
+        seconds = pattern.get("requires_recent_seconds", scenario["window_seconds"])
+        axis = scenario["join_on"]
+        for scenario_id in required:
+            raw = await self._redis.get(f"fired:{scenario_id}:{axis}:{join_key}")
+            if raw is None or (now_ts - float(raw)) > seconds:
+                return False
+        return True
+
     async def _stage_matches(
         self, event: NormalizedEvent, pattern: Dict[str, Any], scenario: Dict[str, Any], join_key: str
     ) -> bool:
-        """구조적 조건(_matches, 동기)과 "동시 부재" 조건(absent_recent_module, Redis
-        조회가 필요해 비동기)을 합쳐서 판단한다 - threshold의 match, sequence의
-        stageN, cardinality의 match가 전부 이 경로를 탄다(_matches를 직접 부르지
-        않는다)."""
+        """구조적 조건(_matches, 동기)과 Redis 조회가 필요한 두 비동기 조건("동시
+        부재" absent_recent_module + "선행 발화" requires_recent_fire)을 합쳐서
+        판단한다 - threshold의 match, sequence의 stageN, cardinality의 match가
+        전부 이 경로를 탄다(_matches를 직접 부르지 않는다)."""
         if not _matches(event, pattern):
             return False
-        return await self._passes_absent_recent(pattern, scenario, join_key, event.timestamp.timestamp())
+        now_ts = event.timestamp.timestamp()
+        if not await self._passes_absent_recent(pattern, scenario, join_key, now_ts):
+            return False
+        return await self._passes_requires_recent_fire(pattern, scenario, join_key, now_ts)
 
     async def evaluate(self, event: NormalizedEvent) -> List[Dict[str, Any]]:
         """이 이벤트로 새로 발화하는 인시던트 목록을 반환 (없으면 빈 리스트).
@@ -413,6 +519,7 @@ class ScenarioEngine:
         await self._redis.set(
             cooldown_key, "1", ex=scenario.get("cooldown_seconds", scenario["window_seconds"])
         )
+        await self._stamp_fired_marker(scenario, event)
 
         return self._fired_result(
             scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
@@ -457,6 +564,7 @@ class ScenarioEngine:
         await self._redis.set(
             cooldown_key, "1", ex=scenario.get("cooldown_seconds", scenario["window_seconds"])
         )
+        await self._stamp_fired_marker(scenario, event)
 
         return self._fired_result(
             scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
@@ -499,6 +607,7 @@ class ScenarioEngine:
 
         if progress == len(stages):
             await self._redis.delete(state_key)
+            await self._stamp_fired_marker(scenario, event)
             return self._fired_result(scenario, join_key, state["events"])
 
         state["progress"] = progress

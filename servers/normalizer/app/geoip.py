@@ -24,8 +24,28 @@ import redis.asyncio as redis
 
 from app.config import settings
 
-_reader = geoip2.database.Reader(settings.geoip_db_path)
 _redis = redis.from_url(settings.redis_url, decode_responses=True)
+
+# _reader는 모듈 최상단에서 즉시 열지 않고 첫 실제 조회 시점까지 미룬다(2026-07-20,
+# CI 실측 확인 후 변경) - GeoLite2-City.mmdb(53MB, MaxMind 라이선스상 git에 커밋 안 함,
+# .gitignore 참고)는 로컬/배포 환경에만 있고 CI 러너에는 없다. 예전처럼 여기서 즉시
+# Reader(path)를 열면 그 파일이 없는 어떤 환경에서든 이 모듈을 import하는 것 자체가
+# FileNotFoundError로 죽는다 - tests/test_enrichment.py는 GeoIP 조회를 전혀 테스트하지
+# 않는데도(자기 docstring이 명시) app.enrichment -> app.geoip import 체인 때문에
+# 테스트 수집 단계부터 막혔다(실측 확인). _redis(redis.from_url)는 원래도 지연
+# 연결이라(생성 시점엔 소켓을 안 열고 첫 명령에서만 연결) 이 문제가 없었다 - _reader만
+# 같은 지연 방식으로 맞춘다. 실제 배포 환경(정상적으로 .mmdb 파일이 있는 곳)에서는
+# 첫 이벤트 처리 시 한 번 여는 것으로 동작이 사실상 동일하다(그 이후로는 캐시된
+# 인스턴스를 계속 재사용).
+_reader: Optional["geoip2.database.Reader"] = None
+
+
+def _get_reader() -> "geoip2.database.Reader":
+    global _reader
+    if _reader is None:
+        _reader = geoip2.database.Reader(settings.geoip_db_path)
+    return _reader
+
 
 _CACHE_TTL_SECONDS = 7 * 24 * 3600
 _CACHE_PREFIX = "geoip:"
@@ -66,7 +86,7 @@ def _query(ip: str) -> GeoInfo:
     반환한다 - analytics_api.py가 country_iso_code를 '??'로 취급해 지도 집계에서
     제외한다."""
     try:
-        result = _reader.city(ip)
+        result = _get_reader().city(ip)
     except geoip2.errors.AddressNotFoundError:
         return dict(_EMPTY)
 

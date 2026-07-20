@@ -9,14 +9,14 @@
 
 | 파일 | 다루는 영역 | 시나리오 |
 | --- | --- | --- |
-| `rbac.yaml` | RBAC 변경/권한 상승/백도어 계정 | S3, S6, S7, S9, S11, S12, S13, S53, S58 |
-| `workload.yaml` | Pod/워크로드 생명주기 및 컨테이너 이스케이프 | S1, S8, S14, S15, S16, S20, S21, S34, S35, S40, S41, S42, S43, S52, S61, S64, S66, S67, S68, S69, S70, S72, S73, S74, S75, S80, S81, S86, S87 |
-| `credentials.yaml` | 자격증명 접근/노출 | S2, S18, S38, S39, S45, S46, S47, S48, S49, S56, S89 |
-| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55, S59, S60, S63, S65, S71, S77, S78, S83, S84, S85, S90 |
-| `discovery.yaml` | 정찰(reconnaissance) | S10, S31, S50, S62, S79, S91 |
+| `rbac.yaml` | RBAC 변경/권한 상승/백도어 계정 | S3, S6, S7, S9, S11, S12, S13, S53, S58, S96 |
+| `workload.yaml` | Pod/워크로드 생명주기 및 컨테이너 이스케이프 | S1, S8, S14, S15, S16, S20, S21, S32, S34, S35, S40, S41, S42, S43, S52, S61, S64, S66, S67, S68, S69, S70, S72, S73, S74, S75, S80, S81, S86, S87, S94, S100 |
+| `credentials.yaml` | 자격증명 접근/노출 | S2, S18, S38, S39, S45, S46, S47, S48, S49, S56, S89, S99 |
+| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55, S59, S60, S63, S65, S71, S77, S78, S83, S84, S85, S90, S97, S98 |
+| `discovery.yaml` | 정찰(reconnaissance) | S10, S31, S50, S62, S79, S91, S92, S93 |
 | `resource_abuse.yaml` | 컨테이너 런타임 리소스 남용(크립토마이닝) | S22, S82 |
 | `defense_evasion.yaml` | 컨테이너 내 흔적 인멸 | S23, S36, S37, S44, S76, S88 |
-| `lateral_movement.yaml` | 탈취한 인증 자료를 이용한 측면 이동 | S25, S57 |
+| `lateral_movement.yaml` | 탈취한 인증 자료를 이용한 측면 이동 | S25, S57, S95 |
 
 ## 엔진 동작 (sequence/threshold/cardinality 3타입)
 
@@ -87,9 +87,55 @@ M9("K8s Audit 비인가 이미지 pull + Falco 악성 패턴 + WAF/WAS 트래픽
 미구현 - 여러 계층 시나리오 Notion 페이지 참고).
 
 `absent_recent_seconds`(또는 `window_seconds` 기본값)는 `app/rules.py`의
-`_RECENCY_MARKER_TTL_SECONDS`(900초)를 넘을 수 없다 - 넘으면 마커가 그 전에 먼저
-Redis에서 사라져 실제로는 있었는데 "부재"로 오판할 수 있다
+`_RECENCY_MARKER_TTL_SECONDS`(3600초, `requires_recent_fire`와 공유하는 상한 -
+2026-07-20에 900초에서 상향, 아래 섹션 참고)를 넘을 수 없다 - 넘으면 마커가 그
+전에 먼저 Redis에서 사라져 실제로는 있었는데 "부재"로 오판할 수 있다
 (`test_scenario_catalog.py`가 카탈로그 로드 단계에서 강제).
+
+## "선행 발화" 확인 (`requires_recent_fire`, 2026-07-20)
+
+`absent_recent_module`의 정반대 - "부재"가 아니라 "다른 시나리오가 실제로 발화했는지
+(존재)"를 요구한다. `match`(threshold/cardinality) 패턴에 추가하면, "지정된
+scenario id가 **이 조건을 보는 시나리오 자신의 `join_on` 축**으로 최근(기본값: 이
+시나리오의 `window_seconds`, override는 `requires_recent_seconds`) 실제로 발화한
+적이 있어야" 이 패턴을 매칭으로 친다:
+
+```yaml
+match:
+  event_module: falco
+  event_action: ["Read sensitive file untrusted", "ServiceAccount Token File Read"]
+  requires_recent_fire: S92        # 또는 [S92, ...]
+  requires_recent_seconds: 300     # 생략하면 이 시나리오의 window_seconds
+```
+
+발화(공급) 쪽 시나리오는 `stamps_fired_marker: true`를 켜야 한다 - threshold/
+cardinality는 문턱을 넘어 실제로 발화하는 순간, sequence는 마지막 stage까지
+완주하는 순간, 그 이벤트에서 `fired_marker_join_on`(생략하면 공급 쪽 자신의
+`join_on`)이 가리키는 축의 값을 키로 `"fired:{scenario_id}:{axis}:{value}"`
+흔적을 남긴다(`_stamp_fired_marker`). 소비 쪽은 항상 **자기 자신의 `join_on`**으로만
+조회하므로, 공급/소비가 같은 축이면(`fired_marker_join_on` 생략) 기본값만으로
+충분하고, 축이 다르면(예: 공급은 `source_ip`, 소비는 `pod`) 공급 쪽이
+`fired_marker_join_on`으로 명시적으로 override해야 한다 - 두 축이 어긋나면 조건이
+조용히 영원히 불충족되므로 `test_scenario_catalog.py`가 카탈로그 로드 단계에서
+이 정합성을 강제한다.
+
+**축이 같은 경우** (`discovery.yaml`의 `S31`→`S62`, 둘 다 `join_on: user_or_sa`) -
+override 없이 가장 단순하게 쓸 수 있는 경우. `S62`는 원래 2026-07-19에 "RBAC를
+threshold=5회/60초 훑어본 신원" 조건을 sequence의 정적 stage1으로 표현할 수 없어
+`S31`의 match 패턴을 단발 이벤트로 완화해 우회했었는데(sequence stageN은 threshold
+누적 조건을 못 받음, M48), 2026-07-20에 이 메커니즘으로 `S31`이 실제로 발화했는지를
+직접 요구하도록 재작업해 원안을 그대로 복원했다.
+
+**축이 다른 경우** (`discovery.yaml`의 `S92`[`source_ip`]→`S93`[`pod`],
+`network.yaml`의 `S85`[`user_or_sa`, 4단계 sequence]→`workload.yaml`의 `S94`[`pod`]) -
+"동일 IP가 여러 WAS 엔드포인트를 스캔" 다음 "그 결과로 침해된 pod에서 Falco 민감
+파일 접근"처럼, 정찰/침투 축(IP 또는 신원)과 결과가 나타나는 축(pod)이 다른 경우다.
+`sequence`로는 표현이 안 된다 - (1) stageN은 정적 1건 매칭만 지원해 threshold/
+cardinality의 누적 조건을 스테이지로 못 가져오고(M48), (2) 시나리오 전체가 단일
+`join_on`만 지원해서 축이 바뀌는 체인 자체를 표현할 수 없다. `requires_recent_fire`는
+두 시나리오를 (하나의 인시던트가 아니라) 각자 독립적으로 발화하는 별개 인시던트로
+유지하면서, 공급 쪽이 `fired_marker_join_on`으로 소비 쪽이 쓸 축의 값을 미리
+남겨두는 방식으로 이 제약을 우회한다.
 
 ## 설계 근거 출처
 

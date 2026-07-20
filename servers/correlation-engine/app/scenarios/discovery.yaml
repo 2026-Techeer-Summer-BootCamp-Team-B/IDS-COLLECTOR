@@ -37,6 +37,12 @@ scenarios:
   # 직접 설계한 임계값이라(falcosecurity/plugins 등 외부 근거 없음) 오탐 실측
   # 튜닝이 필요하다 - 특히 RBAC 관리 도구(예: kubectl-who-can, rbac-lookup)를
   # 쓰는 관리자가 우연히 걸릴 수 있음.
+  # stamps_fired_marker: true(2026-07-20 추가, S62 재작업과 함께 - 아래 S62 주석
+  # 참고) - S62가 "이 신원이 RBAC를 정말로(threshold=5회) 훑어봤는지"를
+  # requires_recent_fire로 조회할 수 있게 한다. fired_marker_join_on을 안 쓰는
+  # 이유 - S62도 join_on=user_or_sa라 이 시나리오 자신의 join_on 기본값이 그대로
+  # 맞아떨어진다(축 전이가 필요 없는 가장 단순한 경우, M4의 S92[source_ip]->
+  # S93[pod]처럼 축이 바뀌는 경우와 대비된다).
   - id: S31
     name: "RBAC 권한/역할 열거 정황"
     type: threshold
@@ -46,6 +52,7 @@ scenarios:
     window_seconds: 60
     threshold: 5
     cooldown_seconds: 300
+    stamps_fired_marker: true
     match:
       event_module: k8s_audit
       audit_verb: [get, list]
@@ -76,26 +83,34 @@ scenarios:
     severity: 3
     mitre_technique_id: "T1557"
 
-  # S62 (sequence, join_on=user_or_sa, window_seconds=1800, 2026-07-19, Notion
-  # "여러 계층 시나리오" M19 구현, S31 후속): S10/S31(둘 다 threshold) 같은
-  # "빠르게 많이"에만 반응하는 시나리오는 정찰 사실을 아는 공격자가 임계값 아래로
-  # 속도를 늦추면(low-and-slow) 아무것도 못 잡는다 - 이건 "빈도"가 아니라 "정찰
-  # 이후의 인과관계"를 신호로 쓴다: RBAC를 한 번이라도 훑어본 신원이 그 뒤 훨씬
-  # 넓은 시간창(1800초) 안에 민감 리소스에 단 한 번만 접근해도 매칭한다.
+  # S62 (threshold, threshold=1, join_on=user_or_sa, window_seconds=1800,
+  # 2026-07-19 최초 구현/2026-07-20 재작업, Notion "여러 계층 시나리오" M19 구현,
+  # S31 후속): S10/S31(둘 다 threshold) 같은 "빠르게 많이"에만 반응하는 시나리오는
+  # 정찰 사실을 아는 공격자가 임계값 아래로 속도를 늦추면(low-and-slow) 아무것도
+  # 못 잡는다 - 이건 "빈도"가 아니라 "정찰 이후의 인과관계"를 신호로 쓴다: RBAC를
+  # 실제로(threshold=5회/60초) 훑어본 신원이 그 뒤 훨씬 넓은 시간창(1800초) 안에
+  # 민감 리소스에 단 한 번만 접근해도 매칭한다.
   #
-  # ⚠️ 원안(Notion 문서)은 stage1을 "S31 재료(threshold=5/60s)가 이미 발화한
-  # 상태"로 적었는데, 그대로는 구현 불가능하다 - sequence의 stageN은 이벤트 한
-  # 건이 패턴에 맞는지만 보는 정적 매칭(_matches())이라, "같은 패턴이 60초 안에
-  # 5번 반복됐는지"(threshold의 Redis 카운터 로직)를 스테이지 조건으로 가져올
-  # 수가 없다(M48이 지적한 "시퀀스 안에 threshold/cardinality를 중첩" 문제와 같은
-  # 엔진 제약). 그래서 stage1은 S31의 threshold(5회)가 아니라 S31의 match 패턴
-  # (roles/clusterroles/rolebindings/clusterrolebindings의 get/list) 자체를
-  # 단발 이벤트로 재사용한다 - 오히려 이게 원안의 취지에 더 맞다: stage1에 5회
-  # 임계값을 그대로 요구하면 그 자체가 병목이 되어 "임계값 아래로 속도를 늦추는"
-  # 공격자를 여전히 놓치게 된다. stage2(민감 리소스 접근)가 실질적인 노이즈
-  # 필터 역할을 하므로 stage1을 단발로 완화해도 무분별하게 발화하지 않는다.
+  # ⚠️ 2026-07-19 최초 구현 당시엔 원안(Notion 문서)의 "stage1 = S31 재료
+  # (threshold=5/60s)가 이미 발화한 상태"를 그대로 못 옮겼다 - 그땐 sequence
+  # stageN이 정적 1건 매칭(_matches())만 지원해서, "같은 패턴이 60초 안에 5번
+  # 반복됐는지"(threshold의 Redis 카운터 로직)를 스테이지 조건으로 가져올 방법이
+  # 없었다(M48이 지적한 "시퀀스 안에 threshold/cardinality를 중첩" 문제). 그래서
+  # 당시엔 stage1을 S31의 threshold(5회)가 아니라 S31의 match 패턴 자체를 단발
+  # 이벤트로 재사용하는 것으로 완화했었다.
   #
-  # stage2 "민감 리소스(secrets get, RBAC 변경 등)"는 두 갈래 - S2가 쓰는 secrets
+  # 2026-07-20 재작업: M4(S92->S93, discovery.yaml)를 만들면서 추가한
+  # requires_recent_fire 메커니즘(rules.py 모듈 docstring)이 이 제약을 정확히
+  # 해소한다 - S31에 stamps_fired_marker: true를 달아 "S31이 실제로 threshold(5회)를
+  # 채우고 발화했다"는 사실 자체를 흔적으로 남기고, 이 시나리오는 그 흔적을
+  # requires_recent_fire: S31로 조회하는 threshold(threshold=1, 단발) 시나리오로
+  # 바꿨다 - sequence+완화된 stage1이 아니라 원안 그대로 "S31이 실제로 발화한
+  # 신원"을 전제조건으로 쓴다. S31/S62 둘 다 join_on=user_or_sa라 축이 같아서
+  # (M4의 S92[source_ip]->S93[pod]처럼 축이 바뀌는 경우와 달리) S31 쪽에
+  # fired_marker_join_on override도 필요 없었다 - 이 메커니즘이 다룰 수 있는
+  # 가장 단순한 경우.
+  #
+  # match "민감 리소스(secrets get, RBAC 변경 등)"는 두 갈래 - S2가 쓰는 secrets
   # get/list와 S3가 쓰는 RBAC 오브젝트 변경(clusterroles/clusterrolebindings/
   # roles/rolebindings의 create/delete/deletecollection/patch/update, S3 stage1과
   # 동일 verb 범위 - deletecollection을 빠뜨리면 안 된다는 게 S3 주석의 교훈)을
@@ -104,7 +119,7 @@ scenarios:
   # 필드를 따로 쓰면 두 갈래가 서로의 verb/resource와 원치 않게 교차 매칭될 수
   # 있어(예: get secrets가 아니라 delete secrets까지 잡히는 식) 이 방식을 피했다).
   #
-  # mitre_technique_id=T1069: stage2가 실제로는 T1552(자격증명 접근)/T1098(RBAC
+  # mitre_technique_id=T1069: 이 신호가 실제로는 T1552(자격증명 접근)/T1098(RBAC
   # 권한 부여)까지 걸치는 혼합 신호지만, 이 시나리오의 정체성은 "S31의 후속"이라는
   # 데 있어 S31의 기법 태그를 그대로 물려받는다 - S60/S61이 각각의 원조 시나리오
   # 태그를 재사용한 것과 같은 컨벤션. severity=4는 S1/S3/S61과 같은 논리 - 정찰
@@ -112,16 +127,14 @@ scenarios:
   # 한 단계 올려 잡는다.
   - id: S62
     name: "RBAC 열거 정찰 이후 저빈도 민감 리소스 접근 (threshold 우회 대응)"
-    type: sequence
+    type: threshold
     join_on: user_or_sa
     correlation_key_type: "user.name"
     required_modules: [k8s_audit]
     window_seconds: 1800
-    stage1:
-      event_module: k8s_audit
-      audit_verb: [get, list]
-      orchestrator_resource_type: [roles, clusterroles, rolebindings, clusterrolebindings]
-    stage2:
+    threshold: 1
+    cooldown_seconds: 1800
+    match:
       event_module: k8s_audit
       event_action:
         [
@@ -148,6 +161,7 @@ scenarios:
           "patch rolebindings",
           "update rolebindings",
         ]
+      requires_recent_fire: S31
     severity: 4
     mitre_technique_id: "T1069"
 
@@ -227,3 +241,85 @@ scenarios:
       audit_verb: [get, list, watch]
     severity: 3
     mitre_technique_id: "T1613"
+
+  # S92 (cardinality, join_on=source_ip, 2026-07-20, Notion "여러 계층 시나리오" M4
+  # stage1 구현): 같은 IP가 짧은 시간에 서로 다른 WAS 엔드포인트를 threshold개
+  # 이상 두드리면 발화 - 반복 재시도가 아니라 "경로 다양성" 자체가 신호인 엔드포인트
+  # 스캔/디렉터리 브루트포스 탐지(S91과 같은 cardinality 메커니즘, README.md 참고).
+  # threshold=15/60s는 초기 추정치(다른 cardinality 시나리오와 같은 이유 - 실측
+  # 트래픽 기준선이 아직 없음, verdict 피드백 루프로 나중에 조정할 것).
+  #
+  # stamps_fired_marker: true + fired_marker_join_on: pod(2026-07-20, 엔진 확장
+  # 포함) - 이 시나리오는 M4의 stage2(S93, 정찰이 확인된 대상 pod에서 실제 Falco
+  # 민감 파일 접근이 뒤따르는지)의 전제조건이다. sequence로는 못 묶는다 - stage1이
+  # cardinality(누적 조건)라서 정적 1건 매칭만 지원하는 sequence stageN에 못
+  # 넣고(M48이 지적한 문제), join_on도 이 시나리오는 source_ip인데 stage2는 pod라
+  # "시나리오 전체가 단일 join_on"이라는 제약에도 걸린다(discovery.yaml의 옛
+  # S62/network.yaml S85 주석이 부딪혔던 것과 같은 제약). 그래서 requires_recent_fire
+  # 메커니즘(rules.py 모듈 docstring)을 새로 만들어 S93이 이 시나리오의 발화 흔적을
+  # 조회하게 했다 - S92는 join_on 자신은 source_ip지만, 마커는 자기 축이 아니라
+  # 소비 쪽(S93)이 실제로 쓸 pod 축으로 남겨야 하므로 fired_marker_join_on:
+  # pod로 명시적으로 override한다(자기 축을 그대로 쓰는 게 기본값이라, 다르게
+  # 쓰려면 반드시 override가 필요 - S31->S62처럼 공급/소비가 같은 축이면 이 override
+  # 자체가 필요 없다). S92/S93은 각자 독립적으로 발화하는 별개 인시던트지만, S93의
+  # 발화 조건 자체가 "S92가 이 pod에서 최근에 발화했는지"라 인과관계가 강제된다.
+  #
+  # mitre_technique_id=T1595(Active Scanning): MITRE 공식 기법 - "다양한 엔드포인트를
+  # 순차적으로 두드려 유효한 경로/취약점을 찾는" 행위 그대로. severity=2는
+  # S10/S31/S91과 같은 급(정찰 단독, 아직 실공격 확정 아님).
+  - id: S92
+    name: "동일 IP의 WAS 엔드포인트 다양성 스캔 (경로 정찰 정황)"
+    type: cardinality
+    join_on: source_ip
+    correlation_key_type: "source.ip"
+    required_modules: [was]
+    window_seconds: 60
+    threshold: 15
+    cooldown_seconds: 300
+    distinct_field: url_path
+    stamps_fired_marker: true
+    fired_marker_join_on: pod
+    match:
+      event_module: was
+    severity: 2
+    mitre_technique_id: "T1595"
+
+  # S93 (threshold, threshold=1, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오"
+  # M4 stage2 구현): S92(WAS 엔드포인트 다양성 스캔)가 대상 pod에서 최근(window_seconds
+  # 안) 발화한 상태에서, 그 같은 pod에 Falco 민감 파일 접근(/etc/shadow류 -
+  # credentials.yaml S45, ServiceAccount 토큰 파일 - credentials.yaml S56)이
+  # 확인되면 발화 - "정찰 이후 실제 침해까지 이어졌다"는 확정적 체인. S45/S56 자체는
+  # 정찰 여부와 무관하게 단독으로도 계속 발화한다(방어 심층화) - 이건 그 위에
+  # "직전에 이 pod가 스캔당했다"는 인과관계가 확인됐을 때만 별도로 얹히는 상위
+  # 신호다.
+  #
+  # requires_recent_fire: S92 - S92가 실제로 문턱을 넘겨 발화한 그 이벤트(마지막으로
+  # threshold를 채운 WAS 요청) 자체의 orchestrator_resource_name(enrichment.py가
+  # 채우는 "이 요청이 실제로 처리된 대상 pod")을 키로 남긴 흔적을 조회한다 - S92는
+  # join_on=source_ip라 그 시나리오 자신의 join_key(공격자 IP)로는 이 pod를 못
+  # 찾지만, 발화 이벤트 자체는 항상 어떤 pod에서 벌어졌는지 알고 있으므로 그 값으로
+  # 마커를 남긴다(rules.py의 _stamp_fired_marker). window_seconds=300은 정찰
+  # 직후 바로 침해로 이어지는 빠른 체인을 가정한 것 - 너무 넓히면 무관한 별개
+  # 침해까지 묶일 위험이 있다.
+  #
+  # mitre_technique_id=T1552(Unsecured Credentials): match가 T1555 계열(S45, 전통적
+  # 민감 파일)과 T1552 계열(S56, K8s 서비스어카운트 토큰)을 모두 포괄하는데, 이 중
+  # 이 프로젝트의 실제 위협 모델(K8s 클러스터)에 더 특화된 후자를 대표 태그로 잡았다
+  # (티켓 원문도 "서비스어카운트 토큰 파일"을 명시). severity=4는 S1/S3/S61/S62와
+  # 같은 논리 - 정찰 단독(S92, 2)보다 "정찰 이후 실제 침해까지 확인됐다"는 확정적
+  # 체인이라 최상위로 잡는다.
+  - id: S93
+    name: "WAS 정찰 이후 동일 Pod의 Falco 민감 파일 접근 (정찰→침해 확정 체인)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 300
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: ["Read sensitive file untrusted", "ServiceAccount Token File Read"]
+      requires_recent_fire: S92
+    severity: 4
+    mitre_technique_id: "T1552"

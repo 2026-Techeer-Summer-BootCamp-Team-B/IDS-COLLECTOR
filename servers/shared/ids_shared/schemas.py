@@ -112,6 +112,15 @@ class NormalizedEvent(BaseModel):
         default=None, alias="kubernetes.audit.binding.role_name"
     )  # rolebinding/clusterrolebinding이 가리키는 roleRef.name (requestObject가 JSON
     # Patch 배열이면 배열 안 여러 원소의 이름이 나올 수 있어 리스트로 합친다)
+    audit_binding_subject: Optional[str] = Field(
+        default=None, alias="kubernetes.audit.binding.subject"
+    )  # rolebinding/clusterrolebinding의 subjects를 "kind:namespace:name"(subject가
+    # 여러 개면 정렬 후 쉼표로 합침) 스칼라 문자열 하나로 표현한다(2026-07-20, 여러
+    # 계층 시나리오 Notion 페이지의 M26 - S96 재료). audit_binding_role_name과 달리
+    # List[str]이 아니라 str인 이유 - correlation-engine의 cardinality distinct_field는
+    # getattr()로 뽑은 값을 그대로 Redis SADD 멤버로 쓰므로(app/rules.py의
+    # _eval_cardinality) 리스트를 못 받는다. "이 관리자가 지금까지 서로 다른 몇 명/몇
+    # 개의 주체에게 권한을 부여했는지"를 세는 게 목적이라 스칼라가 필요했다.
 
     # K8s Audit - Pod 생성 request body 분석 (2026-07-12, k3d-audit-policy.yaml이
     # pods의 create만 Request 레벨로 승격한 뒤 가능해짐). 생성 이후 바뀔 수 없는

@@ -3,6 +3,13 @@
 # 이 프로젝트 카탈로그(ids_shared.mitre_mapping.CONTAINERS_MATRIX)에서 Lateral
 # Movement 전술에 해당하는 기법은 T1550(Use Alternate Authentication Material)
 # 하나뿐이고, 2026-07-14 이전까지는 이 전술 커버리지가 0%였다(Notion TODO #1).
+#
+# S95(T1078, 2026-07-20 추가)는 파일 스코프("탈취한 인증 자료를 이용한 측면 이동")상
+# 여기 두지만, 엄밀히는 CONTAINERS_MATRIX에서 T1078의 공식 전술 태그에 Lateral
+# Movement가 없다(mitre_mapping.py의 SCENARIO_TACTIC_OVERRIDE 주석 참고 - S95는
+# Persistence/Defense Evasion으로 좁힌다) - "탈취된 신원이 여러 곳에서 재사용된다"는
+# 의미가 S25/S57(둘 다 T1550, "탈취/발급 시도" 자체)의 논리적 후속(탈취된 게 실제로
+# 여러 곳에서 쓰이고 있다는 증거)이라 파일을 나누지 않고 같이 뒀다.
 
 scenarios:
   # S25 (threshold, threshold=1, 2026-07-14): ServiceAccount 토큰이 TokenRequest
@@ -68,3 +75,51 @@ scenarios:
       event_action: "create certificatesigningrequests"
     severity: 4
     mitre_technique_id: "T1550"
+
+  # S95 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오"
+  # M13 구현, `cardinality` 매처를 M4/M10 외 실전에 처음 적용하는 사례): 정상
+  # 파드/컨트롤러의 SA 신원은 보통 안정된 소수 IP(같은 노드/서비스)에서만 API를
+  # 호출한다 - 짧은 시간에 서로 다른 소스 IP threshold개 이상에서 같은 신원이
+  # 쓰이면, 토큰이 유출돼 여러 곳(공격자 인프라 포함)에서 동시에 재사용되고
+  # 있다는 신호다. 기존 `S25`(토큰 명시적 발급)/`S56`(토큰 파일 탈취, credentials.yaml)/
+  # `S57`(CSR 인증서 발급)은 전부 "탈취/발급 시도" 자체만 잡고, 탈취된 신원이 실제로
+  # 여러 곳에서 재사용되는 후속 증거는 못 봤다 - 이 시나리오가 그 공백을 채운다.
+  #
+  # match의 audit_verb를 쓰기 계열([create, delete, deletecollection, patch,
+  # update], S3/S62와 동일 범위)로 좁혔다 - 정찰성 get/list/watch까지 다 세면
+  # 흔한 컨트롤러/모니터링 트래픽까지 distinct IP 집합에 섞여 노이즈가 커진다
+  # (원 티켓도 "노이즈를 줄이려면 쓰기 verb 위주로 좁혀도 됨"을 명시).
+  # threshold=5/300s는 초기 추정치(다른 cardinality 시나리오와 같은 이유 - 실측
+  # 트래픽 기준선이 아직 없음).
+  #
+  # ⚠️ k8s_audit의 source_ip는 API 서버가 보는 클라이언트 IP인데, 클러스터 내부
+  # 파드→API서버 호출이 kube-proxy/서비스 경유로 뭉뚱그려질 수 있어 여러 노드에
+  # 분산 배치된 동일 SA의 정상 파드들(예: 여러 노드의 DaemonSet 레플리카)과
+  # 실측으로 구분되는지 확인이 필요하다 - 확인 전까지는 오탐 위험을 감안하고
+  # threshold/cooldown을 보수적으로 잡았다(S10/S31/S92와 같은 처지).
+  # cooldown_seconds=900은 S56(600)보다 길게 잡았다 - 이건 "탈취 시도"가 아니라
+  # "이미 재사용 중"이라는 진행형 상태를 알리는 신호라, 같은 신원이 계속 여러
+  # IP에서 쓰이는 동안 매번 새 인시던트로 쪼개기보다 조사 시간을 벌어주는 쪽을
+  # 택했다.
+  #
+  # mitre_technique_id=T1078(Valid Accounts) - 이 카탈로그에서 처음 쓰는 기법.
+  # 공식 태그가 4개 전술에 걸쳐 SCENARIO_TACTIC_OVERRIDE로 Persistence/Defense
+  # Evasion 둘로 좁혔다(mitre_mapping.py 참고, "이미 확보한 접근을 들키지 않고
+  # 유지"라는 이 시나리오의 의미와 맞춘 것 - Initial Access/Privilege Escalation은
+  # 이 신호의 의미와 안 맞음). severity=4는 S56/S57과 같은 급 - "탈취 시도" 단계가
+  # 아니라 "이미 탈취돼 실제로 재사용되고 있다"는 더 확정적인 증거라 최상위로 잡는다.
+  - id: S95
+    name: "동일 신원의 광범위한 소스 IP 재사용 정황 (토큰 유출/재사용 의심)"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 300
+    threshold: 5
+    cooldown_seconds: 900
+    distinct_field: source_ip
+    match:
+      event_module: k8s_audit
+      audit_verb: [create, delete, deletecollection, patch, update]
+    severity: 4
+    mitre_technique_id: "T1078"

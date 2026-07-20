@@ -2,14 +2,23 @@
 # correlation-engine과 동일 - 그 파일의 `./shared` 줄은 Docker 빌드 컨텍스트(servers/)
 # 전제 상대경로라 여기(servers/normalizer/)에서 그대로 실행하면 존재하지 않는 경로를
 # 가리킨다. normalize_*()/get_severity()는 app.config(pydantic_settings)와
-# ids_shared만 있으면 되고 aiokafka/redis/geoip2 등은 import조차 안 되므로
-# (app/normalizer.py, app/severity.py의 import 확인) 테스트에는 불필요 - 무겁게
-# 다 끌어올 이유가 없다.
+# ids_shared만 있으면 되고 aiokafka는 import조차 안 되므로(app/normalizer.py,
+# app/severity.py의 import 확인) 테스트에는 불필요 - 무겁게 다 끌어올 이유가 없다.
+# geoip2/redis는 예외 - tests/test_enrichment.py가 app.enrichment를 import하는데
+# app/enrichment.py -> app/geoip.py가 모듈 최상단에서 `import geoip2.database`/
+# `import redis.asyncio`를 하고 있어서(app/geoip.py 확인), 이 두 패키지가 없으면
+# GeoIP 조회 자체를 테스트하지 않아도 테스트 수집 단계부터 ModuleNotFoundError로
+# 죽는다(2026-07-20, CI 실측 확인 후 추가 - 그 전까진 이 파일이 빠뜨리고 있었다).
+# GeoLite2-City.mmdb(53MB, MaxMind 라이선스상 git에 커밋 안 함)가 CI에 없어도 되는
+# 이유는 app/geoip.py의 Reader가 이제 첫 실제 조회 시점까지 지연 생성되기
+# 때문(app/geoip.py의 _get_reader() 참고) - 패키지 설치만으로 충분하다.
 #
 # 실행: pip install -r requirements-dev.txt && pytest
 pydantic==2.13.4
 pydantic-settings==2.14.2
 pyyaml==6.0.2
+geoip2==5.2.0
+redis==5.2.1
 -e ../shared
 
 pytest==8.3.4
