@@ -51,7 +51,8 @@
             "resource": {
               "properties": {
                 "type": { "type": "keyword" },
-                "name": { "type": "keyword" }
+                "name": { "type": "keyword" },
+                "subresource": { "type": "keyword" }
               }
             }
           }

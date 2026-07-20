@@ -229,6 +229,8 @@ def _format_detail(source: Dict[str, Any]) -> Optional[str]:
             parts.append(f"verb={source['kubernetes.audit.verb']}")
         if source.get("orchestrator.resource.type"):
             parts.append(f"resource={source['orchestrator.resource.type']}")
+        if source.get("orchestrator.resource.subresource"):
+            parts.append(f"subresource={source['orchestrator.resource.subresource']}")
         if source.get("user.name"):
             parts.append(f"user={source['user.name']}")
 
