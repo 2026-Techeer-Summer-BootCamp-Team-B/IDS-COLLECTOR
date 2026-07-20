@@ -567,7 +567,7 @@ function ReportScheduleEditor({ schedule, disabled, onChange }) {
   function update(index, patch) { onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row))); }
   return <div className={`space-y-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}>
     {rows.map((row, index) => <div key={index} className="flex flex-wrap items-center gap-1">
-      <span className="relative inline-flex h-6 w-[4.75rem] shrink-0">
+      <span className="relative inline-flex h-6 w-28 shrink-0">
         <input type="time" value={row.time} onChange={(e) => update(index, { time: e.target.value })} className="schedule-time-input absolute inset-0 h-6 w-full bg-dash-bg text-xs text-dash-fg rounded px-1 pr-6" />
         <svg aria-hidden="true" viewBox="0 0 20 20" className="pointer-events-none absolute right-1 top-1 h-4 w-4 text-dash-mint fill-none stroke-current" strokeWidth="1.8">
           <circle cx="10" cy="10" r="7.25" /><path d="M10 5.8v4.6l3 1.8" strokeLinecap="round" strokeLinejoin="round" />
