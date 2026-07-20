@@ -9,13 +9,13 @@
 
 | 파일 | 다루는 영역 | 시나리오 |
 | --- | --- | --- |
-| `rbac.yaml` | RBAC 변경/권한 상승/백도어 계정 | S3, S6, S7, S9, S11, S12, S13, S53, S58, S96 |
-| `workload.yaml` | Pod/워크로드 생명주기 및 컨테이너 이스케이프 | S1, S8, S14, S15, S16, S20, S21, S32, S34, S35, S40, S41, S42, S43, S52, S61, S64, S66, S67, S68, S69, S70, S72, S73, S74, S75, S80, S81, S86, S87, S94, S100 |
+| `rbac.yaml` | RBAC 변경/권한 상승/백도어 계정 | S3, S6, S7, S9, S11, S12, S13, S53, S58, S96, S106 |
+| `workload.yaml` | Pod/워크로드 생명주기 및 컨테이너 이스케이프 | S1, S8, S14, S15, S16, S20, S21, S32, S34, S35, S40, S41, S42, S43, S52, S61, S64, S66, S67, S68, S69, S70, S72, S73, S74, S75, S80, S81, S86, S87, S94, S100, S102, S107, S108, S109 |
 | `credentials.yaml` | 자격증명 접근/노출 | S2, S18, S38, S39, S45, S46, S47, S48, S49, S56, S89, S99 |
-| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55, S59, S60, S63, S65, S71, S77, S78, S83, S84, S85, S90, S97, S98 |
-| `discovery.yaml` | 정찰(reconnaissance) | S10, S31, S50, S62, S79, S91, S92, S93 |
+| `network.yaml` | WAF/WAS/외부 노출 경로 | S4, S5, S17, S19, S24, S26, S27, S28, S29, S30, S33, S51, S54, S55, S59, S60, S63, S65, S71, S77, S78, S83, S84, S85, S90, S97, S98, S101, S104 |
+| `discovery.yaml` | 정찰(reconnaissance) | S10, S31, S50, S62, S79, S91, S92, S93, S105 |
 | `resource_abuse.yaml` | 컨테이너 런타임 리소스 남용(크립토마이닝) | S22, S82 |
-| `defense_evasion.yaml` | 컨테이너 내 흔적 인멸 | S23, S36, S37, S44, S76, S88 |
+| `defense_evasion.yaml` | 컨테이너 내 흔적 인멸 | S23, S36, S37, S44, S76, S88, S103 |
 | `lateral_movement.yaml` | 탈취한 인증 자료를 이용한 측면 이동 | S25, S57, S95 |
 
 ## 엔진 동작 (sequence/threshold/cardinality 3타입)

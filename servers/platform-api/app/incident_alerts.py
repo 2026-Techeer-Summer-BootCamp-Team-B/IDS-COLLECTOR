@@ -139,7 +139,7 @@ async def poll_loop() -> None:
     # 조회도 같은 try/except 안으로 넣어서, 실패해도 기본 간격으로 다음
     # 주기에 재시도하도록 고쳤다.
     while True:
-        interval = _DEFAULT_INTERVAL_SECONDS
+        interval: float = _DEFAULT_INTERVAL_SECONDS
         try:
             await _dispatch_pending()
             await _check_dlq_depth_alerts()  # 자체적으로 예외를 삼키므로 이 try에 걸리지 않음

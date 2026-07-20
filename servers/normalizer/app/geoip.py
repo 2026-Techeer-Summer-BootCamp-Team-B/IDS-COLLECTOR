@@ -88,11 +88,11 @@ def _query(ip: str) -> GeoInfo:
     try:
         result = _get_reader().city(ip)
     except geoip2.errors.AddressNotFoundError:
-        return dict(_EMPTY)
+        return {**_EMPTY}
 
     lat, lon = result.location.latitude, result.location.longitude
     if lat is None or lon is None or not result.country.iso_code:
-        return dict(_EMPTY)
+        return {**_EMPTY}
 
     return {
         "country_iso_code": result.country.iso_code,
@@ -104,7 +104,7 @@ def _query(ip: str) -> GeoInfo:
 
 async def lookup(ip: str) -> GeoInfo:
     if not _is_routable_public(ip):
-        return dict(_EMPTY)
+        return {**_EMPTY}
 
     cache_key = f"{_CACHE_PREFIX}{ip}"
     try:

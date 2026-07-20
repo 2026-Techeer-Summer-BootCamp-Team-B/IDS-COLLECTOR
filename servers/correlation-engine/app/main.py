@@ -156,6 +156,7 @@ async def _scenario_reload_loop():
 
 
 async def _evaluate_and_upsert(event: NormalizedEvent) -> None:
+    assert _engine is not None  # _consume_loop이 컨슈머 루프 진입 전에 이미 초기화해둠
     fired = await _engine.evaluate(event)
     for f in fired:
         await incidents.upsert_incident(
@@ -267,9 +268,11 @@ async def _consume_loop():
 
 
 def _log_task_exception(task: "asyncio.Task") -> None:
-    if task.cancelled() or task.exception() is None:
+    if task.cancelled():
         return
     exc = task.exception()
+    if exc is None:
+        return
     import traceback
 
     traceback.print_exception(type(exc), exc, exc.__traceback__)

@@ -164,3 +164,32 @@ scenarios:
       orchestrator_resource_type: [volumesnapshots, persistentvolumeclaims]
     severity: 4
     mitre_technique_id: "T1490"
+
+  # S103 (cardinality, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오" M46
+  # 구현, S36/S41 재활용): S36(memfd_create 파일리스 실행)/S41(/dev/shm 실행)은
+  # 둘 다 "디스크에 흔적을 최소화하며 실행"하는 서로 다른 기법이다 - 한
+  # 공격자가 방어 회피를 위해 여러 파일리스 기법을 번갈아 시도하면(하나가
+  # 막히면 다른 걸 시도), 단발성보다 훨씬 정교한 회피 시도라는 신호가 된다.
+  # S99(M35)/S100(M42)/S102(M45)와 같은 계열의 네 번째 적용, 파일리스 실행에
+  # 특화 - window_seconds/threshold/cooldown_seconds도 S100/S102와 같은
+  # 스케일을 그대로 썼다.
+  #
+  # 두 event_action 전부 이미 다른 시나리오가 쓰고 있는 기존 값이라 새 필드/
+  # 매처/falco 룰 없이 코드 변경 없이 YAML만으로 추가했다. mitre_technique_id는
+  # 이 시나리오의 헤드라인(파일리스 실행)에 해당하는 S36의 태그(T1620)를
+  # 물려받는다 - S41(T1059)은 부차 재료.
+  - id: S103
+    name: "파일리스 실행 기법의 복합 사용 탐지 (탐지 회피 정교화 정황)"
+    type: cardinality
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 120
+    threshold: 2
+    cooldown_seconds: 600
+    distinct_field: event_action
+    match:
+      event_module: falco
+      event_action: ["Fileless execution via memfd_create", "Execution from /dev/shm"]
+    severity: 4
+    mitre_technique_id: "T1620"

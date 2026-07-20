@@ -22,3 +22,7 @@ google-genai==2.11.0
 pytest==8.3.4
 pytest-asyncio==0.24.0
 httpx==0.28.1
+# Windows에는 IANA 시간대 DB가 기본 내장돼 있지 않아 app.main의 zoneinfo.ZoneInfo("Asia/Seoul")이
+# import 시점에 ZoneInfoNotFoundError로 죽는다(리눅스 프로덕션 이미지는 시스템 tzdata가
+# 있어 문제없음, 실측 확인) - zoneinfo가 폴백으로 찾는 이 패키지를 깔면 OS 무관하게 동작한다.
+tzdata==2026.3

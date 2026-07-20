@@ -461,10 +461,12 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
 
 export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType: chartTypeProp }) {
   // module 없이 호출되면(Overview) 5선 breakdown으로 위임 - 아래 기존 로직은
-  // module이 특정된 상세 뷰(WAS/Falco/K8sAudit) 전용으로 계속 쓰인다.
-  if (!module) {
-    return <LogVolumeBreakdownBody rangeKey={rangeKey} kpiFilter={kpiFilter} />;
-  }
+  // module이 특정된 상세 뷰(WAS/Falco/K8sAudit) 전용으로 계속 쓰인다. 이 분기를
+  // 훅 호출들보다 먼저 두면(예전 버전) module 값에 따라 이 컴포넌트가 매 렌더마다
+  // 다른 개수의 훅을 호출하게 돼 React Hooks 규칙 위반이다(react-hooks/rules-of-hooks,
+  // 2026-07-20 실측 확인) - 같은 컴포넌트 인스턴스가 module을 바꿔가며 리렌더되면
+  // "Rendered fewer/more hooks than expected" 크래시로 이어질 수 있어 훅 호출을
+  // 전부 마친 뒤로 옮긴다.
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   // 2026-07-15: 형광 민트/critical 빨강이 "에러처럼 보인다"는 피드백 - Overview/
@@ -499,6 +501,10 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
   // 평소(중앙값) 대비 급증 구간 탐지 — 있으면 배지 + 차트 위 마커로 표시.
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
   const spikePoint = spike ? data[spike.index] : null;
+
+  if (!module) {
+    return <LogVolumeBreakdownBody rangeKey={rangeKey} kpiFilter={kpiFilter} />;
+  }
 
   return (
     <Card

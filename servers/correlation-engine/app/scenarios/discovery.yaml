@@ -323,3 +323,32 @@ scenarios:
       requires_recent_fire: S92
     severity: 4
     mitre_technique_id: "T1552"
+
+  # S105 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오"
+  # M50 구현, S10 정밀화): `S10`(get/list/watch 30회/60초)은 "얼마나 많이
+  # 조회했는지"만 본다 - 정상적인 컨트롤러/모니터링 도구는 보통 자기 담당
+  # 리소스 타입 한두 개만 반복 조회하는 반면, 공격자의 정찰은 pods/secrets/
+  # services/configmaps/roles 등 서로 다른 리소스 타입을 폭넓게 훑는 경향이
+  # 있다 - distinct 리소스 타입 개수 자체가 "이건 컨트롤러가 아니라 사람이
+  # 둘러보고 있다"는 신호가 된다. S49(M49, WAF 계층의 같은 발상)에 이어
+  # "신호 다양성" 발상을 정찰 탐지에 적용한 것.
+  #
+  # match는 S10과 완전히 동일 - 새 필드/매처 없이 distinct_field
+  # (orchestrator_resource_type)만 추가. severity=3은 S10/S31(단발 burst,
+  # 2)보다 위 - S91이 같은 이유(다양성/지속성 확인이 더해짐)로 3을 쓴 것과
+  # 동일한 논리. mitre_technique_id는 S10의 태그를 물려받는다.
+  - id: S105
+    name: "정찰 리소스 타입의 다양성 탐지 (컨트롤러 아닌 사람의 둘러보기 정황)"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 5
+    cooldown_seconds: 300
+    distinct_field: orchestrator_resource_type
+    match:
+      event_module: k8s_audit
+      audit_verb: [get, list, watch]
+    severity: 3
+    mitre_technique_id: "T1613"

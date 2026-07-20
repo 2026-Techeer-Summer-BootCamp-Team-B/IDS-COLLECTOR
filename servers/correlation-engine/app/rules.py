@@ -272,8 +272,11 @@ class ScenarioEngine:
         platform-api의 allow_list_api.py 책임."""
         parsed = []
         for entry in entries:
+            ip_or_cidr = entry.get("ip_or_cidr")
+            if not ip_or_cidr:
+                continue
             try:
-                network = ipaddress.ip_network(entry["ip_or_cidr"], strict=False)
+                network = ipaddress.ip_network(ip_or_cidr, strict=False)
             except ValueError:
                 continue
             parsed.append((network, entry.get("target_name")))

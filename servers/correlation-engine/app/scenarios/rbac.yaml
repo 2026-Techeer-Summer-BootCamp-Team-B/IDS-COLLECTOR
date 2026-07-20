@@ -332,3 +332,32 @@ scenarios:
       event_action: "get nodes/proxy"
     severity: 4
     mitre_technique_id: "T1068"
+
+  # S106 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오"
+  # M62 구현): `S3`의 stage1 verb 범위에 rolebinding/clusterrolebinding delete가
+  # 이미 포함돼 있지만, 그건 "그다음 자기가 exec하는지"만 본다 - 이건 반대로
+  # 짧은 시간 안에 서로 다른 이름의 바인딩이 여러 개 삭제되면, 자기 권한 상승이
+  # 아니라 다른 여러 사용자/서비스어카운트의 접근 권한을 한꺼번에 빼앗는(계정
+  # 잠금) 시도라는 다른 위협을 잡는다 - S3와 verb/리소스 타입은 겹치지만 신호의
+  # 의미가 다르다.
+  #
+  # match는 k3d-audit-policy.yaml이 roles/clusterroles/rolebindings/
+  # clusterrolebindings를 이미 RequestResponse 레벨로 감사하고 있어(README
+  # "request body 파싱 현황" 참고) delete verb도 그대로 잡힌다 - 새 필드/매처
+  # 없이 distinct_field(orchestrator_resource_name)만 추가.
+  - id: S106
+    name: "대량 RBAC 바인딩 삭제를 통한 접근 차단 정황"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 300
+    threshold: 3
+    cooldown_seconds: 600
+    distinct_field: orchestrator_resource_name
+    match:
+      event_module: k8s_audit
+      audit_verb: delete
+      orchestrator_resource_type: [rolebindings, clusterrolebindings]
+    severity: 3
+    mitre_technique_id: "T1531"

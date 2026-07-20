@@ -44,6 +44,12 @@ scenarios:
   # 추측이 아니라 이 오픈소스 앱의 공개된 실제 구조) - "비정상 확장자/더블
   # 익스텐션"까지는 못 본다(_MATCHERS에 접미사/정규식 매처가 없음, url_path_prefix는
   # 앞부분만 검사) - 업로드 엔드포인트에 대한 성공 응답 자체를 stage1으로 근사했다.
+  # http_response_status_code=[200, 201, 204](2026-07-20 수정, 실측 확인) - 원래
+  # [200, 201]만 뒀는데, 실제 k3d 클러스터(techeer-ids)에 배포된 Juice Shop에 더미
+  # PDF를 실제로 업로드해보니 성공 응답이 200/201이 아니라 204(No Content)였다
+  # (Techeer-12th-b/tests/scenarios.py의 _run_s82/was_actions.send_file_upload_request가
+  # 이 실측으로 이 사실을 먼저 발견함) - 204를 빠뜨리면 실제로 성공한 업로드가 이
+  # 시나리오의 stage1과 전혀 매칭되지 않는 채로 방치된다.
   #
   # join_on=user_or_sa: stage1(WAF/WAS, enrichment.py가 대상 pod에 정적으로
   # 매핑해둔 actor_identity)과 stage2(Falco, 같은 pod의 actor_identity)까지는
@@ -69,7 +75,7 @@ scenarios:
       event_module: was
       url_path_prefix: "/file-upload"
       http_request_method: POST
-      http_response_status_code: [200, 201]
+      http_response_status_code: [200, 201, 204]
     stage2:
       event_module: falco
       event_action:
