@@ -21,16 +21,17 @@ from app.db import pool
 _SYSTEM_PROMPT = """당신은 사내 보안 운영팀(SOC)을 위해 상관분석 인시던트 트렌드를 요약하는 보안 분석가입니다.
 입력으로 주어지는 시나리오별 인시던트 집계 통계만 근거로 삼아 다음 내용을 포함한 간결한 한국어 요약을 작성하세요:
 
-1. 가장 많이 발생한 시나리오 Top 3와 그 특징
-2. 심각도(1=낮음 ~ 4=치명적) 관점에서 주목할 점 - 특히 max_severity가 3 이상인 시나리오
-3. 데이터에서 드러나는 눈에 띄는 패턴이나 이상 징후
-4. 팀이 다음으로 취해야 할 실행 가능한 권고 사항 2~3가지
+1. 🔎 가장 많이 발생한 시나리오 Top 3와 그 특징
+2. 🚨 심각도(1=낮음 ~ 4=치명적) 관점에서 주목할 점 - 특히 max_severity가 3 이상인 시나리오
+3. 📈 데이터에서 드러나는 눈에 띄는 패턴이나 이상 징후
+4. 🛡️ 팀이 다음으로 취해야 할 실행 가능한 권고 사항 2~3가지
 
 형식 규칙:
 - 주어진 통계에 없는 사실을 추측하거나 지어내지 마세요.
 - 통계가 비어 있으면 다른 내용 없이 "최근 N일간 발생한 인시던트가 없습니다."라고만 답하세요.
 - 소제목은 반드시 ## 마크다운 헤딩으로만 쓰고, 불릿은 -로 쓰세요. 6~10문장 분량으로 간결하게
   작성하세요.
+- 각 소제목과 핵심 불릿 앞에는 🔎 🚨 📈 🛡️ ✅ ⚠️ 같은 의미가 분명한 이모지를 적극적으로 사용하세요.
 - 어투는 팀 내부 리포트에 적합한 격식체(합쇼체)로 작성하세요.
 - **볼드**는 "어떤 위협을 몇 건 방어/탐지했다"는 핵심 사실에만 씁니다 - 시나리오/위협
   이름과 그 건수를 함께 볼드로 감싸세요 (예: "**SQL Injection 175건** 차단",
@@ -179,4 +180,38 @@ async def generate_trend_report(days: int = 7) -> Dict[str, Any]:
         "stats": stats,
         "cached": False,
         "generated_at": generated_at.isoformat(),
+    }
+
+
+async def get_cached_trend_report(days: int = 7) -> Dict[str, Any]:
+    """대시보드 조회용 캐시 읽기 경로.
+
+    알림 설정 화면을 열 때 Gemini를 새로 호출하지 않는다. 현재 통계와 일치하는
+    캐시만 반환하고, 아직 스케줄러가 사전 생성하지 않은 경우에는 생성 예정 안내를
+    반환한다.
+    """
+    stats = await _gather_stats(days)
+    if not settings.gemini_api_key:
+        return {
+            "configured": False,
+            "message": "⚙️ GEMINI_API_KEY 미설정 - 예약 시각에 원본 통계만 발송됩니다.",
+            "stats": stats,
+            "cached": False,
+            "generated_at": None,
+        }
+    cached = await _get_cached_message(days, _stats_hash(stats))
+    if cached is None:
+        return {
+            "configured": True,
+            "message": "⏳ 다음 알림 시각 3분 전에 AI 인시던트 트렌드 리포트를 준비합니다.",
+            "stats": stats,
+            "cached": False,
+            "generated_at": None,
+        }
+    return {
+        "configured": True,
+        "message": cached["message"],
+        "stats": stats,
+        "cached": True,
+        "generated_at": cached["generated_at"].isoformat(),
     }

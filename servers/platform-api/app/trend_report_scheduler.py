@@ -1,7 +1,7 @@
 """Webhook 채널별 AI 트렌드 리포트 일일 스케줄러(KST)."""
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.ai_report import generate_trend_report
@@ -10,6 +10,53 @@ from app.notifications import _post_webhook
 
 _KST = ZoneInfo("Asia/Seoul")
 _POLL_SECONDS = 30
+_PREPARE_SECONDS = 3 * 60
+_prepared_reports = {}
+_preparing_slots = set()
+
+
+def _schedule_items(row):
+    value = row["trend_report_schedule"]
+    return json.loads(value) if isinstance(value, str) else (value or [])
+
+
+def _slot_candidates(rows, now):
+    """현재 시각 기준 3분 이내에 생성해야 할 예약 슬롯을 중복 없이 반환한다."""
+    candidates = {}
+    for row in rows:
+        sent_slots = row["trend_report_sent_slots"]
+        sent_slots = json.loads(sent_slots) if isinstance(sent_slots, str) else (sent_slots or {})
+        for item in _schedule_items(row):
+            try:
+                hour, minute = (int(part) for part in item.get("time", "").split(":", 1))
+            except (AttributeError, ValueError):
+                continue
+            for day_offset in (0, 1):
+                target_date = now.date() + timedelta(days=day_offset)
+                target = datetime(
+                    target_date.year, target_date.month, target_date.day,
+                    hour, minute, tzinfo=_KST,
+                )
+                seconds_until = (target - now).total_seconds()
+                if target.weekday() in (item.get("days") or []) and 0 < seconds_until <= _PREPARE_SECONDS:
+                    key = f"{target_date}:{hour:02d}:{minute:02d}"
+                    if key in sent_slots:
+                        continue
+                    candidates[key] = (target_date, f"{hour:02d}:{minute:02d}")
+    return candidates
+
+
+async def _prepare_reports(rows, now):
+    for slot_key, (target_date, time_value) in _slot_candidates(rows, now).items():
+        if slot_key in _prepared_reports or slot_key in _preparing_slots:
+            continue
+        _preparing_slots.add(slot_key)
+        try:
+            # 채널 수와 무관하게 같은 예약 슬롯에서는 Gemini를 한 번만 호출한다.
+            _prepared_reports[slot_key] = await generate_trend_report(7)
+            print(f"[platform-api] AI 리포트 사전 생성 완료: {target_date} {time_value}")
+        finally:
+            _preparing_slots.discard(slot_key)
 
 
 async def _run_due_reports() -> None:
@@ -24,10 +71,12 @@ async def _run_due_reports() -> None:
             WHERE enabled AND receive_trend_report
             """,
         )
+
+    await _prepare_reports(rows, now)
             
     due_rows = [
         row for row in rows
-        if any(item.get("time") == time_value and weekday in item.get("days", []) for item in (json.loads(row["trend_report_schedule"]) if isinstance(row["trend_report_schedule"], str) else row["trend_report_schedule"]))
+        if any(item.get("time") == time_value and weekday in item.get("days", []) for item in _schedule_items(row))
         and (json.loads(row["trend_report_sent_slots"]) if isinstance(row["trend_report_sent_slots"], str) else row["trend_report_sent_slots"]).get(f"{today}:{time_value}") is None
     ]
     if not due_rows:
@@ -59,9 +108,16 @@ async def _run_due_reports() -> None:
     if not claimed_rows:
         return
 
+    slot_key = f"{today}:{time_value}"
     try:
-        report = await generate_trend_report(7)
-        text = f"📊 AI 트렌드 리포트 (최근 7일)\n{report['message']}"
+        # 3분 전에 준비한 결과를 사용한다. API가 그 사이 재시작된 경우에만 안전하게
+        # 즉시 생성해 발송을 놓치지 않도록 fallback한다.
+        report = _prepared_reports.pop(slot_key, None) or await generate_trend_report(7)
+        text = (
+            f"📅 {today}  ⏰ {time_value}\n"
+            f"📊 인시던트 트렌드 요약 리포트 (최근 7일)\n\n"
+            f"{report['message']}"
+        )
     except Exception:
         # 리포트 생성 실패 시에는 선점을 되돌려 다음 폴링에서 재시도할 수 있게 한다.
         async with pool().acquire() as conn:

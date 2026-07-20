@@ -723,9 +723,9 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggl
   );
 }
 
-// GET /reports/trend — 최근 N일 scenario별 인시던트 집계 + (GEMINI_API_KEY 설정 시)
-// Gemini AI 요약. message에 미설정 안내문 또는 실제 요약문이 온다 — scenarios
-// 목록과 조인해서 scenario_id를 이름으로 보여준다.
+// GET /reports/trend — 최근 N일 scenario별 인시던트 집계와 마지막으로 준비된 요약을
+// 읽는다. 알림 설정 화면을 열 때 Gemini를 새로 호출하지 않고, 예약 시각 3분 전에
+// 스케줄러가 준비한 캐시만 보여준다.
 function TrendReportPanel({ scenarios }) {
   const { report, status, error } = useTrendReport({ days: 7 });
   const scenarioNameById = useMemo(() => {
@@ -737,7 +737,7 @@ function TrendReportPanel({ scenarios }) {
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
       <h3 className="text-dash-fg text-sm font-semibold mb-1">AI 트렌드 리포트</h3>
-      <p className="text-dash-muted text-xs mb-3">GET /reports/trend · 최근 7일 인시던트를 룰별로 집계</p>
+      <p className="text-dash-muted text-xs mb-3">📅 예약 시각 3분 전 생성 · 최근 7일 인시던트 집계</p>
       {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
       {status === "ready" && report && (

@@ -92,7 +92,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import clickhouse_client, db, opensearch_client, pipeline_health_api
-from app.ai_report import generate_trend_report
+from app.ai_report import generate_trend_report, get_cached_trend_report
 from app.alert_configs_api import router as alert_configs_router
 from app.analytics_api import router as analytics_router
 from app.allow_list_api import router as allow_list_router
@@ -264,7 +264,9 @@ def health_check():
 
 @app.get("/reports/trend")
 async def trend_report(days: int = 7):
-    return await generate_trend_report(days)
+    # 알림 설정 화면을 열 때마다 Gemini를 호출하지 않는다. 스케줄러가 사전 생성한
+    # 최신 캐시만 읽고, 다음 예약 시각에 생성될 예정이면 안내만 반환한다.
+    return await get_cached_trend_report(days)
 
 
 _KST = ZoneInfo("Asia/Seoul")
