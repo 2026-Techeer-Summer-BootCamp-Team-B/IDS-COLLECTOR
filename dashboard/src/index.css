@@ -69,6 +69,24 @@ body {
   font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
 }
 
+/* 알림 채널의 예약 시간 입력. 브라우저 기본 time picker 아이콘이 라이트
+ * 색상으로 고정되면 다크 배경에서 검은 시계가 되어 보이지 않는다. 테마에 맞는
+ * native 컨트롤 팔레트를 명시하고 Chromium의 picker 아이콘 대비도 보정한다. */
+input[type="time"] {
+  color-scheme: dark;
+}
+input[type="time"]::-webkit-calendar-picker-indicator {
+  opacity: 1;
+  filter: invert(1) brightness(1.35);
+  cursor: pointer;
+}
+:root.light input[type="time"] {
+  color-scheme: light;
+}
+:root.light input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: none;
+}
+
 :root.light body {
   background-image: none;
 }
@@ -196,4 +214,3 @@ body {
   transform-box: fill-box;
   transform-origin: center;
 }
-
