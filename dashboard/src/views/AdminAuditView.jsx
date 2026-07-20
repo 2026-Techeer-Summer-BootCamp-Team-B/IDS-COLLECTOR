@@ -567,7 +567,7 @@ function ReportScheduleEditor({ schedule, disabled, onChange }) {
   function update(index, patch) { onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row))); }
   return <div className={`space-y-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}>
     {rows.map((row, index) => <div key={index} className="flex flex-wrap items-center gap-1">
-      <span className="relative inline-flex h-6 w-[4.75rem] shrink-0">
+      <span className="relative inline-flex h-6 w-[6.25rem] shrink-0">
         <input type="time" value={row.time} onChange={(e) => update(index, { time: e.target.value })} className="schedule-time-input absolute inset-0 h-6 w-full bg-dash-bg text-xs text-dash-fg rounded px-1 pr-6" />
         <svg aria-label="시간 선택" role="button" tabIndex="0" onClick={(e) => e.currentTarget.previousElementSibling?.showPicker?.()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.currentTarget.previousElementSibling?.showPicker?.(); }} viewBox="0 0 20 20" className="absolute right-1 top-1 h-4 w-4 cursor-pointer text-dash-mint fill-none stroke-current" strokeWidth="1.8">
           <circle cx="10" cy="10" r="7.25" /><path d="M10 5.8v4.6l3 1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -586,12 +586,12 @@ function AlertConfigRow({ config, onSave, onToggleActive, onDelete }) {
   const patch = (value) => setDraft((current) => ({ ...current, ...value }));
   const changed = JSON.stringify(draft) !== JSON.stringify(config);
   return <tr className="border-t border-dash-surfaceAlt">
-    <td className="py-2.5 pr-3 text-dash-fg text-xs align-top">{CHANNEL_LABEL[draft.channel_type] ?? draft.channel_type}</td>
-    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top">Webhook URL 설정됨</td>
-    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label><input type="checkbox" checked={Boolean(draft.receive_incidents)} onChange={(e) => patch({ receive_incidents: e.target.checked })} /> 수신</label><select disabled={!draft.receive_incidents} value={draft.min_severity} onChange={(e) => patch({ min_severity: Number(e.target.value) })} className="ml-2 bg-dash-bg text-xs text-dash-fg rounded px-1 py-0.5 disabled:opacity-40">{[4,3,2,1].map((n) => <option key={n} value={n}>severity≥{n}</option>)}</select></td>
-    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label className="inline-block"><input type="checkbox" checked={Boolean(draft.receive_trend_report)} onChange={(e) => patch({ receive_trend_report: e.target.checked })} /> 수신</label><span className="inline-block align-top ml-2"><ReportScheduleEditor schedule={draft.trend_report_schedule} disabled={!draft.receive_trend_report} onChange={(schedule) => patch({ trend_report_schedule: schedule, trend_report_time: schedule[0]?.time ?? null })} /></span></td>
-    <td className="py-2.5 pr-3 align-top"><button onClick={() => onToggleActive(config)} className={`w-16 text-[10px] px-2 py-1 rounded-md ${config.enabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"}`}>{config.enabled ? "Active" : "Inactive"}</button></td>
-    <td className="py-2.5 align-top"><div className="flex gap-1"><button disabled={!changed} onClick={() => onSave(config, draft)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-mint/15 text-dash-mint disabled:opacity-35 disabled:cursor-not-allowed">저장</button><button onClick={() => onDelete(config)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-critical">삭제</button></div></td>
+    <td className="py-2.5 pr-3 text-dash-fg text-xs align-middle">{CHANNEL_LABEL[draft.channel_type] ?? draft.channel_type}</td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-middle">Webhook URL 설정됨</td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-middle"><label><input type="checkbox" checked={Boolean(draft.receive_incidents)} onChange={(e) => patch({ receive_incidents: e.target.checked })} /> 수신</label><select disabled={!draft.receive_incidents} value={draft.min_severity} onChange={(e) => patch({ min_severity: Number(e.target.value) })} className="ml-2 bg-dash-bg text-xs text-dash-fg rounded px-1 py-0.5 disabled:opacity-40">{[4,3,2,1].map((n) => <option key={n} value={n}>severity≥{n}</option>)}</select></td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-middle"><label className="inline-block"><input type="checkbox" checked={Boolean(draft.receive_trend_report)} onChange={(e) => patch({ receive_trend_report: e.target.checked })} /> 수신</label><span className="inline-block align-middle ml-2"><ReportScheduleEditor schedule={draft.trend_report_schedule} disabled={!draft.receive_trend_report} onChange={(schedule) => patch({ trend_report_schedule: schedule, trend_report_time: schedule[0]?.time ?? null })} /></span></td>
+    <td className="py-2.5 pr-3 align-middle"><button onClick={() => onToggleActive(config)} className={`w-16 text-[10px] px-2 py-1 rounded-md ${config.enabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"}`}>{config.enabled ? "Active" : "Inactive"}</button></td>
+    <td className="py-2.5 align-middle"><div className="flex gap-1"><button disabled={!changed} onClick={() => onSave(config, draft)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-mint/15 text-dash-mint disabled:opacity-35 disabled:cursor-not-allowed">저장</button><button onClick={() => onDelete(config)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-critical">삭제</button></div></td>
   </tr>;
 }
 
@@ -629,7 +629,7 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggl
             채널별로 인시던트 즉시 알림과 AI 리포트 일일 발송을 따로 설정합니다. 리포트 시각은 한국 시간(KST)입니다.
           </p>
         </div>
-        <form onSubmit={handleSubmit} className="flex flex-wrap items-start gap-1.5">
+        <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-1.5">
           <select
             value={channelType}
             onChange={(e) => setChannelType(e.target.value)}
@@ -653,7 +653,7 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggl
           <label className="flex items-center gap-1 text-xs text-dash-muted px-1">
             <input type="checkbox" checked={receiveTrendReport} onChange={(e) => setReceiveTrendReport(e.target.checked)} /> AI 리포트
           </label>
-          <span className="self-start"><ReportScheduleEditor schedule={trendReportSchedule} disabled={!receiveTrendReport} onChange={setTrendReportSchedule} /></span>
+          <span><ReportScheduleEditor schedule={trendReportSchedule} disabled={!receiveTrendReport} onChange={setTrendReportSchedule} /></span>
           <input
             value={webhookUrl}
             onChange={(e) => setWebhookUrl(e.target.value)}
