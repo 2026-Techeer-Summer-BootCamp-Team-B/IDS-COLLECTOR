@@ -77,16 +77,18 @@ input[type="time"] {
 }
 input[type="time"]::-webkit-calendar-picker-indicator {
   /* ReportScheduleEditor가 테마 색상의 SVG 시계를 직접 그리므로 브라우저의
-     검은 기본 아이콘은 숨긴다. 투명 indicator 영역은 input 클릭 동작을 유지한다. */
-  opacity: 0;
-  width: 1.5rem;
-  cursor: pointer;
+     기본 버튼과 투명 클릭 영역을 모두 제거한다. */
+  display: none;
+}
+.schedule-time-input {
+  appearance: none;
+  -webkit-appearance: none;
 }
 :root.light input[type="time"] {
   color-scheme: light;
 }
 :root.light input[type="time"]::-webkit-calendar-picker-indicator {
-  opacity: 0;
+  display: none;
 }
 
 :root.light body {
