@@ -1980,6 +1980,19 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp, onChartTypeChan
 // (DashboardContent)가 한 번만 fetch해 두 위젯에 같이 내려준다.
 const LAYER_ORDER = ["was", "waf", "falco", "k8s_audit"];
 
+// Log Levels의 자동 스포트라이트를 가로 막대에 맞춘 모양이다. 수치나 막대의
+// 방향은 건드리지 않고, 현재 선택된 막대 끝만 가볍게 늘어나며 강조가 이동한다.
+function HorizontalLayerSpotlightBar({ x, y, width, height, fill, index, activeIndex, growth }) {
+  const active = index === activeIndex;
+  const expand = active ? 5 * easeOutQuad(growth) : 0;
+  return (
+    <g>
+      {active && <rect x={x} y={y - 3} width={Math.max(0, width + 7)} height={height + 6} rx={7} fill={fill} opacity={0.16} />}
+      <rect x={x} y={y - expand / 2} width={Math.max(0, width + expand)} height={height + expand} rx={6} fill={fill} />
+    </g>
+  );
+}
+
 function LayerAttackStatsCompact({ scenarios, status, error, controlled = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
@@ -1993,32 +2006,41 @@ function LayerAttackStatsCompact({ scenarios, status, error, controlled = false 
     return LAYER_ORDER.map((m) => ({ module: m, ...getModuleMeta(m), count: byModule[m] || 0 }));
   }, [scenarios]);
   const totalHits = layerTotals.reduce((sum, l) => sum + l.count, 0);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(layerTotals.length);
+  const targetFills = useMemo(
+    () => layerTotals.map((layer, index) => (!highlighting || index === activeIndex ? layer.color : C.donutDim)),
+    [layerTotals, highlighting, activeIndex, C.donutDim]
+  );
+  const animatedFills = useAnimatedFills(targetFills);
+  const growth = useGrowPulse(activeIndex);
 
   return (
     <Card
       title="계층별 공격 통계"
+      icon={Layers}
       subtitle={status === "ready" ? `전체 기간 · 총 ${totalHits}건` : "불러오는 중..."}
-      className={controlled ? "h-full" : ""}
+      className={controlled ? "h-full flex flex-col" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
       {status === "ready" && (
-        <ResponsiveContainer width="100%" height={controlled ? "85%" : 150}>
-          <BarChart data={layerTotals} layout="vertical" margin={{ left: 4, right: 24, top: 4, bottom: 4 }}>
+        <div className={controlled ? "flex-1 min-h-0" : ""}>
+        <ResponsiveContainer width="100%" height={controlled ? "100%" : 150}>
+          <BarChart data={layerTotals} layout="vertical" margin={{ left: 4, right: 24, top: 4, bottom: 4 }} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
             <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
             <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
             <YAxis type="category" dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} width={80} />
             <Tooltip
-              contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
+              content={<RechartsHoverPanel theme={theme} formatter={(value) => [`${value}건`, "적중 건수"]} />}
               cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-              formatter={(value) => [`${value}건`, "적중 건수"]}
             />
-            <Bar dataKey="count" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
-              {layerTotals.map((l) => (
-                <Cell key={l.module} fill={l.color} />
+            <Bar dataKey="count" isAnimationActive={false} onMouseEnter={(_, index) => focusIndex(index)} onMouseLeave={blurIndex} shape={(props) => <HorizontalLayerSpotlightBar {...props} activeIndex={activeIndex} growth={growth} />}>
+              {layerTotals.map((l, index) => (
+                <Cell key={l.module} fill={animatedFills[index]} />
               ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        </div>
       )}
     </Card>
   );
