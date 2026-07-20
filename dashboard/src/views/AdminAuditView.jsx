@@ -562,57 +562,17 @@ const CHANNEL_LABEL = { slack: "Slack", discord: "Discord" };
 const REPORT_DAYS = ["월", "화", "수", "목", "금", "토", "일"];
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
 
-function TimeWheel({ label, value, values, format, onChange }) {
-  const move = (direction) => {
-    const index = values.indexOf(value);
-    onChange(values[(index + direction + values.length) % values.length]);
-  };
-  return <div className="min-w-12 text-center">
-    <p className="mb-1 text-[10px] text-dash-faint">{label}</p>
-    <div
-      onWheel={(event) => {
-        event.preventDefault();
-        move(event.deltaY > 0 ? 1 : -1);
-      }}
-      className="rounded bg-dash-bg px-1 py-1 text-xs text-dash-fg select-none"
-      title="휠 한 칸당 1단계씩 변경"
-    >
-      <button type="button" onClick={() => move(-1)} className="block w-full text-dash-muted hover:text-dash-mint">⌃</button>
-      <div className="py-0.5 font-medium">{format(value)}</div>
-      <button type="button" onClick={() => move(1)} className="block w-full text-dash-muted hover:text-dash-mint">⌄</button>
-    </div>
-  </div>;
-}
-
-function ReportTimePicker({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const [hourText, minuteText] = (value || "09:00").split(":");
-  const hour = Number(hourText) || 0;
-  const minute = Number(minuteText) || 0;
-  const update = (nextHour, nextMinute) => onChange(`${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`);
-  const displayHour = hour % 12 || 12;
-  const display = `${hour < 12 ? "오전" : "오후"} ${displayHour}:${String(minute).padStart(2, "0")}`;
-
-  return <span className="relative inline-flex h-8 w-[5.5rem] shrink-0">
-    <button type="button" onClick={() => setOpen((current) => !current)} className="flex h-8 w-full items-center justify-between rounded bg-dash-bg px-1 text-[10px] text-dash-fg">
-      <span>{display}</span>
-      <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-dash-mint fill-none stroke-current" strokeWidth="1.8">
-        <circle cx="10" cy="10" r="7.25" /><path d="M10 5.8v4.6l3 1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </button>
-    {open && <div className="absolute left-0 top-full z-30 mt-1 flex gap-1 rounded-lg border border-dash-surfaceAlt bg-dash-surface p-2 shadow-lg">
-      <TimeWheel label="시간" value={hour} values={Array.from({ length: 24 }, (_, index) => index)} format={(item) => `${item < 12 ? "오전" : "오후"} ${item % 12 || 12}`} onChange={(next) => update(next, minute)} />
-      <TimeWheel label="분" value={minute} values={Array.from({ length: 60 }, (_, index) => index)} format={(item) => String(item).padStart(2, "0")} onChange={(next) => update(hour, next)} />
-    </div>}
-  </span>;
-}
-
 function ReportScheduleEditor({ schedule, disabled, onChange }) {
   const rows = schedule?.length ? schedule : [{ days: EVERY_DAY, time: "09:00" }];
   function update(index, patch) { onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row))); }
   return <div className={`space-y-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}>
     {rows.map((row, index) => <div key={index} className="flex flex-wrap items-center gap-1">
-      <ReportTimePicker value={row.time} onChange={(time) => update(index, { time })} />
+      <span className="relative inline-flex h-8 w-[5.5rem] shrink-0">
+        <input type="time" value={row.time} onChange={(e) => update(index, { time: e.target.value })} onWheel={(e) => e.currentTarget.blur()} className="schedule-time-input absolute inset-0 h-8 w-full bg-dash-bg text-xs text-dash-fg rounded px-1 pr-6" />
+        <svg aria-label="시간 선택" role="button" tabIndex="0" onClick={(e) => e.currentTarget.previousElementSibling?.showPicker?.()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.currentTarget.previousElementSibling?.showPicker?.(); }} viewBox="0 0 20 20" className="absolute right-1 top-2 h-4 w-4 cursor-pointer text-dash-mint fill-none stroke-current" strokeWidth="1.8">
+          <circle cx="10" cy="10" r="7.25" /><path d="M10 5.8v4.6l3 1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
       {REPORT_DAYS.map((label, day) => <label key={day} className="text-[10px] text-dash-muted"><input type="checkbox" checked={row.days.includes(day)} onChange={(e) => update(index, { days: e.target.checked ? [...row.days, day].sort() : row.days.filter((d) => d !== day) })} />{label}</label>)}
       {rows.length > 1 ? <button type="button" onClick={() => onChange(rows.filter((_, i) => i !== index))} className="w-8 text-[10px] text-dash-critical">삭제</button> : <span className="w-8" />}
     </div>)}
