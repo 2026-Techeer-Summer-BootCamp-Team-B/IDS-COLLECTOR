@@ -11,13 +11,22 @@ services:
     command:
       - "--configFile=/etc/traefik/traefik.yml"
     ports:
-      - "4317:4317" # otlp grpc ingress
+      - "4317:4317" # otlp grpc ingress (mTLS 종단, 2026-07-17)
+      - "4318:4318" # otlp http ingress (mTLS 종단, 2026-07-17 - 이전엔 otel-collector가 직접 노출했음)
       - "80:80"     # http - 프론트엔드(정적 파일) + /api(platform-api) 단일 진입점 + ACME HTTP-01 챌린지
       - "443:443"   # https - Vercel(HTTPS) 프론트가 mixed-content 없이 백엔드를 호출하기 위한 TLS 진입점(2026-07-16)
       - "127.0.0.1:8080:8080" # traefik dashboard (insecure, local dev only) - 루프백 전용, 원격 접근은 SSH 터널
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      # 외부 OTLP mTLS 동적 설정(clientAuth) - traefik.yml의 file 프로바이더가 읽는
+      # 디렉터리. watch:true라 파일을 고치면 컨테이너 재시작 없이 바로 반영된다.
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      # 클라이언트 인증서 검증용 CA 인증서(공개키만) - scripts/generate-ca.sh로
+      # 로컬에서 생성. 개인키(ca.key)는 여기 안 실어도 된다(Traefik은 클라이언트가
+      # 제시한 인증서가 이 CA로 서명됐는지만 확인하지, CA 노릇을 직접 하지 않음) -
+      # 그래서 디렉터리 전체가 아니라 이 파일 하나만 마운트한다.
+      - ./traefik/certs/ca.crt:/etc/traefik/certs/ca.crt:ro
       # Let's Encrypt 인증서 저장소 - 컨테이너 재생성/재시작해도 인증서를 다시 발급받지
       # 않도록 호스트에 영속화한다. acme.json은 배포 절차에서 미리 touch + chmod 600
       # 해둬야 함(권한이 더 열려있으면 Traefik이 기동을 거부한다).

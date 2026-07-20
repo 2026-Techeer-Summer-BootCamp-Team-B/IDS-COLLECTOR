@@ -1,0 +1,22 @@
+# 외부 OTLP 수신(4317/4318) mTLS 옵션 - docker 프로바이더(라벨)로는 tls.options를
+# 정의할 수 없어서(라우터/서비스 라벨만 지원, clientAuth 같은 TLS 세부 옵션은
+# 정적/동적 설정 파일에서만 정의 가능) file 프로바이더로 따로 둔다.
+#
+# 여기서 하는 일은 딱 하나 - "CA(certs/ca.crt)로 서명된 클라이언트 인증서를
+# 제시하지 않으면 그 자리에서 연결을 거부한다"는 것뿐이다. 클라이언트 인증서의
+# CN/SAN을 읽어서 뒤로 넘기는 기능(passTLSClientCert 헤더 주입 등)은 의도적으로
+# 안 쓴다 - otel-collector로 가는 백엔드 연결이 h2c(gRPC 평문 HTTP/2)라서, 그
+# 조합에서 미들웨어가 주입하는 헤더가 백엔드까지 전달되지 않는 문제가 있다
+# (Traefik v3.7 기준 실측 확인됨). 그래서 "유효한 인증서인가"만 여기서 판정하고,
+# 그 이후(누구 인증서인지)는 신경 쓰지 않는 것으로 요구사항 자체를 좁혔다.
+#
+# otlp-grpc/otlp-http 두 라우터가 이 옵션을 같이 참조한다(servers/otel/docker-compose.yml
+# 라벨의 tls.options=mtls-client-ca@file 참고 - "@file"은 이 옵션이 docker
+# 프로바이더가 아니라 file 프로바이더에서 왔다는 뜻).
+tls:
+  options:
+    mtls-client-ca:
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/ca.crt
+        clientAuthType: RequireAndVerifyClientCert
