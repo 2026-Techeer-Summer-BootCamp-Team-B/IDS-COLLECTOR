@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
 import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
@@ -562,17 +563,106 @@ const CHANNEL_LABEL = { slack: "Slack", discord: "Discord" };
 const REPORT_DAYS = ["월", "화", "수", "목", "금", "토", "일"];
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
 
+function TimeAdjuster({ label, value, min, max, onChange }) {
+  const timersRef = useRef({ delay: null, interval: null });
+  const valueRef = useRef(value);
+  const [editing, setEditing] = useState(null);
+
+  useEffect(() => { valueRef.current = value; }, [value]);
+  useEffect(() => () => {
+    clearTimeout(timersRef.current.delay);
+    clearInterval(timersRef.current.interval);
+  }, []);
+
+  const stopRepeat = () => {
+    clearTimeout(timersRef.current.delay);
+    clearInterval(timersRef.current.interval);
+    timersRef.current = { delay: null, interval: null };
+  };
+  const change = (direction) => {
+    const range = max - min + 1;
+    const next = ((valueRef.current - min + direction + range) % range) + min;
+    valueRef.current = next;
+    onChange(next);
+  };
+  const startRepeat = (direction) => {
+    stopRepeat();
+    change(direction);
+    timersRef.current.delay = setTimeout(() => {
+      timersRef.current.interval = setInterval(() => change(direction), 120);
+    }, 320);
+  };
+  const setDirect = (raw) => {
+    if (raw === "") return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    const next = Math.min(max, Math.max(min, Math.trunc(parsed)));
+    valueRef.current = next;
+    onChange(next);
+  };
+  const commitDirect = () => {
+    setDirect(editing);
+    setEditing(null);
+  };
+
+  return <div className="w-14 text-center">
+    <p className="mb-1 text-[10px] text-dash-muted">{label}</p>
+    <button type="button" aria-label={`${label} 늘리기`} onPointerDown={() => startRepeat(1)} onPointerUp={stopRepeat} onPointerLeave={stopRepeat} onPointerCancel={stopRepeat} className="block w-full rounded text-xs leading-4 text-dash-muted hover:bg-dash-surfaceAlt hover:text-dash-fg">⌃</button>
+    <input type="number" inputMode="numeric" min={min} max={max} value={editing ?? String(value).padStart(2, "0")} onChange={(e) => setEditing(e.target.value)} onFocus={(e) => { setEditing(String(value)); e.target.select(); }} onBlur={commitDirect} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} className="h-7 w-full rounded bg-dash-bg text-center text-sm text-dash-fg outline-none focus:ring-1 focus:ring-dash-mint" />
+    <button type="button" aria-label={`${label} 줄이기`} onPointerDown={() => startRepeat(-1)} onPointerUp={stopRepeat} onPointerLeave={stopRepeat} onPointerCancel={stopRepeat} className="block w-full rounded text-xs leading-4 text-dash-muted hover:bg-dash-surfaceAlt hover:text-dash-fg">⌄</button>
+  </div>;
+}
+
+function ReportTimePicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 8, top: 8 });
+  const anchorRef = useRef(null);
+  const popupRef = useRef(null);
+  const [hourText = "09", minuteText = "00"] = String(value ?? "09:00").split(":");
+  const hour = Math.min(23, Math.max(0, Number(hourText) || 0));
+  const minute = Math.min(59, Math.max(0, Number(minuteText) || 0));
+  const update = (nextHour, nextMinute) => onChange(`${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`);
+  const positionPopup = () => {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const popupHeight = 126;
+    setPosition({ left: Math.max(8, rect.left), top: rect.top - popupHeight >= 8 ? rect.top - popupHeight : rect.bottom + 6 });
+  };
+  const toggle = () => {
+    if (!open) positionPopup();
+    setOpen((current) => !current);
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOutside = (event) => {
+      if (!anchorRef.current?.contains(event.target) && !popupRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("resize", positionPopup);
+    window.addEventListener("scroll", positionPopup, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("resize", positionPopup);
+      window.removeEventListener("scroll", positionPopup, true);
+    };
+  }, [open]);
+
+  return <span ref={anchorRef} className="inline-flex h-8 w-[5.5rem] shrink-0">
+    <button type="button" aria-label="시간 선택" onClick={toggle} className="relative h-8 w-full rounded bg-dash-bg px-1 pr-6 text-left text-xs text-dash-fg">
+      {`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`}
+      <svg viewBox="0 0 20 20" className="absolute right-1 top-2 h-4 w-4 text-dash-mint fill-none stroke-current" strokeWidth="1.8"><circle cx="10" cy="10" r="7.25" /><path d="M10 5.8v4.6l3 1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+    </button>
+    {open && createPortal(<div ref={popupRef} style={position} className="fixed z-[9999] flex gap-2 rounded-lg border border-dash-surfaceAlt bg-dash-surface p-2 shadow-xl"><TimeAdjuster label="시간" value={hour} min={0} max={23} onChange={(next) => update(next, minute)} /><TimeAdjuster label="분" value={minute} min={0} max={59} onChange={(next) => update(hour, next)} /></div>, document.body)}
+  </span>;
+}
+
 function ReportScheduleEditor({ schedule, disabled, onChange }) {
   const rows = schedule?.length ? schedule : [{ days: EVERY_DAY, time: "09:00" }];
   function update(index, patch) { onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row))); }
   return <div className={`space-y-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}>
     {rows.map((row, index) => <div key={index} className="flex flex-wrap items-center gap-1">
-      <span className="relative inline-flex h-8 w-[5.5rem] shrink-0">
-        <input type="time" value={row.time} onChange={(e) => update(index, { time: e.target.value })} onWheel={(e) => e.currentTarget.blur()} className="schedule-time-input absolute inset-0 h-8 w-full bg-dash-bg text-xs text-dash-fg rounded px-1 pr-6" />
-        <svg aria-label="시간 선택" role="button" tabIndex="0" onClick={(e) => e.currentTarget.previousElementSibling?.showPicker?.()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.currentTarget.previousElementSibling?.showPicker?.(); }} viewBox="0 0 20 20" className="absolute right-1 top-2 h-4 w-4 cursor-pointer text-dash-mint fill-none stroke-current" strokeWidth="1.8">
-          <circle cx="10" cy="10" r="7.25" /><path d="M10 5.8v4.6l3 1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </span>
+      <ReportTimePicker value={row.time} onChange={(time) => update(index, { time })} />
       {REPORT_DAYS.map((label, day) => <label key={day} className="text-[10px] text-dash-muted"><input type="checkbox" checked={row.days.includes(day)} onChange={(e) => update(index, { days: e.target.checked ? [...row.days, day].sort() : row.days.filter((d) => d !== day) })} />{label}</label>)}
       {rows.length > 1 ? <button type="button" onClick={() => onChange(rows.filter((_, i) => i !== index))} className="w-8 text-[10px] text-dash-critical">삭제</button> : <span className="w-8" />}
     </div>)}
