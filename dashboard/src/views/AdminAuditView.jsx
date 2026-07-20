@@ -588,8 +588,8 @@ function AlertConfigRow({ config, onSave, onToggleActive, onDelete }) {
   return <tr className="border-t border-dash-surfaceAlt">
     <td className="py-2.5 pr-3 text-dash-fg text-xs align-top">{CHANNEL_LABEL[draft.channel_type] ?? draft.channel_type}</td>
     <td className="py-2.5 pr-3 text-dash-muted text-xs align-top">Webhook URL 설정됨</td>
-    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label><input type="checkbox" checked={Boolean(draft.receive_incidents)} onChange={(e) => patch({ receive_incidents: e.target.checked })} /> 수신</label><select disabled={!draft.receive_incidents} value={draft.min_severity} onChange={(e) => patch({ min_severity: Number(e.target.value) })} className="ml-2 bg-dash-bg text-xs text-dash-fg rounded px-1 py-0.5 disabled:opacity-40">{[4,3,2,1].map((n) => <option key={n} value={n}>severity≥{n}</option>)}</select></td>
-    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label className="inline-block"><input type="checkbox" checked={Boolean(draft.receive_trend_report)} onChange={(e) => patch({ receive_trend_report: e.target.checked })} /> 수신</label><span className="inline-block align-top ml-2"><ReportScheduleEditor schedule={draft.trend_report_schedule} disabled={!draft.receive_trend_report} onChange={(schedule) => patch({ trend_report_schedule: schedule, trend_report_time: schedule[0]?.time ?? null })} /></span></td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label className="inline-flex h-8 items-center"><input type="checkbox" checked={Boolean(draft.receive_incidents)} onChange={(e) => patch({ receive_incidents: e.target.checked })} /> 수신</label><select disabled={!draft.receive_incidents} value={draft.min_severity} onChange={(e) => patch({ min_severity: Number(e.target.value) })} className="ml-2 h-8 bg-dash-bg text-xs text-dash-fg rounded px-1 disabled:opacity-40">{[4,3,2,1].map((n) => <option key={n} value={n}>severity≥{n}</option>)}</select></td>
+    <td className="py-2.5 pr-3 text-dash-muted text-xs align-top"><label className="inline-flex h-8 items-center"><input type="checkbox" checked={Boolean(draft.receive_trend_report)} onChange={(e) => patch({ receive_trend_report: e.target.checked })} /> 수신</label><span className="inline-block align-top ml-2"><ReportScheduleEditor schedule={draft.trend_report_schedule} disabled={!draft.receive_trend_report} onChange={(schedule) => patch({ trend_report_schedule: schedule, trend_report_time: schedule[0]?.time ?? null })} /></span></td>
     <td className="py-2.5 pr-3 align-top"><button onClick={() => onToggleActive(config)} className={`w-16 text-[10px] px-2 py-1 rounded-md ${config.enabled ? "bg-dash-mint/15 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"}`}>{config.enabled ? "Active" : "Inactive"}</button></td>
     <td className="py-2.5 align-top"><div className="flex gap-1"><button disabled={!changed} onClick={() => onSave(config, draft)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-mint/15 text-dash-mint disabled:opacity-35 disabled:cursor-not-allowed">저장</button><button onClick={() => onDelete(config)} className="w-10 text-[10px] px-2 py-1 rounded bg-dash-surfaceAlt text-dash-muted hover:text-dash-critical">삭제</button></div></td>
   </tr>;
@@ -638,7 +638,7 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggl
             <option value="slack">Slack</option>
             <option value="discord">Discord</option>
           </select>
-          <label className="flex items-center gap-1 text-xs text-dash-muted px-1">
+          <label className="flex h-8 items-center gap-1 text-xs text-dash-muted px-1">
             <input type="checkbox" checked={receiveIncidents} onChange={(e) => setReceiveIncidents(e.target.checked)} /> 인시던트
           </label>
           <select
@@ -650,7 +650,7 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggl
           >
             {[4, 3, 2, 1].map((n) => <option key={n} value={n}>severity≥{n}</option>)}
           </select>
-          <label className="flex items-center gap-1 text-xs text-dash-muted px-1">
+          <label className="flex h-8 items-center gap-1 text-xs text-dash-muted px-1">
             <input type="checkbox" checked={receiveTrendReport} onChange={(e) => setReceiveTrendReport(e.target.checked)} /> AI 리포트
           </label>
           <span className="self-start"><ReportScheduleEditor schedule={trendReportSchedule} disabled={!receiveTrendReport} onChange={setTrendReportSchedule} /></span>
