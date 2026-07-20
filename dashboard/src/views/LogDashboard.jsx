@@ -944,10 +944,10 @@ export function RealLevelDistributionChart({
       )}
       {status !== "error" && chartType !== "donut" && (isControlled ? (
         <div className="flex-1 min-h-0">
-          <CategoryBarChart data={data} C={C} height="100%" theme={theme} />
+          <LogLevelBarPanel data={data} C={C} height="100%" theme={theme} />
         </div>
       ) : (
-        <CategoryBarChart data={data} C={C} height={220} theme={theme} />
+        <LogLevelBarPanel data={data} C={C} height={220} theme={theme} />
       ))}
     </Card>
   );
@@ -1155,6 +1155,40 @@ function CategoryBarChart({ data, C, height = 160, theme }) {
           {data.map((d) => (
             <Cell key={d.key} fill={d.color} />
           ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Log Levels의 세로 막대 전용 시각 패널. 계층별 공격 통계와 동일하게 한 항목씩
+// 부드럽게 강조하지만, 막대 방향과 기존 count 표기는 유지한다.
+function VerticalLevelSpotlightBar({ x, y, width, height, fill, index, activeIndex, growth }) {
+  const active = index === activeIndex;
+  const expand = active ? 5 * easeOutQuad(growth) : 0;
+  return (
+    <g>
+      {active && <rect x={x - 3} y={Math.max(0, y - 7)} width={width + 6} height={height + 7} rx={7} fill={fill} opacity={0.16} />}
+      <rect x={x - expand / 2} y={Math.max(0, y - expand)} width={width + expand} height={height + expand} rx={6} fill={fill} />
+    </g>
+  );
+}
+
+function LogLevelBarPanel({ data, C, height = 160, theme }) {
+  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(data.length);
+  const growth = useGrowPulse(activeIndex);
+  const plotBg = theme === "light" ? "#FFFFFF" : C.surfaceAlt;
+  const tickBlue = donutPalette(theme)[3];
+
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ bottom: 8 }} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+        <CartesianGrid stroke={C.surfaceAlt} vertical={false} fill={plotBg} />
+        <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
+        <YAxis stroke={tickBlue} tick={{ fill: tickBlue }} tickLine={false} axisLine={false} fontSize={11} />
+        <Tooltip content={<MinimalBarTooltip />} isAnimationActive={false} cursor={{ fill: C.muted, opacity: 0.15 }} position={{ y: 4 }} />
+        <Bar dataKey="count" isAnimationActive={false} onMouseEnter={(_, index) => focusIndex(index)} onMouseLeave={blurIndex} shape={(props) => <VerticalLevelSpotlightBar {...props} activeIndex={activeIndex} growth={growth} />}>
+          {data.map((d) => <Cell key={d.key} fill={d.color} />)}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -2006,11 +2040,8 @@ function LayerAttackStatsCompact({ scenarios, status, error, controlled = false 
     return LAYER_ORDER.map((m) => ({ module: m, ...getModuleMeta(m), count: byModule[m] || 0 }));
   }, [scenarios]);
   const totalHits = layerTotals.reduce((sum, l) => sum + l.count, 0);
-  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(layerTotals.length);
-  const targetFills = useMemo(
-    () => layerTotals.map((layer, index) => (!highlighting || index === activeIndex ? layer.color : C.donutDim)),
-    [layerTotals, highlighting, activeIndex, C.donutDim]
-  );
+  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(layerTotals.length);
+  const targetFills = useMemo(() => layerTotals.map((layer) => layer.color), [layerTotals]);
   const animatedFills = useAnimatedFills(targetFills);
   const growth = useGrowPulse(activeIndex);
 
