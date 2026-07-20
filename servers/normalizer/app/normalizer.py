@@ -479,6 +479,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "orchestrator.namespace": object_ref.get("namespace"),
             "orchestrator.resource.type": resource or None,
             "orchestrator.resource.name": object_ref.get("name"),
+            "orchestrator.resource.subresource": subresource or None,
             "kubernetes.audit.stage": payload.get("stage"),
             "kubernetes.audit.verb": verb or None,
             "kubernetes.audit.user.groups": user.get("groups"),

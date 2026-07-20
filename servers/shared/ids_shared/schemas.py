@@ -58,6 +58,9 @@ class NormalizedEvent(BaseModel):
     orchestrator_resource_name: Optional[str] = Field(
         default=None, alias="orchestrator.resource.name"
     )  # S1 join_on (pod)
+    orchestrator_resource_subresource: Optional[str] = Field(
+        default=None, alias="orchestrator.resource.subresource"
+    )
     # was/waf 전용 - 이 이벤트가 어느 보호 대상 앱(targets 테이블의 name) 소속인지.
     # Falco/k8s_audit은 앱 단위가 아니라 클러스터 단위 이벤트라 이 필드를 안 채운다.
     # allow_list의 target_id 스코프 집행이 이 값으로 이뤄진다(correlation-engine/
