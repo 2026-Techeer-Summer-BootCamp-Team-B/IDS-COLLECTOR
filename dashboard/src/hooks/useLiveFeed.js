@@ -52,7 +52,10 @@ export function useLiveAttackFeed({ feedLimit = 40 } = {}) {
 
         setFeed((prev) => [...ordered, ...prev].slice(0, feedLimit));
 
-        const criticals = ordered.filter((e) => getRealSeverityMeta(e.severity).key === "CRITICAL");
+        // 첫 조회는 화면 진입 전 이미 발생해 있던 이력이다. 이를 새 CRITICAL로
+        // 취급하면 새로고침만으로 과거 알림 패널이 다시 뜨므로, 기준 시각만 잡고
+        // 그 다음 폴링부터 들어온 이벤트만 토스트 큐에 넣는다.
+        const criticals = isInitialLoad ? [] : ordered.filter((e) => getRealSeverityMeta(e.severity).key === "CRITICAL");
         if (criticals.length) {
           // ordered는 항상 최신순(desc) - 큐에는 오래된 것부터 쌓아야 소비 측(토스트
           // 스택)이 도착한 순서 그대로 아래에서부터 쌓을 수 있어서 뒤집는다.

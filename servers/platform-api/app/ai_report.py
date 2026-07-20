@@ -84,6 +84,21 @@ async def _get_cached_message(days: int, stats_hash: str) -> Optional[Dict[str, 
     return dict(row) if row else None
 
 
+async def _get_latest_cached_message(days: int) -> Optional[Dict[str, Any]]:
+    """현재 통계와 무관하게 마지막으로 생성된 리포트를 읽는다.
+
+    대시보드 조회는 예약 발송을 위한 사전 생성 상태를 설명하는 화면이 아니라,
+    운영자가 가장 최근 분석 결과를 확인하는 화면이다. 따라서 새 인시던트가 생겨
+    stats_hash가 달라졌더라도 마지막 성공 리포트는 계속 보여준다.
+    """
+    async with pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT message, generated_at FROM ai_trend_report_cache WHERE days = $1",
+            days,
+        )
+    return dict(row) if row else None
+
+
 async def _save_cache(days: int, stats_hash: str, message: str, generated_at: datetime) -> None:
     async with pool().acquire() as conn:
         await conn.execute(
@@ -186,9 +201,8 @@ async def generate_trend_report(days: int = 7) -> Dict[str, Any]:
 async def get_cached_trend_report(days: int = 7) -> Dict[str, Any]:
     """대시보드 조회용 캐시 읽기 경로.
 
-    알림 설정 화면을 열 때 Gemini를 새로 호출하지 않는다. 현재 통계와 일치하는
-    캐시만 반환하고, 아직 스케줄러가 사전 생성하지 않은 경우에는 생성 예정 안내를
-    반환한다.
+    알림 설정 화면을 열 때 Gemini를 새로 호출하지 않고, 마지막으로 생성된
+    리포트를 반환한다.
     """
     stats = await _gather_stats(days)
     if not settings.gemini_api_key:
@@ -199,11 +213,11 @@ async def get_cached_trend_report(days: int = 7) -> Dict[str, Any]:
             "cached": False,
             "generated_at": None,
         }
-    cached = await _get_cached_message(days, _stats_hash(stats))
+    cached = await _get_latest_cached_message(days)
     if cached is None:
         return {
             "configured": True,
-            "message": "⏳ 다음 알림 시각 3분 전에 AI 인시던트 트렌드 리포트를 준비합니다.",
+            "message": "아직 생성된 AI 인시던트 트렌드 리포트가 없습니다.",
             "stats": stats,
             "cached": False,
             "generated_at": None,

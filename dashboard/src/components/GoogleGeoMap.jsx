@@ -174,9 +174,12 @@ export default function GoogleGeoMap({ points, compact = false }) {
   const hitMarkersRef = useRef([]); // [{ marker, baseRadius }]
   const zoomRef = useRef(compact ? 1 : 2);
   const infoWindowRef = useRef(null);
+  const hoverInfoWindowRef = useRef(null);
   const pinnedMarkerRef = useRef(null);
+  const hoveredMarkerRef = useRef(null);
   const zoomMotionRef = useRef(0);
   const refreshHitMarkerRangesRef = useRef(null);
+  const hitRangeDirtyRef = useRef(false);
   const savedFocusRef = useRef(null);
   const isCameraMotionRef = useRef(false);
   const pendingResetTimerRef = useRef(null);
@@ -218,9 +221,12 @@ export default function GoogleGeoMap({ points, compact = false }) {
         // 닫기(X) 버튼이 불필요함(2026-07-17 요청). 그래도 일부 구버전 API에선
         // 이 옵션이 없을 수 있어 domready 시점에 DOM에서도 한 번 더 숨긴다.
         infoWindowRef.current = new maps.InfoWindow({ headerDisabled: true });
-        maps.event.addListener(infoWindowRef.current, "domready", () => {
-          document.querySelectorAll(".gm-ui-hover-effect, .gm-style-iw-chr").forEach((el) => {
-            el.style.display = "none";
+        hoverInfoWindowRef.current = new maps.InfoWindow({ headerDisabled: true });
+        [infoWindowRef.current, hoverInfoWindowRef.current].forEach((infoWindow) => {
+          maps.event.addListener(infoWindow, "domready", () => {
+            document.querySelectorAll(".gm-ui-hover-effect, .gm-style-iw-chr").forEach((el) => {
+              el.style.display = "none";
+            });
           });
         });
         zoomRef.current = mapRef.current.getZoom();
@@ -240,24 +246,38 @@ export default function GoogleGeoMap({ points, compact = false }) {
         refreshHitMarkerRangesRef.current = refreshHitMarkerRanges;
         maps.event.addListener(mapRef.current, "zoom_changed", () => {
           zoomRef.current = mapRef.current.getZoom();
-          // moveCamera는 애니메이션 중 zoom_changed를 매 프레임 발생시킨다.
-          // 이때 모든 투명 hit marker의 아이콘을 다시 만들면 복귀 모션이 끊긴다.
-          // 움직임이 끝난 뒤 한 번만 갱신하고, 사용자의 일반 줌에서만 즉시 갱신한다.
-          if (!isCameraMotionRef.current) refreshHitMarkerRanges();
-          if (!isCameraMotionRef.current && pinnedMarkerRef.current) infoWindowRef.current.close();
+          // 휠 줌 중에는 zoom_changed가 여러 번 발생한다. 매번 모든 투명 hit
+          // marker의 아이콘을 다시 만들지 않고, 지도 이동이 끝난 idle에서 한 번만
+          // 갱신해 줌 체감 렉을 줄인다.
+          if (!isCameraMotionRef.current) {
+            hitRangeDirtyRef.current = true;
+            if (pinnedMarkerRef.current) infoWindowRef.current.close();
+            hoveredMarkerRef.current = null;
+            hoverInfoWindowRef.current.close();
+          }
+        });
+        maps.event.addListener(mapRef.current, "idle", () => {
+          if (!isCameraMotionRef.current && hitRangeDirtyRef.current) {
+            hitRangeDirtyRef.current = false;
+            refreshHitMarkerRanges();
+          }
         });
         maps.event.addListener(mapRef.current, "dragstart", () => {
           window.clearTimeout(pendingResetTimerRef.current);
           if (!isCameraMotionRef.current && pinnedMarkerRef.current) {
             infoWindowRef.current.close();
           }
+          hoveredMarkerRef.current = null;
+          hoverInfoWindowRef.current.close();
         });
         const returnToSavedView = () => {
           if (backgroundResetInProgressRef.current) return;
           if (!pinnedMarkerRef.current && !savedFocusRef.current) return;
           backgroundResetInProgressRef.current = true;
           pinnedMarkerRef.current = null;
+          hoveredMarkerRef.current = null;
           infoWindowRef.current.close();
+          hoverInfoWindowRef.current.close();
           isCameraMotionRef.current = true;
           savedFocusRef.current = null;
           smoothCameraTo(mapRef.current, DEFAULT_CENTER, DEFAULT_ZOOM, zoomMotionRef, 900, () => {
@@ -310,7 +330,7 @@ export default function GoogleGeoMap({ points, compact = false }) {
     if (points.length === 0) return;
 
     const maxCount = Math.max(...points.map((p) => p.count), 1);
-    const showInfoWindow = async (point, marker, requirePinned = false) => {
+    const showInfoWindow = async (point, marker, requirePinned = false, targetInfoWindow = infoWindowRef.current, requireHovered = false) => {
       const content = await renderHoverPanelHTML({
         title: point.country,
         titleFlag: resolveFlagCode(point.countryCode, point.country),
@@ -321,10 +341,11 @@ export default function GoogleGeoMap({ points, compact = false }) {
       // 확대 완료 직후 패널을 열려는 사이에 사용자가 배경을 클릭하거나 다른
       // 마커를 선택했으면, 이전 선택의 비동기 패널이 다시 나타나지 않게 한다.
       if (requirePinned && pinnedMarkerRef.current !== marker) return;
-      infoWindowRef.current.setContent(
+      if (requireHovered && hoveredMarkerRef.current !== marker) return;
+      targetInfoWindow.setContent(
         content
       );
-      infoWindowRef.current.open({ anchor: marker, map: mapRef.current });
+      targetInfoWindow.open({ anchor: marker, map: mapRef.current });
     };
     points.forEach((p) => {
       const r = 4 + Math.sqrt(p.count / maxCount) * (compact ? 10 : 16);
@@ -367,10 +388,20 @@ export default function GoogleGeoMap({ points, compact = false }) {
       });
 
       hitMarker.addListener("mouseover", async () => {
-        if (!pinnedMarkerRef.current || pinnedMarkerRef.current === hitMarker) showInfoWindow(p, hitMarker);
+        // 선택된 마커의 정보 창은 유지하면서, 다른 마커 위에는 별도 hover 정보
+        // 창을 띄운다. InfoWindow 인스턴스를 분리하지 않으면 새 hover가 선택 창을
+        // 덮어써서 사용자가 비교할 수 없었다.
+        if (pinnedMarkerRef.current === hitMarker) showInfoWindow(p, hitMarker);
+        else {
+          hoveredMarkerRef.current = hitMarker;
+          showInfoWindow(p, hitMarker, false, hoverInfoWindowRef.current, true);
+        }
       });
       hitMarker.addListener("mouseout", () => {
-        if (pinnedMarkerRef.current !== hitMarker) infoWindowRef.current.close();
+        if (pinnedMarkerRef.current !== hitMarker) {
+          if (hoveredMarkerRef.current === hitMarker) hoveredMarkerRef.current = null;
+          hoverInfoWindowRef.current.close();
+        }
       });
       hitMarker.addListener("click", () => {
         // 지도 background mousedown 예약이 마커 클릭을 복귀로 오인하지 않게 한다.
@@ -379,8 +410,10 @@ export default function GoogleGeoMap({ points, compact = false }) {
           ignoreBackgroundPointerRef.current = false;
         }, 120);
         pinnedMarkerRef.current = hitMarker;
+        hoveredMarkerRef.current = null;
         // 이동 중에는 패널을 비워 두고, 목적지에 도착한 순간에만 표시한다.
         infoWindowRef.current.close();
+        hoverInfoWindowRef.current.close();
         isCameraMotionRef.current = true;
         smoothFocusMarker(mapRef.current, position, CLICK_ZOOM, zoomMotionRef, 900, () => {
           isCameraMotionRef.current = false;

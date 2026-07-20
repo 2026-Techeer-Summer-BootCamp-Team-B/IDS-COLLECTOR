@@ -400,8 +400,8 @@ function ToastCard({
                   : "bg-dash-muted/10 text-dash-muted cursor-not-allowed")
               }
             >
-              {navState === "loading" && <LoaderCircle size={12} className="animate-spin shrink-0" />}
-              {navState === "loading" ? "스토리 라인 분석중" : navState === "error" ? "다시 시도" : "스토리라인 보기"}
+              {(navState === "loading" || !incidentId) && <LoaderCircle size={12} className="animate-spin shrink-0" />}
+              {navState === "loading" || !incidentId ? "스토리라인 분석중" : navState === "error" ? "다시 시도" : "스토리라인 보기"}
             </button>
           </div>
         </div>
