@@ -115,6 +115,17 @@ from ids_shared.schemas import NormalizedEvent
 # 소폭 늘 뿐).
 _RECENCY_MARKER_TTL_SECONDS = 3600
 
+# sequence 완주 시점에 발화 결과를 잠깐 캐싱해두는 TTL(2026-07-21) - main.py의
+# _evaluate_and_upsert 재시도(_MAX_EVAL_ATTEMPTS=3, 백오프 1s/2s, 총 대기 ~3초)가
+# upsert_incident 실패 후 evaluate(event)를 처음부터 다시 부르는데, 마지막 단계를
+# 완성시킨 그 이벤트를 재평가할 때 state_key가 이미 지워진 뒤라 raw=None으로
+# "무시"되어 발화 자체가 통째로 유실됐었다(threshold/cardinality는 발화 순간
+# 카운터/집합을 지우는 대신 cooldown 키를 남겨서 재시도가 같은 결과를 재현할 수
+# 있는데, sequence만 이 안전장치가 없었다). 재시도 총 소요시간(수 초)보다 넉넉히
+# 긴 값이면 되므로 60초로 잡는다 - 그 이상 길게 잡아도 부작용은 없지만(다음 필드
+# 참고) 굳이 그럴 필요는 없다.
+_SEQUENCE_FIRE_RETRY_CACHE_SECONDS = 60
+
 # _stamp_recency()가 매 이벤트마다 흔적을 남기는 join_on 축 전체 - 어떤 시나리오가
 # 나중에 absent_recent_module로 이 이벤트의 부재를 어느 축으로 물어볼지 미리 알 수
 # 없어서, 값이 있는 축 전부에 남긴다(_join_key 참고).
@@ -518,11 +529,23 @@ class ScenarioEngine:
         if count < scenario["threshold"]:
             return None
 
-        await self._redis.delete(count_key)
-        await self._redis.set(
-            cooldown_key, "1", ex=scenario.get("cooldown_seconds", scenario["window_seconds"])
+        # 원자적 발화 클레임(2026-07-21) - 여러 이벤트가 동시에 평가되면(현재는
+        # 단일 인스턴스+순차 컨슈머라 실제로 안 일어나지만, 스케일아웃하면
+        # 일어날 수 있다) 각자 다른 INCR 반환값을 받고도 전부 threshold 이상을
+        # 관측할 수 있다 - 예전엔 그 각각이 무조건 DELETE+SET(쿨다운)을 실행해서
+        # 카운터가 threshold를 넘는 순간 여러 번 "새로 발화"할 위험이 있었다.
+        # SET ... NX는 Redis가 명령 하나를 원자적으로 처리하므로, 동시에 여러
+        # 호출이 경합해도 정확히 하나만 True(클레임 성공)를 받는다 - 그 호출만
+        # 카운터를 지우고 발화 마커를 남기고, 나머지는 "이미 쿨다운 중"과 동일하게
+        # (카운터/마커를 건드리지 않고) 발화 결과만 반환한다 - 어차피
+        # incidents.upsert_incident가 여전히 open인 같은 인시던트에 이벤트를
+        # 추가하므로 결과적으로 맞는 동작이다.
+        claimed = await self._redis.set(
+            cooldown_key, "1", ex=scenario.get("cooldown_seconds", scenario["window_seconds"]), nx=True
         )
-        await self._stamp_fired_marker(scenario, event)
+        if claimed:
+            await self._redis.delete(count_key)
+            await self._stamp_fired_marker(scenario, event)
 
         return self._fired_result(
             scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
@@ -563,11 +586,13 @@ class ScenarioEngine:
         if count < scenario["threshold"]:
             return None
 
-        await self._redis.delete(set_key)
-        await self._redis.set(
-            cooldown_key, "1", ex=scenario.get("cooldown_seconds", scenario["window_seconds"])
+        # 원자적 발화 클레임 - _eval_threshold와 동일한 이유(그 함수 주석 참고).
+        claimed = await self._redis.set(
+            cooldown_key, "1", ex=scenario.get("cooldown_seconds", scenario["window_seconds"]), nx=True
         )
-        await self._stamp_fired_marker(scenario, event)
+        if claimed:
+            await self._redis.delete(set_key)
+            await self._stamp_fired_marker(scenario, event)
 
         return self._fired_result(
             scenario, join_key, [{"event_id": event.event_id, "event_module": event.event_module}]
@@ -583,6 +608,19 @@ class ScenarioEngine:
         stages = _stage_patterns(scenario)
         scenario_id = scenario["id"]
         state_key = f"corr:{scenario_id}:stage:{join_key}"
+        fired_cache_key = f"corr:{scenario_id}:fired-cache:{join_key}"
+
+        # 재시도 안전망: 이 이벤트가 방금 이 체인을 완주시켰던(그리고 이후
+        # upsert_incident가 실패해 main.py가 evaluate()를 처음부터 재호출한)
+        # 바로 그 이벤트라면, state_key는 이미 지워졌으므로 다시 계산하지 않고
+        # 캐싱해둔 발화 결과를 그대로 재반환한다. trigger_event_id로 특정 이벤트만
+        # 대상으로 하므로, 같은 join_key로 오는 다른(새) 이벤트의 정상 평가 흐름에는
+        # 영향이 없다.
+        cached_raw = await self._redis.get(fired_cache_key)
+        if cached_raw:
+            cached = json.loads(cached_raw)
+            if cached["trigger_event_id"] == event.event_id:
+                return cached["result"]
 
         if await self._stage_matches(event, stages[0], scenario, join_key):
             # stage1 최신 덮어쓰기: 진행 중이던 체인이 있어도 버리고 이 이벤트부터
@@ -609,9 +647,15 @@ class ScenarioEngine:
         progress += 1
 
         if progress == len(stages):
+            result = self._fired_result(scenario, join_key, state["events"])
+            await self._redis.set(
+                fired_cache_key,
+                json.dumps({"trigger_event_id": event.event_id, "result": result}),
+                ex=_SEQUENCE_FIRE_RETRY_CACHE_SECONDS,
+            )
             await self._redis.delete(state_key)
             await self._stamp_fired_marker(scenario, event)
-            return self._fired_result(scenario, join_key, state["events"])
+            return result
 
         state["progress"] = progress
         # KEEPTTL - 값(진행 상태)만 갱신하고 stage1이 최초로 세팅한 마감시한은

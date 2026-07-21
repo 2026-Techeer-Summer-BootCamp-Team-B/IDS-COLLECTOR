@@ -6,8 +6,21 @@
 
 import { DISPLAY_TIMEZONE } from "./timezone";
 
+// CSV(수식) 인젝션 방지(OWASP 권장) - 셀 값이 =, +, -, @ (또는 tab/CR)로
+// 시작하면 Excel/Sheets가 이를 수식으로 해석해서 실행할 수 있다. 여기 들어가는
+// 값 중 상당수(WAF payload snippet, Falco 커맨드라인 등)는 공격자가 완전히
+// 통제하는 문자열이라 실제 공격 벡터가 된다 - 분석가가 인시던트 리포트를 열어봤을
+// 뿐인데 수식이 실행돼 원격 명령이나 데이터 유출로 이어질 수 있다.
+const FORMULA_INJECTION_PREFIX_RE = /^[=+\-@\t\r]/;
+
 function csvEscape(value) {
-  const str = String(value ?? "");
+  let str = String(value ?? "");
+  if (FORMULA_INJECTION_PREFIX_RE.test(str)) {
+    // 앞에 작은따옴표를 붙이면 대부분의 스프레드시트 프로그램이 이 셀을 수식이
+    // 아닌 순수 텍스트로 강제 인식한다 - 값의 의미는 바뀌지 않고 보통 화면에도
+    // 표시되지 않는다.
+    str = `'${str}`;
+  }
   if (/[",\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -122,7 +135,6 @@ export async function exportIncidentPDF(incident) {
       `First Detected: ${incident.firstDetected}`,
       `Correlation Rule: ${incident.correlationRule}`,
       `MITRE Path: ${incident.mitrePath.join(" -> ")}`,
-      `Risk Note: ${incident.riskNote}`,
     ],
     { size: 10, lineHeight: 5.5 }
   );

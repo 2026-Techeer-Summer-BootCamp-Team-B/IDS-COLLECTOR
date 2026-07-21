@@ -14,6 +14,7 @@ git에 커밋하지 않는다(servers/normalizer/.gitignore) - 로컬/배포 전
 servers/normalizer/data/GeoLite2-City.mmdb 자리에 둘 것(GEOIP_DB_PATH로 경로 변경 가능,
 app/config.py 참고).
 """
+import asyncio
 import ipaddress
 import json
 from typing import Optional, TypedDict
@@ -24,7 +25,12 @@ import redis.asyncio as redis
 
 from app.config import settings
 
-_redis = redis.from_url(settings.redis_url, decode_responses=True)
+_redis = redis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+    socket_connect_timeout=settings.redis_socket_connect_timeout_seconds,
+    socket_timeout=settings.redis_socket_timeout_seconds,
+)
 
 # _reader는 모듈 최상단에서 즉시 열지 않고 첫 실제 조회 시점까지 미룬다(2026-07-20,
 # CI 실측 확인 후 변경) - GeoLite2-City.mmdb(53MB, MaxMind 라이선스상 git에 커밋 안 함,
@@ -111,12 +117,18 @@ async def lookup(ip: str) -> GeoInfo:
         cached = await _redis.get(cache_key)
     except Exception as e:
         print(f"[normalizer] WARNING: GeoIP 캐시 조회 실패, 캐시 없이 직접 조회 - {e}")
-        return _query(ip)
+        return await asyncio.to_thread(_query, ip)
 
     if cached is not None:
         return json.loads(cached)
 
-    info = _query(ip)
+    # _query()는 geoip2.database.Reader.city()를 부르는 동기 함수라(mmap 기반 조회 -
+    # 보통은 빠르지만 콜드 페이지캐시/메모리 압박 상황에선 디스크 I/O로 블로킹될 수
+    # 있음), await 없이 그냥 부르면 이 프로세스의 단일 이벤트 루프를 그 시간만큼
+    # 막는다(2026-07-21) - 이 서비스는 컨슈머가 단일 태스크로 4개 토픽 전부를
+    # 순차 처리하므로, GeoIP 조회 하나의 지연이 파이프라인 전체 지연으로 그대로
+    # 번진다. asyncio.to_thread로 별도 스레드에 넘겨 이벤트 루프를 막지 않는다.
+    info = await asyncio.to_thread(_query, ip)
     try:
         await _redis.set(cache_key, json.dumps(info), ex=_CACHE_TTL_SECONDS)
     except Exception as e:

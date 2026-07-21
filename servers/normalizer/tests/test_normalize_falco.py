@@ -61,12 +61,22 @@ class TestNormalizeFalco:
         assert event.container_id == "abc123"
         assert event.container_image_name == "bkimminich/juice-shop"
 
-    def test_orchestrator_resource_type_is_always_pod(self, base_falco_event):
-        # k8s.pod.name이 없어도 orchestrator.resource.type은 무조건 "pod" 하드코딩
-        # - falco 룰 자체가 컨테이너/파드 컨텍스트를 전제하기 때문(구현 그대로 반영).
+    def test_host_level_rule_without_pod_context_leaves_resource_type_unset(self, base_falco_event):
+        # host-level Falco 룰(컨테이너/k8s 컨텍스트 없이 노드 자체에서 발화)은
+        # output_fields에 k8s.pod.name이 없다 - 예전엔 이 경우에도 resource.type을
+        # 무조건 "pod"로 채워서, resource.name은 None인데 resource.type만 "pod"인
+        # 앞뒤가 안 맞는 이벤트가 나왔다(2026-07-21 수정 - WAS/WAF와 동일하게 실제
+        # pod 이름이 있을 때만 "pod"로 채운다).
         event = normalize_falco(base_falco_event(output_fields={}), "e9", "{}")
-        assert event.orchestrator_resource_type == "pod"
+        assert event.orchestrator_resource_type is None
         assert event.orchestrator_resource_name is None
+
+    def test_pod_scoped_rule_sets_resource_type_to_pod(self, base_falco_event):
+        event = normalize_falco(
+            base_falco_event(output_fields={"k8s.pod.name": "victim-pod-abc123"}), "e11", "{}"
+        )
+        assert event.orchestrator_resource_type == "pod"
+        assert event.orchestrator_resource_name == "victim-pod-abc123"
 
     def test_rule_and_action_both_come_from_rule_field(self, base_falco_event):
         event = normalize_falco(

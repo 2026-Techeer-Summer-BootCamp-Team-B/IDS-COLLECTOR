@@ -1,8 +1,9 @@
 import React from "react";
 
-// Generic "action succeeded" feedback — separate from CriticalAlertPopup,
-// which is specifically for incoming CRITICAL detections. Fires from
-// App.jsx's `logAction` whenever a fake response action button is clicked.
+// Generic "action succeeded" feedback — separate from App.jsx's
+// SidebarCriticalAlert, which is specifically for incoming CRITICAL
+// detections. Fires from App.jsx's `logAction` whenever a fake response
+// action button is clicked.
 export default function ToastStack({ toasts }) {
   if (!toasts || toasts.length === 0) return null;
   return (

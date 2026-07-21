@@ -6,10 +6,11 @@
 // 서버 데이터를 바꾸지 않고, 프론트에서만 "같은 규칙 + 같은 상관 키(또는 IP가
 // 비슷한 대역)"인 인시던트를 하나의 그룹으로 묶어서 보여주는 용도다.
 //
-// correlation_key_type 값은 백엔드 YAML/문서 기준 "source.ip"(점 표기)가 맞지만,
-// 이 파일(IncidentsView.jsx)의 다른 곳에서는 "source_ip"(언더스코어)로 체크하는
-// 기존 버그가 있어 실제 API 값과 어긋나 있을 수 있다 - 그 버그를 여기서 고치진
-// 않고, 두 표기 다 IP로 인식하도록 방어적으로 처리한다.
+// correlation_key_type 값은 백엔드 YAML/문서 기준 "source.ip"(점 표기)다.
+// IncidentsView.jsx의 다른 곳(소스 IP 차단 버튼, CSV/PDF export)도 예전엔
+// "source_ip"(언더스코어)로 체크하는 버그가 있어 항상 false였는데(2026-07-21
+// isIpKeyType()으로 통일해 수정) - 혹시 남아있을 수 있는 구버전 데이터/다른
+// 어긋남에 대비해 두 표기 다 IP로 인식하도록 여전히 방어적으로 처리한다.
 const IP_KEY_TYPES = new Set(["source.ip", "source_ip"]);
 
 /** "1.2.3.4" -> [1,2,3,4] (유효하지 않으면 null) */

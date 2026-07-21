@@ -324,21 +324,31 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
       : "loading";
 
   const data = useMemo(() => {
-    const len = total.buckets.length;
-    const rows = [];
-    for (let i = 0; i < len; i++) {
-      const ts = total.buckets[i]?.ts;
-      if (ts == null) continue;
-      rows.push({
-        label: formatBucketLabel(new Date(ts), preset.bucketMs),
-        total: total.buckets[i]?.total ?? 0,
-        was: was.buckets[i]?.total ?? 0,
-        waf: waf.buckets[i]?.total ?? 0,
-        falco: falco.buckets[i]?.total ?? 0,
-        k8s_audit: k8s.buckets[i]?.total ?? 0,
-      });
-    }
-    return rows;
+    // total/was/waf/falco/k8s는 각자 독립된 GET /stats/volume 요청이라(useLogVolume
+    // 훅 5개, 각자 자기만의 usePoll 타이머) 서버가 매 요청마다 새로 계산하는 now
+    // 기준으로 버킷 범위(extended_bounds)가 정해진다 - 요청 타이밍이 조금만
+    // 어긋나도(네트워크 지연 등) 한 시리즈만 맨 끝 버킷이 하나 더 있거나 없을 수
+    // 있다. 예전엔 인덱스로만 짝을 맞춰서(total.buckets[i] <-> was.buckets[i])
+    // 그런 경우 서로 다른 시각대 값이 같은 라벨 아래 그려질 위험이 있었다
+    // (2026-07-21) - ts(버킷 경계, OpenSearch date_histogram의 고정 grid라 값 자체는
+    // 시리즈 간에 항상 일치)로 직접 매칭해서, 특정 시리즈에 그 ts의 버킷이 아예
+    // 없으면(있어야 할 값을 다른 시각의 값으로 잘못 채우는 대신) 0으로 표시한다.
+    const byTs = (buckets) => new Map(buckets.map((b) => [b.ts, b.total]));
+    const wasByTs = byTs(was.buckets);
+    const wafByTs = byTs(waf.buckets);
+    const falcoByTs = byTs(falco.buckets);
+    const k8sByTs = byTs(k8s.buckets);
+
+    return total.buckets
+      .filter((b) => b.ts != null)
+      .map((b) => ({
+        label: formatBucketLabel(new Date(b.ts), preset.bucketMs),
+        total: b.total ?? 0,
+        was: wasByTs.get(b.ts) ?? 0,
+        waf: wafByTs.get(b.ts) ?? 0,
+        falco: falcoByTs.get(b.ts) ?? 0,
+        k8s_audit: k8sByTs.get(b.ts) ?? 0,
+      }));
   }, [total.buckets, was.buckets, waf.buckets, falco.buckets, k8s.buckets, preset.bucketMs]);
 
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);

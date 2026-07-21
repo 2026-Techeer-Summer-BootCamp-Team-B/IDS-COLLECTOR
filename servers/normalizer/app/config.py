@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     redis_url: str = "redis://:CHANGE_ME_dev@redis:6379/0"
     dedupe_ttl_seconds: int = 3600
 
+    # dedupe.py/geoip.py의 redis.asyncio 클라이언트 소켓 타임아웃(2026-07-21) - 원래
+    # 타임아웃 없이 연결해서, 네트워크 파티션(예: siem-net 스플릿)처럼 연결이 끊기지
+    # 않고 그냥 응답이 안 오는 상황에서 await _redis.get/set(...)이 예외 없이 무한
+    # 대기했다. dedupe.py/geoip.py의 fail-open 처리는 전부 `except Exception`으로
+    # 예외가 나야만 발동하는 구조라, 이 무한 대기 동안 fail-open이 아예 발동을 못
+    # 하고 - 컨슈머가 단일 태스크로 4개 토픽을 순차 처리하는 구조라 - 파이프라인
+    # 전체가 멈췄다. 타임아웃을 넘기면 redis 라이브러리가 TimeoutError(Exception의
+    # 하위 클래스)를 던지므로 기존 except 블록이 그대로 잡아 의도한 fail-open으로
+    # 이어진다.
+    redis_socket_connect_timeout_seconds: float = 3.0
+    redis_socket_timeout_seconds: float = 3.0
+
     # severity.yaml 경로 - app 패키지 기준 상대경로 (app/severity.py에서 resolve).
     severity_config_path: str = "severity.yaml"
 

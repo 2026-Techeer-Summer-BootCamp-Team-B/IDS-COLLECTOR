@@ -17,6 +17,11 @@ providers:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
     network: siem-net
+  # tls.options(clientAuth/caFiles 등)은 Docker 라벨로 정의할 수 없고 file
+  # provider로만 정의 가능 - otlp-grpc mTLS 옵션은 dynamic/tls-options.yml 참고.
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
 
 # Vercel 프론트(HTTPS)가 이 백엔드를 mixed-content 차단 없이 호출하려면 여기도
 # TLS가 필요하다(2026-07-16). 아직 실제 도메인이 없어서, IP를 그대로 호스트네임

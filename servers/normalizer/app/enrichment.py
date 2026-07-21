@@ -36,6 +36,24 @@ _TARGET_ACTOR_IDENTITY: Dict[str, str] = {
 # 검사한다(정확한 이름 자체도 pod-template-hash 없이 그대로 올 수 있어 우선 비교).
 _TARGET_NAMES_BY_LENGTH_DESC = sorted(_TARGET_ACTOR_IDENTITY, key=len, reverse=True)
 
+# 매핑에 없는 타깃(신규 타깃 추가 후 이 dict 갱신을 빠뜨린 경우 등)을 이벤트마다
+# 조용히 None으로 흘려보내면 WAS/WAF/Falco <-> K8s Audit RBAC 상관분석 체인이
+# actor_identity 축에서 끊기는데, 아무 로그도 안 남아 아무도 못 알아챈다
+# (2026-07-21). 같은 키(target_name 또는 falco pod)는 프로세스 생애주기당 한 번만
+# 경고한다 - 이벤트마다 찍으면 매핑 안 된 타깃 하나가 트래픽만큼 로그를 도배한다.
+_warned_missing_actor_identity: set = set()
+
+
+def _warn_missing_actor_identity_once(key: str, detail: str) -> None:
+    if key in _warned_missing_actor_identity:
+        return
+    _warned_missing_actor_identity.add(key)
+    print(
+        f"[normalizer] WARNING: actor_identity 매핑 없음 ({detail}) - 이 대상에서 온 "
+        "이벤트는 K8s Audit RBAC 상관분석 체인(actor_identity 기준)에 안 묶입니다. "
+        "app/enrichment.py의 _TARGET_ACTOR_IDENTITY에 추가하세요."
+    )
+
 
 def _actor_identity_for_pod(pod_name: Optional[str]) -> Optional[str]:
     if not pod_name:
@@ -43,7 +61,19 @@ def _actor_identity_for_pod(pod_name: Optional[str]) -> Optional[str]:
     for name in _TARGET_NAMES_BY_LENGTH_DESC:
         if pod_name == name or pod_name.startswith(f"{name}-"):
             return _TARGET_ACTOR_IDENTITY[name]
+    _warn_missing_actor_identity_once(f"falco-pod:{pod_name}", f"falco pod={pod_name!r}")
     return None
+
+
+def _actor_identity_for_target(target_name: Optional[str]) -> Optional[str]:
+    """WAS/WAF 경로 - _actor_identity_for_pod와 대칭되는 순수 함수(비동기 enrich()
+    밖으로 뺀 이유는 Kafka/Redis 없이 단위 테스트하기 위함, tests/test_enrichment.py
+    참고). target_name이 아예 없는 경우(센서 미설정 등, 별개 문제)는 경고하지
+    않고, "값은 있는데 매핑에 없는" 경우만 경고한다."""
+    identity = _TARGET_ACTOR_IDENTITY.get(target_name)
+    if identity is None and target_name:
+        _warn_missing_actor_identity_once(f"target:{target_name}", f"target_name={target_name!r}")
+    return identity
 
 
 # 차단(prevention)돼서 Juice Shop 응답 헤더가 아예 없었던 요청에만 쓰이는 최후 폴백.
@@ -72,6 +102,6 @@ async def enrich(source: str, payload: Dict[str, Any], event: NormalizedEvent) -
         event.orchestrator_resource_name = event.target_name or _FALLBACK_RESOURCE_NAME
 
     if source in ("was", "waf"):
-        event.actor_identity = _TARGET_ACTOR_IDENTITY.get(event.target_name)
+        event.actor_identity = _actor_identity_for_target(event.target_name)
     elif source == "falco":
         event.actor_identity = _actor_identity_for_pod(event.orchestrator_resource_name)

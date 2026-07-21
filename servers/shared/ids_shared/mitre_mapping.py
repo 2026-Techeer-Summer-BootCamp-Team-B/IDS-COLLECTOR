@@ -175,6 +175,16 @@ SCENARIO_TACTIC_OVERRIDE: Dict[str, List[str]] = {
     "T1555": ["Credential Access"],
     "T1595": ["Reconnaissance"],
     "T1547": ["Persistence", "Privilege Escalation"],
+    # T1531(rbac.yaml S106, Account Access Removal, 2026-07-21) - S106도 위의
+    # "2026-07-20 후속"/"2026-07-20 추가 발견" 항목들과 같은 날 함께 추가됐지만
+    # 이 파일에 채우는 걸 빠뜨려서, S106 인시던트의 mitre_tactics가 계속 빈
+    # 배열로 저장되고 platform-api의 /attck/coverage에서 이 시나리오가
+    # 누락됐다. T1531은 CONTAINERS_MATRIX(공식 Containers 페이지의 30개 기법
+    # 목록)에 없는 카탈로그 밖 기법이라 (b) 용도로 여기서 최초로 채운다 -
+    # WebFetch로 https://attack.mitre.org/techniques/T1531/ 확인 결과 단일
+    # 전술 Impact(TA0040) - S106의 의미(다수 RBAC 바인딩을 한꺼번에 삭제해
+    # 접근을 차단)와도 정확히 맞아떨어진다(T1489/T1490과 같은 Impact류).
+    "T1531": ["Impact"],
 }
 
 

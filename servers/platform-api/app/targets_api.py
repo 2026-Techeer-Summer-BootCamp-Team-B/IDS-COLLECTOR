@@ -7,6 +7,7 @@ normalizer/app/enrichment.py의 _TARGET_NAMESPACE/_TARGET_POD_NAME 하드코딩(
 전제)을 이 테이블 조회로 바꾸는 건 별도 범위다(normalizer가 지금 Postgres 연결 자체가
 없어서 그 자체로 별도 작업)."""
 from typing import List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -74,7 +75,7 @@ async def create_target(body: TargetIn, request: Request):
 
 
 @router.patch("/{target_id}", response_model=TargetOut)
-async def update_target(target_id: str, body: TargetIn, request: Request):
+async def update_target(target_id: UUID, body: TargetIn, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -95,7 +96,7 @@ async def update_target(target_id: str, body: TargetIn, request: Request):
 
 
 @router.delete("/{target_id}")
-async def delete_target(target_id: str, request: Request):
+async def delete_target(target_id: UUID, request: Request):
     async with pool().acquire() as conn:
         referenced = await conn.fetchval(
             "SELECT count(*) FROM allow_list WHERE target_id = $1", target_id

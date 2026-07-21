@@ -132,10 +132,27 @@ def _iter_log_records(message: Dict[str, Any]):
 def _body_to_payload(body: Any) -> tuple[Dict[str, Any], str]:
     """body를 (payload dict, 원본 JSON 문자열) 튜플로 변환.
 
-    mysite otel-collector 설정 기준: WAS/K8s Audit/WAF는 filelog의 json_parser
-    오퍼레이터를 거쳐 body가 이미 dict로 오고, Falco는 json_parser가 없어서
-    body가 JSON 문자열 그대로 온다 - 두 경우 다 여기서 흡수한다. 원본 문자열은
-    dedupe 해시(sha256)와 event_original 필드에 그대로 쓰인다.
+    Target 쪽 otel-collector 설정(Techeer-12th-b/otel-collector-config.yaml) 기준
+    실제로는 WAS/WAF/Falco/K8s Audit 4계층 전부 json_parser 오퍼레이터를 쓰지
+    않는다(그 파일 자체 주석: "4계층 모두 json_parser 등으로 필드를 뽑아 우리 쪽
+    스키마에 맞게 규격화하지 않는다") - 그래서 지금은 4계층 전부 body가 str로 온다
+    (WAF도 마찬가지: backend/app/otel/logger.py가 body=log.model_dump_json()로
+    문자열을 직접 만들어 push한다). 아래 dict 분기는 이 시점 기준으로는 죽은
+    코드지만(2026-07-21 실측 확인 - 예전엔 "WAS/K8s Audit/WAF는 이미 dict로
+    온다"고 반대로 적혀 있었음, 실제로 그런 적이 없었다), 앞으로 Target 쪽에
+    json_parser가 추가돼 dict 타입 body가 실제로 들어오는 경우에 대비한 방어
+    코드로 남겨둔다.
+
+    ⚠️ 이 함수가 반환하는 원본 문자열은 dedupe 해시(sha256, app/dedupe.py의
+    compute_dedupe_key)와 event_original 필드에 그대로 쓰이는데, WAF의
+    event.id 계약(backend/app/otel/logger.py 주석: event.id =
+    sha256_hex(observedTimeUnixNano + "|" + body))은 이 문자열이 WafAlert가
+    실제로 만든 JSON 문자열과 바이트 단위로 똑같아야 성립한다. dict 분기의
+    `json.dumps(body, ensure_ascii=False)`는 원본 문자열을 "재구성"하는 것일
+    뿐이라 키 순서/공백 등이 원본과 달라질 수 있다 - 그 분기가 실제로 타게 되면
+    (Target 쪽에 json_parser가 추가되는 등) dedupe 해시와 event.id 상관/포렌식
+    조회가 조용히 어긋날 수 있다는 뜻이다. 지금은 모든 소스가 str로 오기 때문에
+    (위 참고) 이 분기가 아예 실행되지 않아 무해하다.
     """
     if isinstance(body, dict):
         return body, json.dumps(body, ensure_ascii=False)
@@ -191,6 +208,19 @@ async def _process_body(source: str, observed_time_unix_nano: str, body: Any) ->
         raise
 
 
+def _decode_kafka_message(value: Optional[bytes]) -> Dict[str, Any]:
+    """Kafka 메시지 value(raw bytes)를 JSON dict로 디코딩한다.
+
+    value가 None(컴팩션 토픽의 tombstone 등)이거나, UTF-8이 아니거나, 유효한 JSON이
+    아니면 (json.JSONDecodeError, UnicodeDecodeError, ValueError) 중 하나를 던진다 -
+    _consume_loop이 이 셋을 한꺼번에 잡아 DLQ로 보내고 다음 메시지로 넘어간다.
+    별도 함수로 뺀 이유는 순수 함수라 Kafka 없이 단위 테스트가 가능하기 때문
+    (tests/test_main.py)."""
+    if value is None:
+        raise ValueError("메시지 value가 None (tombstone 등) - 처리할 원본 데이터 없음")
+    return json.loads(value.decode("utf-8"))
+
+
 async def _consume_loop():
     global _consumer
 
@@ -220,10 +250,16 @@ async def _consume_loop():
         async for msg in _consumer:
             source = _TOPIC_TO_SOURCE[msg.topic]
             try:
-                message = json.loads(msg.value.decode("utf-8"))
-            except json.JSONDecodeError as e:
-                print(f"[normalizer] Kafka 메시지 JSON 파싱 실패, DLQ로 전송: {e}")
-                await producer.send_dlq(source, msg.value, f"json_decode_error: {e}")
+                message = _decode_kafka_message(msg.value)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
+                # json.JSONDecodeError만 잡던 예전 코드는 msg.value가 None(tombstone
+                # 등)이거나 UTF-8이 아닌 경우(UnicodeDecodeError)를 못 잡았다
+                # (2026-07-21) - 이 async for 루프 밖에는 asyncio.CancelledError만
+                # 잡는 except가 있어서, 두 경우 다 잡히지 않은 예외가 컨슈머 태스크
+                # 자체를 죽여 파이프라인이 통째로 멈췄다(/health는 503으로 바뀌지만
+                # 외부 오케스트레이터가 재시작할 때까지는 계속 멈춰 있음).
+                print(f"[normalizer] Kafka 메시지 파싱 실패, DLQ로 전송: {e}")
+                await producer.send_dlq(source, msg.value or b"", f"decode_error: {e}")
                 await _consumer.commit()
                 continue
 

@@ -94,7 +94,7 @@ from app.allow_list_api import router as allow_list_router
 from app.attck_api import router as attck_router
 from app.audit import record_action
 from app.audit_logs_api import router as audit_logs_router
-from app.auth import current_user_id, router as auth_router, verify_gateway_secret
+from app.auth import current_user_id, router as auth_router, stop as auth_stop, verify_gateway_secret
 from app.banned_ips_api import router as banned_ips_router
 from app.config import settings
 from app.data_policy_api import router_log_policies
@@ -106,7 +106,7 @@ from app.logs_api import router as logs_router
 from app.notifications import notify_text
 from app.pipeline_health_api import router as pipeline_health_router
 from app.poll_intervals_api import router as poll_intervals_router
-from app.scenarios_api import router as scenarios_router
+from app.scenarios_api import router as scenarios_router, stop as scenarios_stop
 from app.stats_api import router as stats_router
 from app.targets_api import router as targets_router
 from app.users_api import router as users_router
@@ -222,6 +222,8 @@ async def on_shutdown():
     await pipeline_health_api.stop()
     await clickhouse_client.stop()
     await db.stop()
+    await auth_stop()
+    await scenarios_stop()
 
 
 def _dead_task_reason() -> Optional[str]:

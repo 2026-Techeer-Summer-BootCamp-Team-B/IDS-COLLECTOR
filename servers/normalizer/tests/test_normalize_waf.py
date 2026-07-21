@@ -1,8 +1,17 @@
 """normalize_waf() - WafAlert 센서 payload -> NormalizedEvent."""
+from datetime import datetime, timezone
+
 from app.normalizer import normalize_waf
 
 
 class TestNormalizeWaf:
+    def test_timestamp_read_from_payload_not_ingestion_time(self, base_waf_alert):
+        """WafAlert의 wire 필드명은 "timestamp"다(WAS의 "time"과 다름) - 예전엔
+        normalize_waf가 "time"을 읽어서 항상 못 찾고 정규화 처리 시각(now)으로
+        폴백했다(2026-07-21 실측 확인). 탐지된 실제 시각이 그대로 반영돼야 한다."""
+        event = normalize_waf(base_waf_alert(timestamp="2026-07-15T10:00:00Z"), "e0", "{}")
+        assert event.timestamp == datetime(2026, 7, 15, 10, 0, 0, tzinfo=timezone.utc)
+
     def test_risk_level_maps_to_severity(self, base_waf_alert):
         low = normalize_waf(base_waf_alert(risk_level="LOW"), "e1", "{}")
         medium = normalize_waf(base_waf_alert(risk_level="MEDIUM"), "e2", "{}")

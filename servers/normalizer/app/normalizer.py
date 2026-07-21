@@ -122,7 +122,13 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
     """
     return NormalizedEvent(
         **{
-            "@timestamp": _parse_timestamp(payload.get("time")),
+            # WafAlert(Techeer-12th-b/backend/app/models/schemas.py)의 실제 wire
+            # 필드명은 "timestamp"다 - "time"으로 읽던 예전 코드는 항상 못 찾아서
+            # 매번 폴백(_now_utc(), 이 정규화 처리 시각)으로 대체됐다(2026-07-21
+            # 실측 확인). WAS는 nginx log_format이 실제로 "time" 키를 쓰므로
+            # normalize_was의 payload.get("time")은 그대로 맞다 - 소스마다 wire
+            # 필드명이 다르므로 두 파서 사이에서 복붙하며 헷갈리지 않도록 주의.
+            "@timestamp": _parse_timestamp(payload.get("timestamp")),
             "event.ingested": _now_utc(),
             "event.id": event_id,
             "event.module": "waf",
@@ -188,8 +194,15 @@ def normalize_falco(payload: Dict[str, Any], event_id: str, original: str) -> No
             "source.ip": output_fields.get("fd.rip") or output_fields.get("fd.sip"),
             "user.name": output_fields.get("user.name"),
             "orchestrator.namespace": output_fields.get("k8s.ns.name"),
-            "orchestrator.resource.type": "pod",
-            "orchestrator.resource.name": output_fields.get("k8s.pod.name"),
+            # host-level Falco 룰(컨테이너/k8s 컨텍스트 없이 노드 자체에서 발화하는
+            # 룰)은 output_fields에 k8s.pod.name이 없다 - 예전엔 이 경우에도
+            # resource.type을 무조건 "pod"로 채워서, resource.name은 None인데
+            # resource.type만 "pod"인 앞뒤가 안 맞는 이벤트가 나왔다(2026-07-21
+            # 실측 확인, resource.type/name 조합으로 필터/조인하는 쪽에서 host-level
+            # 알림을 pod-scoped로 잘못 취급할 위험). normalize_was/normalize_waf와
+            # 동일하게 실제 pod 이름이 있을 때만 "pod"로 채운다.
+            "orchestrator.resource.type": "pod" if output_fields.get("k8s.pod.name") else None,
+            "orchestrator.resource.name": output_fields.get("k8s.pod.name") or None,
             "process.name": output_fields.get("proc.name"),
             "process.command_line": output_fields.get("proc.cmdline"),
             "process.parent.name": output_fields.get("proc.pname"),

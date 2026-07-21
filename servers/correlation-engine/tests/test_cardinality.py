@@ -2,6 +2,7 @@
 개수가 threshold 이상이면 발화한다(rules.py의 _eval_cardinality). 카탈로그와 무관한
 합성 시나리오로 엔진 메커니즘 자체만 검증한다(test_engine_sequence_multistage.py와
 동일 방침)."""
+import asyncio
 from datetime import datetime, timezone
 
 from app.rules import ScenarioEngine
@@ -100,6 +101,59 @@ class TestCardinalityThreshold:
 
         second = await engine.evaluate(make_event(event_module="was", source_ip=ip, url_path="/api/d"))
         assert len(second) == 1
+
+    async def test_only_one_concurrent_crosser_stamps_the_fired_marker(
+        self, redis_client, make_event, monkeypatch
+    ):
+        """threshold를 넘는 순간이 여러 이벤트에 동시에 관측될 수 있는 상황
+        (2026-07-21, 현재는 단일 인스턴스+순차 컨슈머라 실제로는 안 일어나지만
+        스케일아웃하면 일어날 수 있는 레이스) - _eval_threshold와 동일한 SET NX
+        클레임 수정을 cardinality 경로에서도 검증한다. asyncio.gather만으로는
+        실제 인터리빙이 보장되지 않으므로(fakeredis 호출이 이벤트 루프에 제어를
+        안 넘기면 한쪽이 끝까지 실행된 뒤에야 다른 쪽이 시작될 수 있음) SCARD
+        직후 배리어로 두 호출을 강제로 맞춰서 레이스 윈도우를 결정적으로
+        재현한다."""
+        engine = await _engine(redis_client, _SCAN_SCENARIO)
+        ip = "203.0.113.10"
+        await engine.evaluate(make_event(event_module="was", source_ip=ip, url_path="/api/a"))
+        await engine.evaluate(make_event(event_module="was", source_ip=ip, url_path="/api/b"))
+        # distinct count는 이제 2 - threshold(3)까지 하나 남았다. 서로 다른 새
+        # 값(c/d)을 동시에 넣는 두 호출 모두 자기 자신만으로 3을 채워 threshold를
+        # 넘는다고 관측하게 된다.
+
+        stamp_calls = []
+        original_stamp = engine._stamp_fired_marker
+
+        async def counting_stamp(scenario, event):
+            stamp_calls.append(event.event_id)
+            await original_stamp(scenario, event)
+
+        monkeypatch.setattr(engine, "_stamp_fired_marker", counting_stamp)
+
+        barrier = asyncio.Barrier(2)
+        original_scard = redis_client.scard
+
+        async def synced_scard(*args, **kwargs):
+            result = await original_scard(*args, **kwargs)
+            await barrier.wait()
+            return result
+
+        monkeypatch.setattr(redis_client, "scard", synced_scard)
+
+        event_c = make_event(event_module="was", source_ip=ip, url_path="/api/c")
+        event_d = make_event(event_module="was", source_ip=ip, url_path="/api/d")
+
+        result_c, result_d = await asyncio.gather(
+            engine._eval_cardinality(_SCAN_SCENARIO, event_c, ip),
+            engine._eval_cardinality(_SCAN_SCENARIO, event_d, ip),
+        )
+
+        # 두 호출 다 이벤트를 인시던트에 반영할 수 있어야 한다(진 쪽도 "이미
+        # 쿨다운 중"과 동일하게 발화 결과를 반환).
+        assert result_c is not None
+        assert result_d is not None
+        # 하지만 "새로 발화"(집합 삭제 + 마커 스탬프)는 정확히 한쪽만 해야 한다.
+        assert len(stamp_calls) == 1
 
 
 _DAY_BUCKET_SCENARIO = {

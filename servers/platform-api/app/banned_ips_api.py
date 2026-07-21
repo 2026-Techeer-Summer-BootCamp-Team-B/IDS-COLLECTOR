@@ -4,6 +4,7 @@
 트레일만 남기는 용도다(audit_logs의 IP_BANNED/IP_UNBANNED)."""
 import ipaddress
 from typing import List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -101,7 +102,7 @@ async def ban_ip(body: BanIn, request: Request):
 
 
 @router.delete("/{banned_ip_id}", response_model=BannedIpOut)
-async def unban_ip(banned_ip_id: str, request: Request):
+async def unban_ip(banned_ip_id: UUID, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """

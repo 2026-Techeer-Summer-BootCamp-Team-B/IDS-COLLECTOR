@@ -56,6 +56,19 @@ _EVAL_RETRY_BACKOFF_BASE_SECONDS = 1.0  # 지수 백오프 밑변 - 1s -> 2s -> 
 # O3 보강분: 총 대기시간(1+2=3s, 마지막 시도는 대기 없음)은 aiokafka 기본
 # max_poll_interval_ms(5분)에 비해 무시할 수준이라 컨슈머 세션 타임아웃 위험 없음)
 
+# 연속 드롭 카운터(2026-07-21) - 재시도를 3회 다 소진해 이벤트를 건너뛰어도
+# _consumer.commit()은 그대로 호출돼 오프셋이 확정된다. 예전엔 이 경로가 /health에
+# 전혀 반영되지 않아서, Redis/Postgres 장애가 지속되는 동안 이벤트마다 조용히
+# 버려지는데도(=상관분석이 사실상 완전히 멈췄는데도) 컨슈머 태스크 자체는 안
+# 죽으니 /health가 계속 200/ok를 반환했다. 성공할 때마다 0으로 리셋하고, 연속
+# _UNHEALTHY_CONSECUTIVE_DROPS건 이상 실패하면 /health가 503을 반환한다 - 딱
+# 1건 실패(진짜 poison pill 이벤트 하나)는 기존 설계대로 정상 운영으로 보고
+# 넘어가되(재시도 소진 후 스킵은 poison pill이 파티션을 영구히 막는 걸 막기 위한
+# 의도된 동작), 장애로 인한 "연속" 드롭만 잡아낸다.
+_consecutive_drop_count = 0
+_last_drop_error: Optional[str] = None
+_UNHEALTHY_CONSECUTIVE_DROPS = 5
+
 
 def _load_scenarios() -> list:
     """scenarios_config_path 디렉터리 밑의 *.yaml 파일을 전부 읽어서 하나의 목록으로
@@ -176,6 +189,7 @@ async def _evaluate_and_upsert(event: NormalizedEvent) -> None:
 
 async def _consume_loop():
     global _consumer, _engine, _redis, _allow_list_task, _scenario_reload_task
+    global _consecutive_drop_count, _last_drop_error
 
     _redis = redis.from_url(settings.redis_url, decode_responses=True)
     scenarios = _load_scenarios()
@@ -234,6 +248,7 @@ async def _consume_loop():
             for attempt in range(1, _MAX_EVAL_ATTEMPTS + 1):
                 try:
                     await _evaluate_and_upsert(event)
+                    _consecutive_drop_count = 0
                     break
                 except Exception as e:
                     if attempt < _MAX_EVAL_ATTEMPTS:
@@ -245,10 +260,12 @@ async def _consume_loop():
                         )
                         await asyncio.sleep(backoff)
                     else:
+                        _consecutive_drop_count += 1
+                        _last_drop_error = str(e)
                         print(
                             f"[correlation] ERROR: 상관분석/인시던트 upsert 실패, "
                             f"{_MAX_EVAL_ATTEMPTS}회 재시도 소진 - event.id={event.event_id} "
-                            f"이벤트는 건너뜀: {e}"
+                            f"이벤트는 건너뜀 (연속 드롭 {_consecutive_drop_count}건째): {e}"
                         )
 
             await _consumer.commit()
@@ -303,9 +320,26 @@ def _dead_task_reason() -> Optional[str]:
     return None
 
 
+def _unhealthy_reason() -> Optional[str]:
+    """/health가 503을 반환할지 판단하는 근거 전체 - 컨슈머 태스크가 죽은 경우뿐
+    아니라, 태스크는 살아있지만 Redis/Postgres 장애로 이벤트가 연속으로 조용히
+    버려지는 중인 경우도 여기서 잡는다(_consecutive_drop_count, 위 상수 설명
+    참고). None이면 정상."""
+    dead = _dead_task_reason()
+    if dead:
+        return dead
+    if _consecutive_drop_count >= _UNHEALTHY_CONSECUTIVE_DROPS:
+        return (
+            f"{_consecutive_drop_count}건 연속으로 상관분석/인시던트 upsert가 재시도 "
+            f"소진 후 스킵됨 (최근 오류: {_last_drop_error}) - Redis/Postgres 장애로 "
+            "상관분석이 조용히 멈췄을 가능성"
+        )
+    return None
+
+
 @app.get("/health")
 def health_check():
-    reason = _dead_task_reason()
+    reason = _unhealthy_reason()
     if reason:
         return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": reason})
     return {"status": "ok"}

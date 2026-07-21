@@ -3,6 +3,7 @@ incident_events 서브 리소스 + timeline(스토리라인) 서브 리소스.
 datastore/postgres/init/001-schema.sql의 incidents/incident_events/scenario_rules
 참고."""
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -162,7 +163,7 @@ async def list_incidents(
 
 
 @router.get("/{incident_id}", response_model=IncidentOut)
-async def get_incident(incident_id: str):
+async def get_incident(incident_id: UUID):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -179,7 +180,7 @@ async def get_incident(incident_id: str):
 
 
 @router.get("/{incident_id}/events", response_model=List[IncidentEventOut])
-async def get_incident_events(incident_id: str):
+async def get_incident_events(incident_id: UUID):
     async with pool().acquire() as conn:
         rows = await conn.fetch(
             """
@@ -241,7 +242,7 @@ def _format_detail(source: Dict[str, Any]) -> Optional[str]:
 
 
 @router.get("/{incident_id}/timeline", response_model=List[TimelineEntryOut])
-async def get_incident_timeline(incident_id: str):
+async def get_incident_timeline(incident_id: UUID):
     """incident_events(Postgres)의 event_id 목록으로 OpenSearch(attack-logs-*)에서
     원문을 한 번에 조회해 시간순 스토리라인으로 합친다. mitre_technique_id는 이
     인시던트가 물고 있는 scenario_rules.mitre_technique_id를 전체 스텝에 동일하게
@@ -296,7 +297,7 @@ async def get_incident_timeline(incident_id: str):
 
 
 @router.patch("/{incident_id}/status", response_model=IncidentOut)
-async def update_status(incident_id: str, body: StatusUpdate, request: Request):
+async def update_status(incident_id: UUID, body: StatusUpdate, request: Request):
     async with pool().acquire() as conn:
         current = await conn.fetchrow("SELECT status FROM incidents WHERE id = $1", incident_id)
         if not current:
@@ -329,7 +330,7 @@ async def update_status(incident_id: str, body: StatusUpdate, request: Request):
 
 
 @router.patch("/{incident_id}/verdict", response_model=IncidentOut)
-async def update_verdict(incident_id: str, body: VerdictUpdate, request: Request):
+async def update_verdict(incident_id: UUID, body: VerdictUpdate, request: Request):
     """정답 라벨(true_positive/false_positive) 기록 - status의 open->investigating->
     closed 선형 전이와 달리 언제든(어느 status에서든) 설정/재설정할 수 있다. 이 값이
     쌓여야 GET /scenarios가 scenario별 precision(true_positive/(true_positive+

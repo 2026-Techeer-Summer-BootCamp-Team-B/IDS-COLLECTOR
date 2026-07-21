@@ -6,6 +6,7 @@ import uuid
 
 from app.main import _load_scenarios
 from app.rules import _RECENCY_MARKER_TTL_SECONDS, _stage_patterns
+from ids_shared.mitre_mapping import tactics_for_technique
 
 _STAGE_KEY_RE = re.compile(r"^stage(\d+)$")
 
@@ -130,6 +131,25 @@ def test_requires_recent_seconds_does_not_exceed_recency_marker_ttl(all_scenario
                 f"{s['id']}: requires_recent_seconds({seconds}) > "
                 f"_RECENCY_MARKER_TTL_SECONDS({_RECENCY_MARKER_TTL_SECONDS})"
             )
+
+
+def test_mitre_technique_id_resolves_to_nonempty_tactics(all_scenarios):
+    """시나리오가 mitre_technique_id를 적어뒀는데 ids_shared/mitre_mapping.py
+    (CONTAINERS_MATRIX/SCENARIO_TACTIC_OVERRIDE) 양쪽 다에 없으면
+    tactics_for_technique()가 조용히 빈 리스트를 반환한다 - 그 시나리오가 발화한
+    인시던트는 mitre_tactics가 항상 빈 배열로 저장되고 platform-api의
+    /attck/coverage에서도 누락된다(S106/T1531이 실제로 이렇게 됐다가
+    2026-07-21에 뒤늦게 발견됨 - 새 시나리오를 추가할 때 매핑 채우는 걸
+    깜빡해도 여기서 바로 잡히게 한다)."""
+    for s in all_scenarios:
+        technique_id = s.get("mitre_technique_id")
+        if not technique_id:
+            continue
+        assert tactics_for_technique(technique_id), (
+            f"{s['id']}: mitre_technique_id={technique_id!r}가 "
+            "ids_shared/mitre_mapping.py의 CONTAINERS_MATRIX/SCENARIO_TACTIC_OVERRIDE "
+            "어디에도 없어 tactics_for_technique()가 빈 리스트를 반환함"
+        )
 
 
 def test_requires_recent_fire_references_a_scenario_that_stamps_the_same_axis(all_scenarios):

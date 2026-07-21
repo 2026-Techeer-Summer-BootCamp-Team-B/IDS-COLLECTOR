@@ -451,29 +451,36 @@ MaxMind, available from https://www.maxmind.com".
   공식 페이지 대조 확인 완료)는 채워져 있으나, app/scenarios/*.yaml이 실제로 쓰는
   technique_id는 아직 일부뿐 (시크릿 enumeration은 검토 결과 falcosecurity/plugins의
   실제 룰에도 "get 성공/실패"뿐 - 별도 정교화 근거 없어서 현행 S2 유지)
-- **프로덕션 크로스-서버 OTLP 인그레스 보안(TODO, 미착수)**: 지금 `CENTRAL_SIEM_OTLP_ENDPOINT=traefik:4317`
-  (Techeer-12th-b/otel-collector-deployment.yaml)과 `otlp: tls: insecure: true`
-  (servers/otel/config/otel-config.yaml)는 전부 "k3d와 docker-compose가 같은
-  Docker Desktop 호스트 위에 있다"는 로컬 개발 전제로 짜여 있다 - `host.docker.internal`/
-  `host.k3d.internal` 둘 다 같은 vpnkit NAT 홉을 타서 h2c preface 핸드셰이크가
-  깨지는 문제가 있어(otel-collector-deployment.yaml 주석 참고) `docker network
-  connect siem-net k3d-...`로 같은 브리지에 직접 붙이는 방식을 씀.
-  프로덕션에서는 수집 대상(k3d) 서버와 Central SIEM(docker-compose, Traefik) 서버가
-  완전히 분리된 네트워크라 위 방식 자체가 적용 불가 - 공인 인터넷/도메인을 거쳐야 함.
-  이 경우 필요한 것:
-  - **mTLS**: `proxy/traefik/traefik.yml`의 `otlp-grpc` 엔트리포인트에 서버 인증서 +
-    클라이언트 인증서 요구(`tls.options`의 clientAuth) 추가. 지금은 PathPrefix(`/`)만
-    매치하고 인증이 전혀 없어서 4317이 열리는 순간 누구나 가짜 OTLP 로그를 찔러넣어
-    SIEM을 오염시킬 수 있음. k3d 쪽 otel-collector exporter도 `insecure: true`를
-    걷어내고 발급받은 클라이언트 인증서로 붙게 변경.
-  - **소스 IP 방화벽 제한**: mTLS와 별개로 클라우드 보안그룹/방화벽에서 4317을
-    k3d 서버의 고정 아웃바운드 IP로만 허용(defense-in-depth).
-  - **대시보드·디버그 포트 비공개**: `proxy/docker-compose.yml`의 Traefik 대시보드(8080,
-    인증 없음 - 코드 주석에도 "local dev only"로 명시됨)와 `servers/docker-compose.yml`의
-    platform-api 직결 포트(8400)는 공인 서버에 그대로 열면 안 됨 - 프로덕션 compose
-    오버라이드에서 포트 노출 제거하거나 별도 인증 필요.
-  - 인증서는 아직 미발급 - 도메인/배포 서버 확정되면 자체 CA(openssl)로 서버·클라이언트
-    인증서 양쪽 발급 예정.
+- **프로덕션 크로스-서버 OTLP 인그레스 보안**: Techeer 쪽이 먼저 `CENTRAL_SIEM_OTLP_ENDPOINT`를
+  공인 도메인(`35-216-79-173.sslip.io:4317`)과 클라이언트 인증서 제시로 이미 전환했는데
+  (Techeer-12th-b/otel-collector-config.yaml·otel-collector-deployment.yaml), Central 쪽
+  `otlp-grpc` 엔트리포인트는 여전히 `PathPrefix(\`/\`)` + 인증 없음(h2c 그대로 패스스루)이라
+  TLS ClientHello가 평문 리스너에 부딪혀 핸드셰이크가 실패하는 상태였음 - WAS/Falco/
+  K8s-Audit/WAF 4계층 로그 전부가 이 하나의 otlp exporter를 공유해서 동시에 유실됨
+  (2026-07-21 발견).
+  - **mTLS(구현 완료, 2026-07-21)**: `servers/otel/docker-compose.yml`의 `otlp-grpc`
+    라우터에 `Host()` 규칙 + `tls.certresolver=letsencrypt`(platform-api-secure와 동일
+    리졸버 재사용) + `tls.options=otlp-mtls@file` 추가. clientAuth/caFiles는 Docker
+    라벨로 정의할 수 없어(Traefik 제약 - 라벨/태그 기반 프로바이더는 tls.options 미지원,
+    file/KV 프로바이더 전용) `traefik.yml`에 `providers.file` 추가하고
+    `proxy/traefik/dynamic/tls-options.yml`에 `otlp-mtls`(RequireAndVerifyClientCert)를
+    정의. CA/클라이언트 인증서는 `proxy/traefik/certs/generate-otlp-mtls-certs.sh`로
+    발급(사설 CA, git에는 스크립트만 커밋 - 개인키/인증서는 `.gitignore`로 제외).
+    로컬에서 client cert 없이 `openssl s_client`로 접속 시 TLS 1.3
+    `certificate_required` alert로 거부되고, 발급된 client.crt/key로는 핸드셰이크가
+    성공하는 것까지 확인함 - 단, 이 로컬 검증은 Traefik의 self-signed fallback
+    인증서로 한 것이고(이 머신은 실제 도메인의 소유자가 아니라 ACME HTTP-01이
+    통과할 수 없음), 실제 Let's Encrypt 발급 + k3d↔Central 실 연결 검증은 배포
+    서버에서만 가능. 프로덕션 반영 시 `ca.crt`를 Central 서버의
+    `servers/proxy/traefik/certs/otlp-client-ca.crt`로 배치하고 Techeer 쪽에는
+    `client.crt`/`client.key`로 `otel-client-cert` Secret을 생성해야 함(스크립트
+    출력 참고).
+  - **소스 IP 방화벽 제한(TODO, 미착수)**: mTLS와 별개로 클라우드 보안그룹/방화벽에서
+    4317을 k3d 서버의 고정 아웃바운드 IP로만 허용(defense-in-depth).
+  - **대시보드·디버그 포트 비공개(TODO, 미착수)**: `proxy/docker-compose.yml`의 Traefik
+    대시보드(8080, 인증 없음 - 코드 주석에도 "local dev only"로 명시됨)와
+    `servers/docker-compose.yml`의 platform-api 직결 포트(8400)는 공인 서버에 그대로
+    열면 안 됨 - 프로덕션 compose 오버라이드에서 포트 노출 제거하거나 별도 인증 필요.
 - request body 파싱(2026-07-12): S12/S13(RBAC 룰/바인딩) → S16(pod 보안 컨텍스트)
   → S17/S18(NodePort Service/ConfigMap 자격증명)까지 확장 완료. `k3d-audit-policy.yaml`이
   roles/clusterroles/rolebindings/clusterrolebindings(RequestResponse) +

@@ -592,7 +592,7 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
       correlationRule: selectedScenario?.name || "-",
       mitrePath: selected.mitre_tactics?.length ? selected.mitre_tactics : ["-"],
       target: `${selected.correlation_key_type}=${selected.correlation_key_value}`,
-      sourceIp: selected.correlation_key_type === "source_ip" ? selected.correlation_key_value : "-",
+      sourceIp: isIpKeyType(selected.correlation_key_type) ? selected.correlation_key_value : "-",
       sourceCountry: "-",
       firstDetected: new Date(selected.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE }),
       storyline: timeline.map((t) => ({
@@ -776,7 +776,7 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
                     {resolutionCategories[selected.id] ? ` · ${RESOLUTION_CATEGORY_LABEL[resolutionCategories[selected.id]]}` : ""}
                   </span>
                 )}
-                {selected.correlation_key_type === "source_ip" &&
+                {isIpKeyType(selected.correlation_key_type) &&
                   (alreadyBanned ? (
                     <span className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical whitespace-nowrap">
                       IP 차단됨
