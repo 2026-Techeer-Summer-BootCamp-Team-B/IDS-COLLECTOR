@@ -1,21 +1,8 @@
-extensions:
-  # 커스텀 확장(custom-collector/mtlsclientauth) - Traefik의 passTLSClientCert가
-  # scheme=h2c 백엔드 조합에서 헤더를 안 넘기는 걸 실측 확인(2026-07-15)해서, Traefik은
-  # TCP 패스스루(TLS 안 까고 그대로 전달)로 물러나고 otelcol이 mTLS를 직접 받는다.
-  # 검증된 클라 인증서의 CN을 auth.cn으로 노출하는 게 이 확장의 전부다.
-  mtlsclientauth: {}
-
 receivers:
   otlp:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
-        tls:
-          cert_file: /etc/otel/certs/server.crt
-          key_file: /etc/otel/certs/server.key
-          client_ca_file: /etc/otel/certs/ca.crt
-        auth:
-          authenticator: mtlsclientauth
       http:
         endpoint: 0.0.0.0:4318
 
@@ -28,38 +15,7 @@ processors:
     # 기존 5s - 이벤트를 최대 5초까지 묶어뒀다가 Kafka로 내보내는 구조라 저볼륨
     # 트래픽(데모/테스트)에서는 이게 곧 e2e 지연에 그대로 더해짐. 1s로 낮춤.
     timeout: 500ms
-    # Kafka의 최대 메시지 크기(10MB)보다 충분히 작게 유지한다. K8s audit를
-    # start_at: beginning으로 읽을 때 수천 건이 하나의 OTLP/Kafka 레코드로 묶여
-    # 전체 배치가 거부되는 문제를 막는다.
-    send_batch_size: 128
-    send_batch_max_size: 128
-
-  # 크로스-서버 mTLS - otelcol이 직접 검증한 클라 인증서의 CN을 mtlsclientauth
-  # 확장이 auth.cn으로 노출해준다(attributesprocessor의 from_context: auth.*는
-  # 서버 authenticator가 채운 값을 읽는 표준 경로). 이미 순수 CN이라 Traefik
-  # 헤더 방식 때 필요했던 정규식 추출이 필요 없다.
-  attributes/capture-cert-header:
-    actions:
-      - key: client.cn_raw
-        action: insert
-        from_context: auth.cn
-
-  transform/stamp-cn:
-    log_statements:
-      - context: log
-        statements:
-          - set(resource.attributes["client.cn"], attributes["client.cn_raw"]) where attributes["client.cn_raw"] != nil
-          - delete_key(attributes, "client.cn_raw")
-
-  # 즉시 폐기(revocation) 수단 - CRL/OCSP는 Traefik/otelcol 둘 다 네이티브로
-  # 지원 안 해서(PoC엔 오버킬) CN denylist를 여기서 건다. 인증서 유효기간과
-  # 무관하게 즉시 차단되지만, handshake 자체는 성공하고 TLS 이후(앱 계층)에서
-  # 드롭되는 것 - 목록 갱신은 아래 편집 후 collector 재시작(짧은 blip) 필요.
-  filter/denylist:
-    error_mode: ignore
-    logs:
-      log_record:
-        - resource.attributes["client.cn"] == "__no-site-denylisted-yet__"
+    send_batch_size: 8192
 
 # resource attribute `log.source`(was/waf/falco/k8s-audit, Target 쪽 otel-collector가
 # 태깅) 기준으로 소스별 Kafka 토픽에 나눠 적재한다 (P2-1). 매치되는 값이 없으면
@@ -118,14 +74,13 @@ exporters:
       max_message_bytes: 10000000
 
 service:
-  extensions: [mtlsclientauth]
   telemetry:
     logs:
       level: "info"
   pipelines:
     logs/in:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/capture-cert-header, transform/stamp-cn, filter/denylist, batch]
+      processors: [memory_limiter, batch]
       exporters: [routing/by-source]
     # debug(verbosity: detailed)는 4개 정상 소스 파이프라인에서 뺐다(2026-07-16,
     # 감사 O9/§3.6) - 상시 켜져 있으면 이벤트 원문(WAS 쿼리스트링, WAF 페이로드
