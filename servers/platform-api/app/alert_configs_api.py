@@ -1,8 +1,18 @@
 """AlertConfig API (/alert-configs) - Slack/Discord 알림 설정 CRUD.
 app/notifications.py가 이 테이블을 조회해서 실제 발송 여부/대상(channel_type,
-webhook_url, enabled, min_severity)을 결정한다."""
+webhook_url, enabled, min_severity)을 결정한다.
+
+경로 파라미터를 str이 아니라 UUID로 선언한다(2026-07-21, 이 패턴은
+alert_configs_api/allow_list_api/banned_ips_api/incidents_api/scenarios_api/
+targets_api/users_api 전체에 동일하게 적용) - 이 id들은 전부 uuid 컬럼(001-schema.sql
+등)이라 형식이 안 맞는 값(예: GET /alert-configs/not-a-uuid)이 오면 asyncpg가
+파라미터 바인딩 시점에 캐스트 에러로 죽어서 이 요청이 핸들러 코드에 닿지도 못하고
+그대로 처리되지 않은 500으로 샜다. FastAPI가 UUID 타입 힌트를 보고 라우트 진입
+전에 형식을 검증해서, 형식이 틀리면 422(핸들러 실행 전 요청 검증 실패)로 깔끔하게
+막고, 형식이 맞으면 이후 로직(DB 조회 후 404 등)은 그대로 동작한다."""
 import json
 from typing import List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
@@ -107,7 +117,7 @@ async def create_alert_config(body: AlertConfigIn, request: Request):
 
 
 @router.patch("/{config_id}", response_model=AlertConfigOut)
-async def update_alert_config(config_id: str, body: AlertConfigIn, request: Request):
+async def update_alert_config(config_id: UUID, body: AlertConfigIn, request: Request):
     _validate_channel_type(body.channel_type)
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
@@ -141,7 +151,7 @@ async def update_alert_config(config_id: str, body: AlertConfigIn, request: Requ
 
 
 @router.delete("/{config_id}")
-async def delete_alert_config(config_id: str, request: Request):
+async def delete_alert_config(config_id: UUID, request: Request):
     async with pool().acquire() as conn:
         result = await conn.execute("DELETE FROM alert_configs WHERE id = $1", config_id)
     if result == "DELETE 0":

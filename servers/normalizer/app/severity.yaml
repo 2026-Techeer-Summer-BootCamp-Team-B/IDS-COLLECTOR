@@ -72,12 +72,14 @@ audit:
     # 3 high: 시크릿 생성/변조 - 조회와 동급 이상 (§5 갱신분 신규 추가)
     - match: { verb: [create, update, patch], resource: [secrets] }
       severity: 3
-    # 3 high: 실행 중 컨테이너 진입 (S1/S3 재료). verb는 create만이 아니라 get도
-    # 포함 - falcosecurity/plugins의 "Attach/Exec Pod" 룰 조건이
-    # "(kcreate or kget) and subresource in (exec,attach)"라 실제로 verb=get으로
-    # 기록되는 exec/attach 요청도 있다(재확인 완료, 2026-07-12). create만 보면
-    # 그런 이벤트가 severity 3이 아니라 default(2)로 떨어지는 게 버그였다.
-    - match: { verb: [create, get], resource: [pods], subresource: [exec, attach] }
+    # 3 high: 실행 중 컨테이너 진입 (S1/S3 재료). falcosecurity/plugins의
+    # "Attach/Exec Pod" 룰 조건이 "(kcreate or kget) and subresource in
+    # (exec,attach)"라 verb=create뿐 아니라 get으로도 기록되는 exec/attach
+    # 요청이 있다(재확인 완료, 2026-07-12) - verb 열거로 대응하면 앞으로 다른
+    # verb로 기록되는 클라이언트가 나올 때마다 또 놓칠 수 있어서, verb 열거
+    # 대신 subresource 단독 조건으로 전환했다 - 어떤 verb로 기록되든 pods의
+    # exec/attach 진입 자체가 이미 충분한 신호라 verb 값은 판정에 무관하다.
+    - match: { resource: [pods], subresource: [exec, attach] }
       severity: 3
     # 3 high: SA 토큰 발급
     - match: { verb: [create], resource: [serviceaccounts], subresource: [token] }

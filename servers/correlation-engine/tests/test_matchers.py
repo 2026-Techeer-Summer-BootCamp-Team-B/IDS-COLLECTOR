@@ -1,6 +1,7 @@
 """app/rules.py의 _match_* 순수 함수 + _matches() 조합 로직 단위 테스트.
 Redis/이벤트 스트림 없이 매칭 규칙만 검증한다."""
 from app.rules import (
+    _join_key,
     _match_any_flag,
     _match_min_severity,
     _match_prefix,
@@ -77,3 +78,39 @@ class TestMatches:
         pattern = {"event_module": "was"}
         event = make_event(event_module="was", user_name="whatever")
         assert _matches(event, pattern) is True
+
+
+class TestJoinKeyUserOrSa:
+    """join_on=user_or_sa는 actor_identity를 user_name보다 우선한다(2026-07-19,
+    enrichment.py가 was/waf/falco에 채우는 "대상 pod의 K8s 신원" 브릿지 필드 -
+    k8s_audit은 actor_identity를 안 채우고 user_name만 채우므로 둘 다 있는 이벤트는
+    실제로는 없지만, 우선순위 자체는 명시적으로 고정해둔다)."""
+
+    def test_prefers_actor_identity_when_present(self, make_event):
+        event = make_event(
+            event_module="waf", user_name=None,
+            actor_identity="system:serviceaccount:default:default",
+        )
+        assert _join_key(event, "user_or_sa") == "system:serviceaccount:default:default"
+
+    def test_falls_back_to_user_name_when_actor_identity_absent(self, make_event):
+        event = make_event(event_module="k8s_audit", user_name="system:admin", actor_identity=None)
+        assert _join_key(event, "user_or_sa") == "system:admin"
+
+    def test_none_when_neither_present(self, make_event):
+        event = make_event(event_module="was", user_name=None, actor_identity=None)
+        assert _join_key(event, "user_or_sa") is None
+
+
+class TestJoinKeyRuleId:
+    """join_on=rule_id(2026-07-20, M32) - "공격자"가 아니라 "공격 시그니처"를
+    조인 축으로 삼는 첫 사례. rule_id는 waf/was/falco가 이미 채우는 필드라
+    별도 브릿지 로직 없이 그대로 반환한다."""
+
+    def test_returns_rule_id(self, make_event):
+        event = make_event(event_module="waf", rule_id="sqli-001")
+        assert _join_key(event, "rule_id") == "sqli-001"
+
+    def test_none_when_absent(self, make_event):
+        event = make_event(event_module="waf", rule_id=None)
+        assert _join_key(event, "rule_id") is None

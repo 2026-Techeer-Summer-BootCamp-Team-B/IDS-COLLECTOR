@@ -70,20 +70,31 @@ async def _dispatch_pending() -> None:
             """,
             _POLL_LIMIT,
         )
-        if not rows:
-            return
+    if not rows:
+        return
 
-        # notified_at은 각 행을 보내자마자 그 자리에서 찍는다 - 예전엔 배치 전체를
-        # 다 보낸 뒤 한 번에 UPDATE ... = ANY(...)로 묶어서 찍었는데, notify_incident()
-        # 내부의 _matching_alert_configs()(Postgres 조회)가 배치 중간 행에서 예외를
-        # 던지면(일시적 DB 커넥션 장애 등 - _post_webhook 자체는 재시도 후 항상
-        # 정상 반환하므로 여기서만 터질 수 있음) 그 배치 전체의 UPDATE가 안 돌아서,
-        # 이미 Slack/Discord로 성공적으로 보낸 앞쪽 행들까지 notified_at이 NULL로
-        # 남아 다음 폴링에서 중복 발송됐다(2026-07-15 실측 확인 후 수정). 행 단위로
-        # 찍으면 실패 시점 이전 행은 중복 발송되지 않고, 이후 행만 자연스럽게
-        # notified_at IS NULL로 남아 다음 폴링에서 정상 재시도된다.
-        for row in rows:
-            await notify_incident(dict(row))
+    # notified_at은 각 행을 보내자마자 그 자리에서 찍는다 - 예전엔 배치 전체를
+    # 다 보낸 뒤 한 번에 UPDATE ... = ANY(...)로 묶어서 찍었는데, notify_incident()
+    # 내부의 _matching_alert_configs()(Postgres 조회)가 배치 중간 행에서 예외를
+    # 던지면(일시적 DB 커넥션 장애 등 - _post_webhook 자체는 재시도 후 항상
+    # 정상 반환하므로 여기서만 터질 수 있음) 그 배치 전체의 UPDATE가 안 돌아서,
+    # 이미 Slack/Discord로 성공적으로 보낸 앞쪽 행들까지 notified_at이 NULL로
+    # 남아 다음 폴링에서 중복 발송됐다(2026-07-15 실측 확인 후 수정). 행 단위로
+    # 찍으면 실패 시점 이전 행은 중복 발송되지 않고, 이후 행만 자연스럽게
+    # notified_at IS NULL로 남아 다음 폴링에서 정상 재시도된다.
+    #
+    # 위 SELECT를 위한 커넥션은 이 루프 밖에서 이미 반납했다(2026-07-21) - notify_incident()는
+    # 채널당 최대 3회(최대 4초) 웹훅 재시도를 하는데, 예전엔 이 for 루프 전체가
+    # SELECT와 같은 커넥션을 계속 쥔 채로 돌았다. 웹훅 채널 장애가 나면 최대 100건 x
+    # 채널 수만큼 그 하나의 커넥션이 몇 분씩 묶여서, 기본 10개인 asyncpg 풀을
+    # 굶주리게 해 이 시간 동안 platform-api의 다른 모든 요청이 커넥션을 못 받을
+    # 위험이 있었다. 아래는 행마다 UPDATE 시점에만 커넥션을 짧게 새로 빌린다 -
+    # notify_incident 자신도 내부에서 SELECT용으로만 짧게 커넥션을 쥐므로(app/
+    # notifications.py의 _matching_alert_configs), 웹훅 I/O 도중에는 어디서도
+    # 커넥션을 쥐고 있지 않는다.
+    for row in rows:
+        await notify_incident(dict(row))
+        async with pool().acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET notified_at = now() WHERE id = $1",
                 row["id"],
@@ -139,7 +150,7 @@ async def poll_loop() -> None:
     # 조회도 같은 try/except 안으로 넣어서, 실패해도 기본 간격으로 다음
     # 주기에 재시도하도록 고쳤다.
     while True:
-        interval = _DEFAULT_INTERVAL_SECONDS
+        interval: float = _DEFAULT_INTERVAL_SECONDS
         try:
             await _dispatch_pending()
             await _check_dlq_depth_alerts()  # 자체적으로 예외를 삼키므로 이 try에 걸리지 않음

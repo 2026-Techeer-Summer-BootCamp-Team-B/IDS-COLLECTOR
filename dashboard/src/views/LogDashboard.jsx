@@ -366,21 +366,31 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
       : "loading";
 
   const data = useMemo(() => {
-    const len = total.buckets.length;
-    const rows = [];
-    for (let i = 0; i < len; i++) {
-      const ts = total.buckets[i]?.ts;
-      if (ts == null) continue;
-      rows.push({
-        label: formatBucketLabel(new Date(ts), preset.bucketMs),
-        total: total.buckets[i]?.total ?? 0,
-        was: was.buckets[i]?.total ?? 0,
-        waf: waf.buckets[i]?.total ?? 0,
-        falco: falco.buckets[i]?.total ?? 0,
-        k8s_audit: k8s.buckets[i]?.total ?? 0,
-      });
-    }
-    return rows;
+    // total/was/waf/falco/k8s는 각자 독립된 GET /stats/volume 요청이라(useLogVolume
+    // 훅 5개, 각자 자기만의 usePoll 타이머) 서버가 매 요청마다 새로 계산하는 now
+    // 기준으로 버킷 범위(extended_bounds)가 정해진다 - 요청 타이밍이 조금만
+    // 어긋나도(네트워크 지연 등) 한 시리즈만 맨 끝 버킷이 하나 더 있거나 없을 수
+    // 있다. 예전엔 인덱스로만 짝을 맞춰서(total.buckets[i] <-> was.buckets[i])
+    // 그런 경우 서로 다른 시각대 값이 같은 라벨 아래 그려질 위험이 있었다
+    // (2026-07-21) - ts(버킷 경계, OpenSearch date_histogram의 고정 grid라 값 자체는
+    // 시리즈 간에 항상 일치)로 직접 매칭해서, 특정 시리즈에 그 ts의 버킷이 아예
+    // 없으면(있어야 할 값을 다른 시각의 값으로 잘못 채우는 대신) 0으로 표시한다.
+    const byTs = (buckets) => new Map(buckets.map((b) => [b.ts, b.total]));
+    const wasByTs = byTs(was.buckets);
+    const wafByTs = byTs(waf.buckets);
+    const falcoByTs = byTs(falco.buckets);
+    const k8sByTs = byTs(k8s.buckets);
+
+    return total.buckets
+      .filter((b) => b.ts != null)
+      .map((b) => ({
+        label: formatBucketLabel(new Date(b.ts), preset.bucketMs),
+        total: b.total ?? 0,
+        was: wasByTs.get(b.ts) ?? 0,
+        waf: wafByTs.get(b.ts) ?? 0,
+        falco: falcoByTs.get(b.ts) ?? 0,
+        k8s_audit: k8sByTs.get(b.ts) ?? 0,
+      }));
   }, [total.buckets, was.buckets, waf.buckets, falco.buckets, k8s.buckets, preset.bucketMs]);
 
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
@@ -513,10 +523,12 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
 
 export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType: chartTypeProp }) {
   // module 없이 호출되면(Overview) 5선 breakdown으로 위임 - 아래 기존 로직은
-  // module이 특정된 상세 뷰(WAS/Falco/K8sAudit) 전용으로 계속 쓰인다.
-  if (!module) {
-    return <LogVolumeBreakdownBody rangeKey={rangeKey} kpiFilter={kpiFilter} />;
-  }
+  // module이 특정된 상세 뷰(WAS/Falco/K8sAudit) 전용으로 계속 쓰인다. 이 분기를
+  // 훅 호출들보다 먼저 두면(예전 버전) module 값에 따라 이 컴포넌트가 매 렌더마다
+  // 다른 개수의 훅을 호출하게 돼 React Hooks 규칙 위반이다(react-hooks/rules-of-hooks,
+  // 2026-07-20 실측 확인) - 같은 컴포넌트 인스턴스가 module을 바꿔가며 리렌더되면
+  // "Rendered fewer/more hooks than expected" 크래시로 이어질 수 있어 훅 호출을
+  // 전부 마친 뒤로 옮긴다.
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   // 2026-07-15: 형광 민트/critical 빨강이 "에러처럼 보인다"는 피드백 - Overview/
@@ -551,6 +563,10 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
   // 평소(중앙값) 대비 급증 구간 탐지 — 있으면 배지 + 차트 위 마커로 표시.
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
   const spikePoint = spike ? data[spike.index] : null;
+
+  if (!module) {
+    return <LogVolumeBreakdownBody rangeKey={rangeKey} kpiFilter={kpiFilter} />;
+  }
 
   return (
     <Card

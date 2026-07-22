@@ -171,7 +171,7 @@ async def _enforce_retention() -> None:
 
 async def poll_loop() -> None:
     while True:
-        interval = _DEFAULT_INTERVAL_SECONDS
+        interval: float = _DEFAULT_INTERVAL_SECONDS
         try:
             await _enforce_retention()
             interval = await _current_interval_seconds()

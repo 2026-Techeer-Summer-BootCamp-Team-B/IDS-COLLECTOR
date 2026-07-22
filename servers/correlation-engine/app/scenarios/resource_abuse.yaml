@@ -32,3 +32,61 @@ scenarios:
         ]
     severity: 4
     mitre_technique_id: "T1496"
+
+  # S82 (sequence, join_on=user_or_sa, 3단계, 2026-07-20, Notion "여러 계층
+  # 시나리오" M6 구현): 파일 업로드 → 실행/크립토마이닝 → CronJob 지속성 확보를
+  # 하나의 킬체인으로 엮는다. stage2(`S22`, 크립토마이닝)/stage3(`S21`, CronJob
+  # 생성)는 이미 실측 검증까지 끝난 재료다 - 이 시나리오의 신규 기여는 stage1
+  # (업로드 탐지)뿐이다.
+  #
+  # stage1의 url_path_prefix="/file-upload"는 이 프로젝트가 배포하는 Target인
+  # OWASP Juice Shop 자체의 실제 업로드 엔드포인트다(multer 미들웨어 기반, POST -
+  # 추측이 아니라 이 오픈소스 앱의 공개된 실제 구조) - "비정상 확장자/더블
+  # 익스텐션"까지는 못 본다(_MATCHERS에 접미사/정규식 매처가 없음, url_path_prefix는
+  # 앞부분만 검사) - 업로드 엔드포인트에 대한 성공 응답 자체를 stage1으로 근사했다.
+  # http_response_status_code=[200, 201, 204](2026-07-20 수정, 실측 확인) - 원래
+  # [200, 201]만 뒀는데, 실제 k3d 클러스터(techeer-ids)에 배포된 Juice Shop에 더미
+  # PDF를 실제로 업로드해보니 성공 응답이 200/201이 아니라 204(No Content)였다
+  # (Techeer-12th-b/tests/scenarios.py의 _run_s82/was_actions.send_file_upload_request가
+  # 이 실측으로 이 사실을 먼저 발견함) - 204를 빠뜨리면 실제로 성공한 업로드가 이
+  # 시나리오의 stage1과 전혀 매칭되지 않는 채로 방치된다.
+  #
+  # join_on=user_or_sa: stage1(WAF/WAS, enrichment.py가 대상 pod에 정적으로
+  # 매핑해둔 actor_identity)과 stage2(Falco, 같은 pod의 actor_identity)까지는
+  # `S5`/`S81`이 이미 증명한 join_on=pod로도 이어질 수 있지만, stage3(K8s Audit
+  # CronJob 생성)의 orchestrator_resource_name은 CronJob 자신의 이름이지 pod가
+  # 아니라서 pod 축으로는 안 이어진다 - `S59`가 이미 증명한 것과 같은
+  # actor_identity → user.name 브릿지(같은 신원이 침해된 pod의 토큰으로 K8s API를
+  # 호출했다는 전제)로 3단계 전체를 user_or_sa 하나로 통일했다.
+  #
+  # mitre_technique_id=T1496: stage2(S22)의 태그를 물려받는다 - "크립토마이닝
+  # 감염"이 이 시나리오의 헤드라인(M6 원문 제목의 중심)이고 stage3(CronJob)은 그
+  # 감염이 지속성 확보로 이어졌다는 확인 단계. severity=4는 S22(4)와 같은 급 -
+  # S21 단독(3)보다 위인 이유는 감염이 실제로 지속성 확보까지 이어졌다는
+  # 확정적 킬체인이라서다.
+  - id: S82
+    name: "파일 업로드 → 실행/크립토마이닝 → CronJob 지속성 확보 (WAF/WAS → Falco → K8s Audit)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [was, falco, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: was
+      url_path_prefix: "/file-upload"
+      http_request_method: POST
+      http_response_status_code: [200, 201, 204]
+    stage2:
+      event_module: falco
+      event_action:
+        [
+          "Detect outbound connections to common miner pool ports",
+          "Detect crypto miners using the Stratum protocol",
+          "Known Cryptominer Process Executed",
+        ]
+    stage3:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: cronjobs
+    severity: 4
+    mitre_technique_id: "T1496"

@@ -136,7 +136,7 @@ export function fetchIncidentsSince(since) {
 
 // ---- /events/recent (servers/platform-api/app/events_api.py) ----
 
-// 개별 정규화 이벤트 실시간 티커(LiveTicker/CriticalAlertPopup용) — 인시던트
+// 개별 정규화 이벤트 실시간 티커(LiveTicker/App.jsx의 SidebarCriticalAlert용) — 인시던트
 // 폴링(fetchIncidentsSince)과 같은 since 패턴의 REST 폴링이다(2026-07-14, WS
 // /ws/events(구 app/event_stream.py) 제거 후 대체 — 계약 v1.1 §7. 일반
 // Authorization 헤더를 그대로 쓰므로 WS 전용 쿼리스트링 토큰 처리(옛 wsUrl)가

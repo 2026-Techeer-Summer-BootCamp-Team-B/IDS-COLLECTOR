@@ -37,13 +37,19 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=siem-net"
-      - "traefik.tcp.routers.otlp-grpc.entrypoints=otlp-grpc"
-      # TCP 라우터는 HTTP Host()가 아니라 TLS ClientHello의 SNI로 매칭한다
-      # (HostSNI) - 클라(엣지 exporter)가 endpoint로 쓰는 "traefik:4317"의
-      # 호스트명, 서버 인증서 SAN(traefik) 양쪽 다 이 값으로 맞춤.
-      - "traefik.tcp.routers.otlp-grpc.rule=HostSNI(`traefik`)"
-      - "traefik.tcp.routers.otlp-grpc.service=otlp-grpc"
-      # 여기가 핵심 - TLS를 까지 않고 암호화된 바이트를 그대로 otel-collector로
-      # 전달한다. otel-collector가 서버 인증서 제시 + 클라 인증서 검증(mTLS)을 직접 함.
-      - "traefik.tcp.routers.otlp-grpc.tls.passthrough=true"
-      - "traefik.tcp.services.otlp-grpc.loadbalancer.server.port=4317"
+      - "traefik.http.routers.otlp-grpc.entrypoints=otlp-grpc"
+      # Host()가 있어야 letsencrypt 리졸버가 어떤 도메인 인증서를 쓸지 안다
+      # (platform-api-secure와 동일 패턴, servers/docker-compose.yml 참고).
+      - "traefik.http.routers.otlp-grpc.rule=Host(`35-216-79-173.sslip.io`)"
+      - "traefik.http.routers.otlp-grpc.service=otlp-grpc"
+      - "traefik.http.services.otlp-grpc.loadbalancer.server.scheme=h2c"
+      - "traefik.http.services.otlp-grpc.loadbalancer.server.port=4317"
+      # TLS 종단 + mTLS(클라이언트 인증서 필수 검증) - Techeer 쪽 otel-collector
+      # exporter가 이미 클라이언트 인증서를 붙여 보내고 있다(Techeer-12th-b/
+      # otel-collector-config.yaml의 exporters.otlp.tls). CA는 proxy/traefik/certs/
+      # generate-otlp-mtls-certs.sh로 발급하고 otlp-client-ca.crt를 이 경로에 둔다.
+      # clientAuth/caFiles는 Docker 라벨로 정의할 수 없어(Traefik 제약) file
+      # provider 쪽(proxy/traefik/dynamic/tls-options.yml)에 옵션을 정의해두고
+      # 여기서는 @file로 참조만 한다.
+      - "traefik.http.routers.otlp-grpc.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.otlp-grpc.tls.options=otlp-mtls@file"

@@ -407,3 +407,796 @@ scenarios:
       event_action: "Debugfs Launched in Privileged Container"
     severity: 4
     mitre_technique_id: "T1611"
+
+  # S61 (sequence, join_on=user_or_sa, 2026-07-19, Notion "여러 계층 시나리오" M3
+  # 구현): S1/S3와 방향이 반대인 체인 - S1/S3는 "k8s_audit 선행(exec 권한 사용/RBAC
+  # 변경) → falco 후행(실제 이상행동)"인데, 이건 "falco가 먼저 컨테이너 침해를
+  # 확인한 뒤 그 신원이 K8s Audit에서 클러스터 권한을 노리는지"를 본다 - 컨테이너
+  # 하나가 뚫린 걸 넘어 클러스터 전체로 번지려는 시도라 위험도가 가장 높다.
+  #
+  # stage1은 이미 구현된 falco 신호 4종을 재료로 재사용한다 - 리버스쉘/RCE 계열
+  # (S32 stdout/stdin 리다이렉트, S34 미확인 바이너리 실행, S35 Netcat RCE)과
+  # 컨테이너 이스케이프 계열(S52 Debugfs). ⚠️ M3 원문의 "/proc/*/root 접근"과
+  # "setuid/CAP_SYS_ADMIN capability 변경"은 대응하는 falco 룰이 카탈로그에 없어서
+  # (커스텀 룰이 필요, S53/S56처럼 Techeer-12th-b에 별도 룰 추가가 선행돼야 함)
+  # 이번엔 뺐다 - 근거 없이 조건을 지어내지 않는다는 이 카탈로그의 원칙 그대로.
+  #
+  # stage2는 S1/S2/S3/S13이 이미 쓰는 event_action 값을 그대로 모아 하나의
+  # 리스트로 표현했다(S1 stage1이 이미 이 "여러 verb x resource 조합을 event_action
+  # 리스트 하나로" 패턴을 쓰고 있어 그대로 따름) - clusterrolebinding/rolebinding
+  # 생성(S13류 권한 몰아주기), secrets 조회(S2), 다른 pod exec/attach(S1/S3).
+  #
+  # join_on=user_or_sa: falco(stage1)의 actor_identity(enrichment.py가 대상 pod에
+  # 정적으로 매핑해둔 K8s 신원)와 k8s_audit(stage2)의 실제 인증된 user.name이
+  # 자연히 이어진다 - `S59`가 이미 같은 Falco→K8s Audit 브릿지를 5단계 체인에서
+  # 증명한 방식 그대로라 새로운 조인 문제가 없다.
+  #
+  # severity=4, mitre_technique_id=T1609: S1/S3와 짝을 이루는 역방향 체인이라는
+  # 점을 명시적으로 밝힌 원문 그대로 같은 기법 태그를 재사용했다 - stage2가 실제로는
+  # T1098(RBAC 권한 부여)/T1552(자격증명 접근)/T1609(exec) 세 종류를 포괄하는 혼합
+  # 신호지만, 이 카탈로그가 S1/S3에 이미 확립한 "쌍을 이루는 체인은 같은 기법으로
+  # 묶는다"는 컨벤션을 그대로 따른다.
+  - id: S61
+    name: "컨테이너 침해 확인 이후 클러스터 권한 확장 시도 (Falco → K8s Audit)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [falco, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action:
+        [
+          "Redirect STDOUT/STDIN to Network Connection in Container",
+          "Drop and execute new binary in container",
+          "Netcat Remote Code Execution in Container",
+          "Debugfs Launched in Privileged Container",
+        ]
+    stage2:
+      event_module: k8s_audit
+      event_action:
+        [
+          "create clusterrolebindings",
+          "create rolebindings",
+          "get secrets",
+          "list secrets",
+          "create pods/exec",
+          "create pods/attach",
+          "get pods/exec",
+          "get pods/attach",
+        ]
+    severity: 4
+    mitre_technique_id: "T1609"
+
+  # S64 (sequence, join_on=pod, 2026-07-19, Notion "여러 계층 시나리오" M30 구현,
+  # S8/S23 후속): 로그 삭제(`S23`, stage1 재료)만으로는 falco의 실시간 프로세스
+  # 트리 관측까지는 못 지운다 - 컨테이너 자체를 delete+recreate로 통째로 갈아치우면
+  # 그 안의 모든 런타임 흔적(프로세스 히스토리, 열린 파일 핸들)이 사라진다는 점에서
+  # 흔적 인멸의 더 근본적인 버전.
+  #
+  # `S8`(네임스페이스 삭제 전체)과 조건이 겹칠 수 있다고 M30 원문이 스스로 지적한
+  # 우려는 stage2/3을 orchestrator_resource_type=pods로 좁혀서 해소했다 -
+  # namespaces가 아니라 개별 pod의 delete+recreate 쌍만 본다.
+  #
+  # ⚠️ stage2->stage3이 join_on=pod로 자연히 이어지려면 삭제된 pod와 "정확히 같은
+  # 이름"으로 재생성돼야 한다 - Deployment가 관리하는 일반 pod는 재시작하면 보통
+  # 새 랜덤 접미사 이름을 받아서(예: juice-shop-7d9f8-abc12 -> -xyz34) 이 조인이 안
+  # 걸린다. 반면 StatefulSet pod는 재시작해도 이름이 그대로 유지되고, 공격자가
+  # 명시적으로 같은 이름 스펙으로 재생성하는 경우도 이 조건에 해당한다 - 이건 엔진
+  # 한계가 아니라 워크로드 유형에 따라 갈리는 자연스러운 특성이라 그대로 둔다.
+  #
+  # window_seconds=180: 엔진이 스테이지 사이 구간별로 서로 다른 마감시한을 두는
+  # 기능이 없어(모듈 docstring 참고 - window_seconds는 체인 전체에 적용되는 예산
+  # 하나뿐) M30 원문의 "로그 삭제 이후"와 "delete 후 매우 짧은 시간 안에 recreate"
+  # 두 서로 다른 긴급도를 하나의 예산으로 근사한다 - 전체 체인이 3분 안에 끝나야
+  # 한다는 뜻.
+  #
+  # mitre_technique_id=T1070: stage1 재료인 S23의 태그를 그대로 물려받는다 -
+  # S60~S63이 이미 확립한 "재사용한 원조 시나리오의 기법 태그를 따른다"는 컨벤션.
+  # severity=4는 S1/S3/S61과 같은 논리 - 흔적 인멸 시도(S23, severity=3)보다 "실제로
+  # 컨테이너를 통째로 갈아치우는 데까지 이어졌다"는 확정적 체인이라 한 단계 올린다.
+  - id: S64
+    name: "로그 삭제 이후 pod 재시작을 통한 흔적 완전 인멸 (Falco → K8s Audit)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco, k8s_audit]
+    window_seconds: 180
+    stage1:
+      event_module: falco
+      event_action: "Clear Log Activities"
+    stage2:
+      event_module: k8s_audit
+      audit_verb: delete
+      orchestrator_resource_type: pods
+    stage3:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: pods
+    severity: 4
+    mitre_technique_id: "T1070"
+
+  # S66 (sequence, join_on=pod, 2026-07-19, Notion "여러 계층 시나리오" M38 구현,
+  # S53 후속): 컨테이너 안에 백도어 계정을 만드는 것(`S53`, rbac.yaml)과 그 계정으로
+  # 실제로 재접속을 시도하는 것(`S42`, 이 파일)은 심각도가 다르다 - 두 신호가 짧은
+  # 시간 안에 같은 pod에서 이어지면 계정이 실제로 쓰이기 시작했다는 확정적 증거가
+  # 된다. M19/M34와 달리 두 재료 다 threshold=1 단발 이벤트 매치라(카운터 누적이
+  # 필요 없음) 별다른 조정 없이 그대로 두 단계로 이어붙일 수 있었다 - S53/S42
+  # 둘 다 이미 join_on=pod라 새로운 조인 문제도 없다.
+  #
+  # mitre_technique_id=T1136: stage1 재료인 S53의 태그를 그대로 물려받는다 -
+  # "백도어 계정 생성"이 이 시나리오의 핵심 서사이고 stage2(SSH 재접속)는 그
+  # 계정이 실제로 쓰였다는 확인 단계라는 점에서 S64가 S23(T1070)을 물려받은 것과
+  # 같은 논리. severity=4는 S53 단독(이미 4, "절대 정상적으로 일어나지 않아야 할
+  # 사건"이라는 희소성 논리)과 같은 급을 유지 - 재접속까지 확인되면 그 확정성이
+  # 더 강해지지만 이미 최고 등급이라 더 올릴 곳이 없다.
+  - id: S66
+    name: "백도어 OS 계정 생성 이후 비표준 경로로의 재접속 (Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action: "Account Creation Inside Container"
+    stage2:
+      event_module: falco
+      event_action: "Disallowed SSH Connection Non Standard Port"
+    severity: 4
+    mitre_technique_id: "T1136"
+
+  # S67 (sequence, join_on=pod, 2026-07-19, Notion "여러 계층 시나리오" M43 구현,
+  # S14 후속): S14(kubectl debug류로 실행 중 pod에 디버그 컨테이너 추가)는 그
+  # 자체로는 정상적인 운영 행위(디버깅)와 구분이 안 된다 - 그 직후 같은 pod에서
+  # 미확인 바이너리가 실행되면(`S34` 재료) 디버깅이 아니라 악성 목적으로 ephemeral
+  # container를 악용했다는 확정적 증거가 된다. M23(이미지 빌드→실행)과 유사한
+  # 발상이지만 진입 경로가 다르다(이미지 빌드 vs ephemeral container 추가).
+  #
+  # ⚠️ join_on=pod는 S14의 독자 정의(join_on=user_or_sa)와 다르다 - S14 원본
+  # 이벤트(patch/update pods/ephemeralcontainers)는 pods 리소스의 서브리소스
+  # 액션이라 orchestrator_resource_name이 이미 그 pod 이름을 신뢰성 있게 담는다
+  # (S1이 pods/exec·attach에서 이미 증명한 것과 같은 원칙) - S14가 독자적으로는
+  # user_or_sa를 골랐다고 해서 이 조합 시나리오도 그래야 하는 건 아니다. falco
+  # stage2(S34)는 애초에 pod로만 조인되므로, 두 스테이지를 하나의 시퀀스로 엮으려면
+  # pod가 둘 다에 실제로 존재하는 유일한 공통 축이다.
+  #
+  # mitre_technique_id=T1609: S14/S34 둘 다 이미 같은 태그를 쓰고 있어 모호함 없이
+  # 그대로 물려받는다. severity=4는 S34 단독과 같은 급(이미 최고 등급) - S14의
+  # severity=3보다 위인 이유는 "디버깅이 아니라 악용이 확정됐다"는 확실성이 더해져서다.
+  - id: S67
+    name: "임시 컨테이너 추가 이후 미확인 바이너리 실행 (K8s Audit → Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [k8s_audit, falco]
+    window_seconds: 300
+    stage1:
+      event_module: k8s_audit
+      event_action: ["patch pods/ephemeralcontainers", "update pods/ephemeralcontainers"]
+    stage2:
+      event_module: falco
+      event_action: "Drop and execute new binary in container"
+    severity: 4
+    mitre_technique_id: "T1609"
+
+  # S68 (sequence, join_on=pod, 2026-07-19, Notion "여러 계층 시나리오" M44 구현,
+  # S15 후속): S15(시스템 네임스페이스에 pod 생성)는 "위치가 이상하다"만 본다 -
+  # kube-system/kube-public에 심어진 pod가 실제로 악성 행위까지 하면 단순 배치
+  # 실수가 아니라 의도적 침투로 확정된다. stage2는 M44 원문 그대로 "크립토마이닝
+  # (`S22`) 또는 OS 계정 생성(`S53`)" 둘 다를 대안 확인 신호로 event_action 리스트
+  # 하나에 담았다(S1 stage2/S60 stage2와 같은 "여러 대안을 event_action 리스트로"
+  # 패턴) - 어느 쪽이든 "이 위치의 이 pod에서 실제 악성 행위가 확인됐다"는 같은
+  # 결론을 뒷받침하는 대안적 증거이기 때문.
+  #
+  # join_on=pod는 S67과 같은 이유(S15 원본이 join_on=user_or_sa를 쓰지만, "create
+  # pods" 이벤트 자체는 orchestrator_resource_name에 pod 이름을 신뢰성 있게 담는다
+  # - S1이 이미 증명한 원칙)로 S22/S53(둘 다 join_on=pod) 쪽에 맞췄다.
+  #
+  # mitre_technique_id=T1610: stage1 재료인 S15의 태그를 그대로 물려받는다 - "위치
+  # 자체가 수상한 pod"라는 이 시나리오의 헤드라인 서사가 S15에서 오기 때문에, S64가
+  # S23(T1070)을, S66이 S53(T1136)을 물려받은 것과 같은 컨벤션. severity=4는 두
+  # stage2 재료(S22/S53) 모두 이미 4라 그대로 유지.
+  - id: S68
+    name: "시스템 네임스페이스 침투 파드에서의 실제 악성 행위 확인 (K8s Audit → Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [k8s_audit, falco]
+    window_seconds: 300
+    stage1:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: pods
+      orchestrator_namespace: [kube-system, kube-public]
+    stage2:
+      event_module: falco
+      event_action:
+        [
+          "Detect outbound connections to common miner pool ports",
+          "Detect crypto miners using the Stratum protocol",
+          "Known Cryptominer Process Executed",
+          "Account Creation Inside Container",
+        ]
+    severity: 4
+    mitre_technique_id: "T1610"
+
+  # S69 (sequence, join_on=pod, 2026-07-19, Notion "여러 계층 시나리오" M51 구현,
+  # S43 후속): S43(시스템 계정의 인터랙티브 셸 획득) 자체가 이미 "이 계정 체계에서
+  # 절대 정상적으로 일어나지 않아야 할 사건"이라는 희소성으로 심각도를 높여 잡고
+  # 있다(S43 주석 참고, 이력상 1건뿐인 가장 드문 신호) - 그 직후 같은 pod에서 실제
+  # 이스케이프 시도(`S52`)까지 이어지면, 단순 이상 신호가 아니라 침해가 이미 권한
+  # 상승 단계로 진행 중이라는 확정적 증거가 된다. S43/S52 둘 다 이미 join_on=pod인
+  # 단발 이벤트라 조정 없이 그대로 두 단계로 이어붙였다(S66과 같은 가장 단순한
+  # 케이스).
+  #
+  # mitre_technique_id=T1611: 이 시나리오의 결론("컨테이너 이스케이프 시도")을
+  # 그대로 반영해 stage2 재료인 S52의 태그를 물려받는다 - S43(T1059, 희소성이
+  # 신호인 전조)보다 "실제로 확인된 이스케이프 시도"라는 확정적 결말 쪽에 무게를
+  # 둔다는 점에서, 헤드라인이 stage1에 있던 S64/S66/S68과는 반대로 stage2를
+  # 앵커로 삼은 경우 - 이 시나리오는 "전조가 실제 이스케이프로 이어졌는가"가
+  # 핵심이라 결말 쪽 기법이 더 정확하다. severity=4는 S52 단독과 같은 급(이미
+  # 최고 등급) - S43의 severity=2보다 위인 이유는 "희소한 전조가 실제 이스케이프로
+  # 확정됐다"는 확실성이 더해져서다.
+  - id: S69
+    name: "시스템 계정의 인터랙티브 셸 획득 직후 컨테이너 이스케이프 시도 (Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action: "System user interactive"
+    stage2:
+      event_module: falco
+      event_action: "Debugfs Launched in Privileged Container"
+    severity: 4
+    mitre_technique_id: "T1611"
+
+  # S70 (sequence, join_on=user_or_sa, 2026-07-19, Notion "여러 계층 시나리오" M53
+  # 구현): 컨테이너 안에 들어온 공격자가 가장 먼저 하는 행동 중 하나가 "여기가
+  # 어디고 내가 누군지" 확인하는 것이다 - 이 정찰 직후 실제 권한 상승 시도로
+  # 이어지면 단순 호기심이 아니라 의도적 침해가 진행 중이라는 확정적 증거가 된다.
+  #
+  # stage1 "Basic Interactive Reconnaissance"는 이 카탈로그에 처음 등장하는 재료 -
+  # falcosecurity/rules sandbox 룰셋(falco-sandbox_rules.yaml)에 실제로 존재함을
+  # WebFetch로 직접 재확인했다(w/whoami/id/who/uname을 인터랙티브 tty에서 실행,
+  # process group leader 조건까지 - 태그는 mitre_reconnaissance/TA0043뿐이라 구체
+  # technique ID가 없음, S1 원조 케이스와 동일 상황). MITRE Containers 매트릭스
+  # (`CONTAINERS_MATRIX`)에는 없는 기법이지만 falcosecurity 근거가 실제로 있어
+  # T1082(System Information Discovery)를 직접 매칭했다 - S28/S36/S40/S44/S50이
+  # 이미 쓰는 "카탈로그 밖 기법 사용" 관례와 동일.
+  #
+  # stage2는 `S61`(M3)의 stage2를 그대로 재사용한다 - clusterrolebinding/rolebinding
+  # 생성, secrets 조회, 다른 pod exec/attach. join_on=user_or_sa도 S61과 동일한
+  # 이유(falco의 actor_identity 정적 매핑 -> k8s_audit의 실제 인증된 user.name,
+  # S59가 증명한 브릿지) - stage2의 RBAC 오브젝트/secrets는 pod 스코프가 아니라
+  # join_on=pod로는 애초에 이어지지 않는다.
+  #
+  # mitre_technique_id는 stage2가 아니라 stage1(T1082)을 앵커로 삼는다 - M53 원문이
+  # 스스로 "이 M이 그 재료(정찰)의 최초 제안"이라고 명시하듯, 이 시나리오의 신규
+  # 기여는 정찰 신호 쪽이고 stage2 재료는 이미 S61로 카탈로그에 들어와 있다.
+  # severity=4는 S61과 같은 급 - 확정적 에스컬레이션 체인.
+  - id: S70
+    name: "인터랙티브 정찰 이후 실제 권한 상승 시도 (Falco → K8s Audit)"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [falco, k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action: "Basic Interactive Reconnaissance"
+    stage2:
+      event_module: k8s_audit
+      event_action:
+        [
+          "create clusterrolebindings",
+          "create rolebindings",
+          "get secrets",
+          "list secrets",
+          "create pods/exec",
+          "create pods/attach",
+          "get pods/exec",
+          "get pods/attach",
+        ]
+    severity: 4
+    mitre_technique_id: "T1082"
+
+  # S72 (threshold, threshold=1, 2026-07-20, Notion "여러 계층 시나리오" M61 구현):
+  # `S8`(네임스페이스 삭제)은 네임스페이스 전체를 지우는 훨씬 큰 파괴 행위만
+  # 잡는다 - 이건 그보다 작은 단위(개별 Deployment/StatefulSet/Service)를 지워서
+  # 서비스 가용성만 정확히 끊는, 데이터 파괴(`S37`, T1485) 없이도 가능한 더 정밀한
+  # 방해 공작을 잡는다.
+  #
+  # k3d-audit-policy.yaml에 deployments/statefulsets/services 전용 delete 규칙은
+  # 없지만, S71과 같은 이유로 맨 아래 catch-all(level: Metadata, 모든 delete
+  # verb)이 이미 잡고 있어 정책 변경 없이 바로 쓸 수 있다.
+  #
+  # ⚠️ CI/CD의 정상적인 재배포(delete 후 즉시 recreate)와 오탐이 겹칠 수 있다 -
+  # `S7`처럼 실사용 시 allow_list(CI 시스템 계정 등) 기반 튜닝이 필요할 것이다 -
+  # M61 원문이 스스로 이 한계를 지적하고 있어 그대로 남겨둔다.
+  #
+  # join_on=user_or_sa, severity=4는 S8/S71과 같은 컨벤션(단발성 파괴/방해
+  # 행위). mitre_technique_id=T1489(Service Stop)는 CONTAINERS_MATRIX에 없는
+  # 기법이지만 MITRE 공식 문서를 직접 인용 - S28/S36/S40/S44/S50/S70/S71이 이미
+  # 쓰는 "카탈로그 밖 기법 사용" 관례와 동일.
+  - id: S72
+    name: "워크로드 삭제를 통한 서비스 중단"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      audit_verb: delete
+      orchestrator_resource_type: [deployments, statefulsets, services]
+    severity: 4
+    mitre_technique_id: "T1489"
+
+  # S73 (sequence, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오" M64
+  # 구현, DET0473 기반, S20/S16 후속): MITRE 공식 DET0473(T1543.005)은
+  # "restartPolicy가 있는 컨테이너/DaemonSet 생성"을 "권한 상승 시도나 서비스어카운트
+  # 오남용, 특권 컨테이너 컨텍스트"와 결합해서 볼 때만 발화하라고 명시한다 -
+  # `S20`(DaemonSet 생성) 단독은 "전체 노드에 지속적으로 배포된다"는 사실만 본다.
+  #
+  # ⚠️ DET0473 원문 그대로("그 DaemonSet 자체"의 pod 템플릿이 위험한 설정을
+  # 겸비했는지)는 구현 불가능하다 - 실제 K8s에서 DaemonSet이 낳는 pod는 DaemonSet을
+  # 만든 사람이 아니라 시스템 신원(`system:serviceaccount:kube-system:
+  # daemon-set-controller`, k3d-audit-policy.yaml에 명시)이 대신 생성한다. 그래서
+  # stage1(사람/공격자 신원)과 실제 pod 생성 이벤트(컨트롤러 신원)가 join_on=
+  # user_or_sa로 절대 안 이어진다. 게다가 daemonsets 리소스 자체는 audit policy가
+  # Metadata 레벨로만 남겨서(request body 없음) DaemonSet 생성 요청 안의 pod
+  # 템플릿(privileged 등)을 직접 들여다볼 방법도 없다.
+  #
+  # 그래서 이 시나리오는 "같은 신원이 DaemonSet도 만들고, 짧은 시간 안에(그
+  # DaemonSet과 무관하게) 별도로 위험한 pod도 직접 만든다"로 완화했다(`S16`의 match
+  # 조건을 stage2로 재사용) - DET0473의 "같은 오브젝트의 결합 속성" 원문 의미보다는
+  # 느슨하지만, "지속성 확보와 즉각적 에스컬레이션을 같은 공격자가 병행한다"는
+  # 여전히 유의미한 신호다.
+  #
+  # mitre_technique_id=T1543: stage1 재료인 S20의 태그를 그대로 물려받는다 -
+  # "DaemonSet 지속성 확보"가 이 시나리오의 헤드라인 서사이고 stage2(위험한 pod
+  # 생성)는 그게 단순 배치 자동화가 아니라는 확인 단계. severity=4는 S16/S20 둘 다
+  # 이미 4라 그대로 유지.
+  - id: S73
+    name: "DaemonSet 지속성 확보와 위험한 런타임 설정의 결합 탐지"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 300
+    stage1:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: daemonsets
+    stage2:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: pods
+      audit_pod_security_flags_any: [privileged, host_network, host_pid, host_ipc, host_path_volume]
+    severity: 4
+    mitre_technique_id: "T1543"
+
+  # S74 (sequence, join_on=pod, window_seconds=60, 2026-07-20, Notion "여러 계층
+  # 시나리오" M65 구현, DET0596 기반, S42 후속): MITRE 공식 DET0596(SSH, T1021.004)은
+  # "SSH 로그인 자체"가 아니라 "로그인 직후 의심스러운 명령 실행이나 권한 상승
+  # 행위까지 이어져야" 발화하라고 명시한다 - `S42`(비표준 포트 SSH 연결) 단독은
+  # 연결 시도만 본다.
+  #
+  # window_seconds=60은 DET0596 공식 튜닝값(45~60초)의 상한을 그대로 채택 - 이
+  # 카탈로그의 다른 sequence들(대부분 60~1800초, 예: S1/S3/S61/S70은 300초)보다
+  # 훨씬 좁은 창을 명시적 MITRE 근거로 정당화하는 첫 사례. S42/S34/S35 셋 다 이미
+  # join_on=pod인 단발 이벤트라 조정 없이 그대로 이어붙였다.
+  #
+  # mitre_technique_id=T1059: S42/S34/S35 셋 다 이미 같은 태그를 쓰고 있어 모호함
+  # 없이 물려받는다. severity=4는 S34/S35 단독과 같은 급(이미 최고 등급 근처) -
+  # S42의 severity=2보다 위인 이유는 "연결 시도가 실제 실행까지 확인됐다"는
+  # 확실성이 더해져서다.
+  - id: S74
+    name: "SSH 비표준 포트 연결 직후 의심스러운 바이너리 실행 (Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 60
+    stage1:
+      event_module: falco
+      event_action: "Disallowed SSH Connection Non Standard Port"
+    stage2:
+      event_module: falco
+      event_action: ["Drop and execute new binary in container", "Netcat Remote Code Execution in Container"]
+    severity: 4
+    mitre_technique_id: "T1059"
+
+  # S75 (sequence, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오" M73 구현,
+  # DET0219 기반, S16/S52 정밀화): `S52`는 debugfs 실행이라는 한 가지 이스케이프
+  # 수법만 감시한다 - release_agent cgroup 파일 조작은 실제로 알려진 또 다른
+  # 컨테이너 이스케이프 벡터로, MITRE 공식 DET0219(AN0613)가 명시하는 "Linux
+  # 이스케이프" 카테고리에 정확히 해당하는 별도 falco 룰이 core 룰셋에 실제로
+  # 존재한다(WebFetch로 직접 재확인 - "Detect release_agent File Container Escapes",
+  # 조건: open_write and container and fd.name endswith release_agent and
+  # (user.uid=0 or thread.cap_effective contains CAP_DAC_OVERRIDE) and
+  # thread.cap_effective contains CAP_SYS_ADMIN, 태그 mitre_privilege_escalation/
+  # T1611). `S16`(위험한 설정의 pod 생성)을 stage1으로 앞에 붙이면 "위험한 설정의
+  # pod에서 실제로 이 수법이 쓰였는지"까지 확인하는 체인이 된다.
+  #
+  # join_on=pod는 S43/S67/S68/S73과 같은 이유(S16 원본은 join_on=user_or_sa지만,
+  # "create pods" 이벤트 자체는 orchestrator_resource_name에 pod 이름을 신뢰성
+  # 있게 담는다) - falco stage2는 애초에 pod로만 조인되므로 그대로 맞춘다.
+  #
+  # mitre_technique_id=T1611: S16과 신규 falco 룰 둘 다 이미 같은 태그를 쓰고
+  # 있어 모호함 없이 물려받는다. severity=4는 둘 다 이미 4라 그대로 유지.
+  - id: S75
+    name: "release_agent 파일 조작을 통한 컨테이너 이스케이프 확인 (K8s Audit → Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [k8s_audit, falco]
+    window_seconds: 300
+    stage1:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: pods
+      audit_pod_security_flags_any: [privileged, host_network, host_pid, host_ipc, host_path_volume]
+    stage2:
+      event_module: falco
+      event_action: "Detect release_agent File Container Escapes"
+    severity: 4
+    mitre_technique_id: "T1611"
+
+  # S80 (sequence, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오" M88 구현,
+  # DET0203 기반, S40 정밀화): `S40`은 이미 스스로 "디버깅 도구(strace/gdb)의
+  # 정상 사용과 겹쳐 오탐 가능"이라고 주석에 명시하고 있다 - MITRE 공식
+  # DET0203(AN0579)은 정확히 "ptrace 부착이 비정상적인 메모리/실행 행동으로
+  # 이어질 때"만 신호로 삼으라고 명시해서, S40 단독의 오탐 문제를 공식적으로
+  # 보정하는 후속 조건을 제공한다. M42(PTRACE+안티디버그 조합)와는 다른 축(다른
+  # 신호와의 조합이 아니라 ptrace 자체의 순차적 결과를 본다)이라 별도 시나리오로
+  # 둔다.
+  #
+  # S40/S34 둘 다 이미 join_on=pod인 단발 이벤트라 조정 없이 그대로 이어붙였다
+  # (S66/S69/S74와 같은 가장 단순한 케이스).
+  #
+  # mitre_technique_id=T1055: "S40의 오탐 보정"이 이 시나리오의 목적이므로
+  # stage1(S40)의 태그를 그대로 물려받는다 - S64/S66/S68/S75와 같은 "헤드라인이
+  # stage1에 있는" 앵커 컨벤션. severity=4는 S34 단독과 같은 급(이미 최고 등급) -
+  # S40의 severity=3보다 위인 이유는 "오탐 의심이었던 신호가 실제 실행으로
+  # 확정됐다"는 확실성이 더해져서다.
+  - id: S80
+    name: "PTRACE 부착 이후 비정상 실행까지 이어지는지 확인 (Falco)"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 300
+    stage1:
+      event_module: falco
+      event_action: "PTRACE attached to process"
+    stage2:
+      event_module: falco
+      event_action: "Drop and execute new binary in container"
+    severity: 4
+    mitre_technique_id: "T1055"
+
+  # S81 (sequence, join_on=pod, 4단계, 2026-07-20, Notion "여러 계층 시나리오" M91
+  # 구현 + 대화 중 설계한 "웹 침투 → 컨테이너 이스케이프 → 루트킷 설치 확인"
+  # 킬체인): M91 단독(Falco 단발, "Linux Kernel Module Injection Detected")은
+  # 그 자체로 이미 S43류 "발생 자체가 이례적"인 고신뢰 신호다 - 일반 pod는
+  # CAP_SYS_MODULE이 없어 이 행위 자체가 불가능하기 때문. 여기에 앞선 침투
+  # 과정(웹 공격 → 쉘 확보 → 이스케이프 시도)을 엮으면 "탐지 하나"가 아니라
+  # "완결된 침해 서사"가 된다.
+  #
+  # stage1/2는 `S5`(WAF CRITICAL → Falco 쉘 실행/K8s API 접근)를 그대로
+  # 재사용한다 - S5가 이미 join_on=pod로 WAF→Falco 브릿지를 실측 검증까지 끝낸
+  # 선례라(waf/falco 둘 다 orchestrator.resource.name을 신뢰성 있게 채움) 새로운
+  # 조인 문제가 없다. stage3은 `S52`(Debugfs 이스케이프 시도)를 재사용한다.
+  #
+  # falco 룰 "Linux Kernel Module Injection Detected"는 WebFetch로 직접 재확인 -
+  # kernel_module_load 매크로(init_module/finit_module syscall) + CAP_SYS_MODULE
+  # effective capability 조건, 태그는 mitre_persistence/TA0003(전술 단위뿐, S1
+  # 원조 케이스와 동일 상황이라 구체 technique은 MITRE 공식 페이지 대조로 직접
+  # 매칭).
+  #
+  # mitre_technique_id=T1547(Boot or Logon Autostart Execution: Kernel Modules
+  # and Extensions)은 이 카탈로그에 처음 등장하는 기법이다 - 헤드라인이 최종
+  # 확정 단계(커널 모듈 삽입=루트킷 설치)에 있다는 점에서 S69/S76과 같은
+  # "stage 마지막을 앵커로 삼는" 컨벤션. severity=4는 S5/S52와 같은 급(이미
+  # 최고 등급) - 4단계 전체가 확정될수록 신뢰도는 더 강해지지만 이미 최고
+  # 등급이라 더 올릴 곳이 없다.
+  - id: S81
+    name: "웹 침투 → 컨테이너 이스케이프 → 커널 모듈 삽입(루트킷) 확인"
+    type: sequence
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [waf, falco]
+    window_seconds: 300
+    stage1:
+      event_module: waf
+      min_severity: 4
+    stage2:
+      event_module: falco
+      event_action: ["Terminal shell in container", "Contact K8S API Server From Container", "Run shell untrusted"]
+    stage3:
+      event_module: falco
+      event_action: "Debugfs Launched in Privileged Container"
+    stage4:
+      event_module: falco
+      event_action: "Linux Kernel Module Injection Detected"
+    severity: 4
+    mitre_technique_id: "T1547"
+
+  # S86 (threshold, threshold=1, 2026-07-20, Notion "여러 계층 시나리오" M11
+  # 구현 - part A): MutatingWebhookConfiguration을 만들면 그 뒤로 클러스터에
+  # 생성되는 모든(또는 조건에 맞는) 리소스를 가로채 변조할 수 있다 - admission
+  # 단계에서 임의 사이드카 주입 등으로 지속성을 확보하는 강력한 벡터. MITRE
+  # 공식 Containers 매트릭스에 웹훅 전용 기법은 없음을 WebFetch로 확인 - "컨테이너
+  # 오케스트레이션 시스템 조작을 통한 지속성"이라는 점에서 `S20`(DaemonSet
+  # 지속성)이 이미 쓰는 T1543(Container Service)이 가장 근접한 기법이라 재사용.
+  #
+  # k3d-audit-policy.yaml에 mutatingwebhookconfigurations 전용 규칙은 없지만
+  # S71/S72와 같은 이유로 맨 아래 catch-all(level: Metadata)이 이미 잡고 있어
+  # 정책 변경 없이 바로 쓸 수 있다.
+  - id: S86
+    name: "MutatingWebhookConfiguration 생성/수정을 통한 백도어 등록 탐지"
+    type: threshold
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 60
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: k8s_audit
+      audit_verb: [create, update]
+      orchestrator_resource_type: mutatingwebhookconfigurations
+    severity: 4
+    mitre_technique_id: "T1543"
+
+  # S87 (sequence, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오" M11
+  # 구현 - part B): 등록된 CronJob이 실제로 예상치 못한 바이너리/스크립트를
+  # 실행하는지까지 확인한다 - `S21`(CronJob 생성)은 생성 자체만 본다.
+  #
+  # ⚠️ `M64`(S73)에서 이미 확인한 것과 같은 한계 - CronJob이 낳는 실제 Job/Pod는
+  # CronJob을 만든 사람이 아니라 시스템 컨트롤러 신원(cronjob-controller)이
+  # 대신 생성하므로, "그 CronJob이 낳은 바로 그 pod"까지 join_on=user_or_sa로
+  # 정확히 추적할 수는 없다. S73과 같은 방식으로 "같은 신원이 CronJob도 만들고,
+  # 짧은 시간 안에(그 CronJob과 무관하게) 별도로 의심스러운 실행도 직접
+  # 확인된다"로 완화했다 - 정확한 인과관계보다는 "지속성 확보와 실행이 같은
+  # 공격자에게서 병행된다"는 근사적 신호다.
+  #
+  # mitre_technique_id=T1543: stage1(S21)의 헤드라인을 그대로 물려받는다(S73과
+  # 같은 컨벤션). severity=4는 S34/S35 단독과 같은 급.
+  - id: S87
+    name: "CronJob 등록 이후 의심스러운 실행 확인"
+    type: sequence
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit, falco]
+    window_seconds: 300
+    stage1:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: cronjobs
+    stage2:
+      event_module: falco
+      event_action: ["Drop and execute new binary in container", "Netcat Remote Code Execution in Container"]
+    severity: 4
+    mitre_technique_id: "T1543"
+
+  # S94 (threshold, threshold=1, join_on=pod, 2026-07-20, network.yaml S85의
+  # 잘려나간 5번째 stage를 requires_recent_fire로 복원): S85(WAF/WAS 인증 우회 →
+  # 관리 콘솔 접근 → RBAC 권한 상승 → 위험한 pod 생성, join_on=user_or_sa 4단계
+  # sequence)의 원안은 "그 신규 pod 안에서 실제 비정상 프로세스 실행까지
+  # 확인"(S1 stage2 재료)하는 5번째 stage를 요구했지만, sequence는 시나리오
+  # 전체에 단일 join_on만 지원해서 stage1~4(user_or_sa)에서 stage5(pod)로 축이
+  # 바뀌는 걸 표현할 수 없었다(S85 주석 참고) - discovery.yaml S92→S93(M4)에서
+  # 만든 requires_recent_fire 메커니즘(rules.py 모듈 docstring)으로 그 5번째
+  # stage를 별도 시나리오로 분리해 복원한다.
+  #
+  # match는 S1의 stage2(Pod Exec 권한 사용 이후 컨테이너 내 이상행동)를 그대로
+  # 재사용한다 - "신규 생성된 위험한 pod에서 터미널 셸/API 서버 접촉/셸 실행이
+  # 확인됐다"는 동일한 이상행동 신호이기 때문(S1과 이 시나리오는 전조만 다르고
+  # - S1은 "exec 권한 사용", 이건 "S85 전체 체인의 완주" - 결론 신호는 같다).
+  #
+  # requires_recent_fire: S85 - S85가 실제로 stage4(위험한 pod 생성)까지 완주해
+  # 발화한 그 이벤트 자체(fired_marker_join_on: pod)의 orchestrator_resource_name을
+  # 키로 남긴 흔적을 조회한다. join_on=pod는 S1/S67/S68과 같은 이유 - "create
+  # pods"/"pods/exec" 계열 이벤트는 orchestrator_resource_name에 pod 이름을
+  # 신뢰성 있게 담는다.
+  #
+  # mitre_technique_id=T1609: S1의 stage2가 물려주는 태그(Container Administration
+  # Command)를 그대로 재사용 - 같은 falco 신호, 같은 결론(컨테이너 내 이상행동
+  # 확인). severity=4는 S85 자체(이미 4, 확정적 전체 침해 체인)와 같은 최상위
+  # 급 - "그 체인이 실제로 악성 행위까지 이어졌다"는 확인이 더해져도 S85보다
+  # 높일 등급 자체가 없다.
+  - id: S94
+    name: "웹 계층 침투 체인 완주 이후 신규 Pod의 실제 이상행동 확인 (S85 후속)"
+    type: threshold
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 300
+    threshold: 1
+    cooldown_seconds: 600
+    match:
+      event_module: falco
+      event_action: ["Terminal shell in container", "Contact K8S API Server From Container", "Run shell untrusted"]
+      requires_recent_fire: S85
+    severity: 4
+    mitre_technique_id: "T1609"
+
+  # S100 (cardinality, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오" M42
+  # 구현, S40/S44 재활용, M35와 같은 "신호 다양성 카디널리티" 계열): S40(PTRACE
+  # 부착)은 디버깅 도구(strace/gdb)의 정상 사용과 겹칠 수 있어 오탐 가능성이
+  # 있다고 이미 스스로 명시하고 있다(실측 확인 결과 falco 이력상 283건으로 가장
+  # 빈번한 미탐 룰이었음, S40 주석 참고) - 그런데 PTRACE 부착과 안티디버깅(S44)이
+  # 같은 pod에서 함께 나타나면(공격자가 자기 프로세스를 다른 프로세스에
+  # 주입하면서 동시에 분석 도구를 피하려는 시도), 우연한 정상 디버깅 도구 사용과는
+  # 구분되는 훨씬 정교한 멀웨어 활동의 신호가 된다. S40/S44를 대체하지 않고
+  # (개별 발화는 그대로 유지) 그 두 신호가 겹치는지를 별도로 얹어 보는 시나리오다 -
+  # M35(S99, S45~S49 5종 신호 다양성)와 동일한 메커니즘이지만, S40의 이미 알려진
+  # 오탐 문제를 다른 독립 신호와의 동시 발생으로 보정하려는 구체적 동기가 있다는
+  # 점에서 M35보다 목적이 더 뚜렷하다.
+  #
+  # distinct_field=event_action - 새 필드가 필요 없었다(S99와 동일한 이유).
+  # 다만 이 시나리오는 재료가 S40/S44 딱 2개뿐이라 distinct 값의 최댓값도 2 -
+  # threshold를 5개 중 3개(S99)처럼 부분집합으로 못 잡고, threshold=2(=가능한
+  # 전부)로 "둘 다 나타나야만" 발화한다.
+  #
+  # threshold=2/window_seconds=120은 "동시에"라는 티켓 표현을 반영해 S99(300초)
+  # 보다 짧게 잡았다 - 인젝션과 안티디버깅은 같은 프로세스 조작 흐름 안에서 거의
+  # 연이어 나타날 신호라고 판단했다. cooldown_seconds=600은 S40/S44 개별과
+  # 동일하게 맞췄다.
+  #
+  # mitre_technique_id=T1055(Process Injection, S40의 태그 재사용) - S44의
+  # T1622(Debugger Evasion)보다 이 시나리오의 헤드라인("인젝션이 실제로
+  # 확인됐다")에 더 가까운 쪽을 택했다(S69가 stage2 태그를 앵커로 삼은 것과 같은
+  # 논리 - 안티디버깅은 그 인젝션 시도를 뒷받침하는 정황 증거). T1055/T1622 둘
+  # 다 공식 Containers 매트릭스 30개 목록 밖이라 CONTAINERS_MATRIX엔 없지만
+  # (2026-07-20 WebFetch로 재확인), ids_shared/mitre_mapping.py의
+  # SCENARIO_TACTIC_OVERRIDE에 Enterprise 전체 매트릭스 기준 공식 전술을 채워둬서
+  # (T1055/T1622 문단 참고) mitre_tactics가 빈 값으로 나오지 않는다. severity=4는
+  # S40(3)/S44(2)보다 위 - 개별 신호 하나하나보다
+  # "짧은 시간 안에 서로 다른 두 종류의 프로세스 조작 신호가 함께 확인됐다"는
+  # 응집이 훨씬 확정적인 증거라는 이 카탈로그 전반의 일관된 논리(S62/S93/S96/S99와
+  # 동일).
+  - id: S100
+    name: "PTRACE 부착과 안티디버깅 시도 동시 발생 (정교한 멀웨어 활동 정황)"
+    type: cardinality
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 120
+    threshold: 2
+    cooldown_seconds: 600
+    distinct_field: event_action
+    match:
+      event_module: falco
+      event_action: ["PTRACE attached to process", "PTRACE anti-debug attempt"]
+    severity: 4
+    mitre_technique_id: "T1055"
+
+  # S102 (cardinality, join_on=pod, 2026-07-20, Notion "여러 계층 시나리오" M45
+  # 구현, S32/S34/S35 재활용): S32(stdout/stdin 네트워크 리다이렉트)/S34(미확인
+  # 바이너리 실행)/S35(Netcat RCE)는 전부 "원격 코드 실행/리버스쉘" 의심군이지만
+  # 각각 독립적인 threshold=1이다 - 같은 pod에서 이 중 여러 종류가 짧은 시간 안에
+  # 겹치면 우연한 단일 오탐이 아니라 실제 RCE 체인이 진행 중이라는 확정적 신호가
+  # 된다. S99(M35)/S100(M42)와 같은 "신호 다양성 카디널리티" 계열의 세 번째
+  # 적용, 이번엔 실행/RCE 계열에 - window_seconds/threshold/cooldown_seconds도
+  # S100과 같은 값을 그대로 썼다.
+  #
+  # 세 event_action 전부 이미 다른 시나리오가 쓰고 있는 기존 값이라 새 필드/
+  # 매처/falco 룰 없이 코드 변경 없이 YAML만으로 추가했다.
+  - id: S102
+    name: "리버스쉘/RCE 계열 Falco 시그널 동시다발 발화 (확정적 RCE 체인 정황)"
+    type: cardinality
+    join_on: pod
+    correlation_key_type: "orchestrator.resource.name"
+    required_modules: [falco]
+    window_seconds: 120
+    threshold: 2
+    cooldown_seconds: 600
+    distinct_field: event_action
+    match:
+      event_module: falco
+      event_action:
+        [
+          "Redirect STDOUT/STDIN to Network Connection in Container",
+          "Drop and execute new binary in container",
+          "Netcat Remote Code Execution in Container",
+        ]
+    severity: 4
+    mitre_technique_id: "T1059"
+
+  # S107 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오"
+  # M67 구현, DET0065 기반): MITRE 공식 DET0065의 "ExecFrequencyThreshold"(정상
+  # exec 빈도 기준선) 개념을 반영 - 짧은 시간 안에 같은 신원이 서로 다른 pod
+  # 여러 개에 exec하면(정상 관리자는 보통 한두 pod만 디버깅), 탈취된 관리
+  # 자격증명이 광범위하게 남용되고 있다는 신호. M13(S95, 신원의 IP 다양성)과
+  # 자매 관계지만, 이건 "같은 신원이 얼마나 많은 서로 다른 pod에 손을 대는지"를
+  # 본다는 점에서 축이 다르다.
+  #
+  # match는 S1 stage1(exec/attach) 재료를 그대로 재사용한다 - 새 필드/매처 없이
+  # distinct_field(orchestrator_resource_name)로 pod 개수만 센다.
+  - id: S107
+    name: "동일 신원의 비정상적으로 넓은 pod exec 범위 탐지"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 300
+    threshold: 4
+    cooldown_seconds: 600
+    distinct_field: orchestrator_resource_name
+    match:
+      event_module: k8s_audit
+      event_action:
+        [
+          "create pods/exec",
+          "create pods/attach",
+          "get pods/exec",
+          "get pods/attach",
+        ]
+    severity: 3
+    mitre_technique_id: "T1609"
+
+  # S108 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오"
+  # M72 구현, DET0065 기반): DET0065의 또 다른 튜닝 파라미터 "NamespaceScope"(exec가
+  # 허용되는 네임스페이스 범위)를 반영 - 정상 관리자는 보통 자기 담당 네임스페이스
+  # 한둘에서만 활동하는 반면, 탈취된 신원이나 침해된 CI 봇은 짧은 시간에 여러
+  # 네임스페이스를 넘나들며 손을 대는 경향이 있다. S107(M67, 같은 신원의 pod
+  # 범위)과 짝을 이루는 자매 시나리오 - S107은 "몇 개의 pod"를, 이건 "몇 개의
+  # 네임스페이스"를 distinct_field로 삼는다는 점이 다르다.
+  #
+  # match는 S107과 동일하게 S1 stage1 재료를 재사용 - 새 필드/매처 없음.
+  - id: S108
+    name: "동일 신원의 비정상적으로 넓은 네임스페이스 범위 탐지"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 300
+    threshold: 3
+    cooldown_seconds: 600
+    distinct_field: orchestrator_namespace
+    match:
+      event_module: k8s_audit
+      event_action:
+        [
+          "create pods/exec",
+          "create pods/attach",
+          "get pods/exec",
+          "get pods/attach",
+        ]
+    severity: 3
+    mitre_technique_id: "T1609"
+
+  # S109 (cardinality, join_on=user_or_sa, 2026-07-20, Notion "여러 계층 시나리오"
+  # M75 구현, DET0206 기반, S21 정밀화): `S21`(CronJob 생성, threshold=1/60s)은
+  # 단일 네임스페이스에서의 생성 자체만 본다 - 공격자가 하나의 신원으로 짧은
+  # 시간 안에 여러 서로 다른 네임스페이스에 CronJob을 분산 생성하면, 단순한
+  # 자동화 배치가 아니라 발각을 피하려 지속성 확보를 여러 곳에 나눠 심는 시도일
+  # 가능성이 높다는 MITRE 공식 DET0206의 관점을 반영한다.
+  #
+  # match는 S21의 match 조건을 그대로 재사용 - 새 필드/매처 없이
+  # distinct_field(orchestrator_namespace)만 추가.
+  - id: S109
+    name: "동일 신원의 여러 네임스페이스에 걸친 CronJob 분산 생성 탐지"
+    type: cardinality
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
+    required_modules: [k8s_audit]
+    window_seconds: 300
+    threshold: 3
+    cooldown_seconds: 600
+    distinct_field: orchestrator_namespace
+    match:
+      event_module: k8s_audit
+      audit_verb: create
+      orchestrator_resource_type: cronjobs
+    severity: 3
+    mitre_technique_id: "T1053"

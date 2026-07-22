@@ -14,6 +14,7 @@ falco/k8s_audit 이벤트는 앱 단위가 아니라 클러스터 단위라 targ
 없으므로 target_id로 스코프된 항목은 이런 이벤트엔 적용되지 않는다(전역 항목만 적용)."""
 import ipaddress
 from typing import List, Optional
+from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, HTTPException, Request
@@ -134,7 +135,7 @@ async def create_allow_list_entry(body: AllowListIn, request: Request):
 
 
 @router.delete("/{entry_id}")
-async def delete_allow_list_entry(entry_id: str, request: Request):
+async def delete_allow_list_entry(entry_id: UUID, request: Request):
     async with pool().acquire() as conn:
         result = await conn.execute("DELETE FROM allow_list WHERE id = $1", entry_id)
     if result == "DELETE 0":

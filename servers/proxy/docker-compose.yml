@@ -18,10 +18,16 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      # otlp-grpc mTLS용 file provider 동적 설정 - tls.options(clientAuth/caFiles)는
+      # Docker 라벨로 정의할 수 없어 file provider로 분리했다 (dynamic/tls-options.yml).
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
       # Let's Encrypt 인증서 저장소 - 컨테이너 재생성/재시작해도 인증서를 다시 발급받지
       # 않도록 호스트에 영속화한다. acme.json은 배포 절차에서 미리 touch + chmod 600
       # 해둬야 함(권한이 더 열려있으면 Traefik이 기동을 거부한다).
       - ./traefik/letsencrypt:/letsencrypt
+      # otlp-grpc mTLS 클라이언트 인증서 검증용 CA - proxy/traefik/certs/
+      # generate-otlp-mtls-certs.sh로 발급 (dynamic/tls-options.yml의 caFiles가 참조).
+      - ./traefik/certs:/etc/traefik/certs:ro
     networks:
       - siem-net
     # 로그 로테이션(2026-07-16, 감사 O16/§3.6) - accessLog가 요청마다 남지만 다른

@@ -14,6 +14,7 @@ git에 커밋하지 않는다(servers/normalizer/.gitignore) - 로컬/배포 전
 servers/normalizer/data/GeoLite2-City.mmdb 자리에 둘 것(GEOIP_DB_PATH로 경로 변경 가능,
 app/config.py 참고).
 """
+import asyncio
 import ipaddress
 import json
 from typing import Optional, TypedDict
@@ -24,8 +25,33 @@ import redis.asyncio as redis
 
 from app.config import settings
 
-_reader = geoip2.database.Reader(settings.geoip_db_path)
-_redis = redis.from_url(settings.redis_url, decode_responses=True)
+_redis = redis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+    socket_connect_timeout=settings.redis_socket_connect_timeout_seconds,
+    socket_timeout=settings.redis_socket_timeout_seconds,
+)
+
+# _reader는 모듈 최상단에서 즉시 열지 않고 첫 실제 조회 시점까지 미룬다(2026-07-20,
+# CI 실측 확인 후 변경) - GeoLite2-City.mmdb(53MB, MaxMind 라이선스상 git에 커밋 안 함,
+# .gitignore 참고)는 로컬/배포 환경에만 있고 CI 러너에는 없다. 예전처럼 여기서 즉시
+# Reader(path)를 열면 그 파일이 없는 어떤 환경에서든 이 모듈을 import하는 것 자체가
+# FileNotFoundError로 죽는다 - tests/test_enrichment.py는 GeoIP 조회를 전혀 테스트하지
+# 않는데도(자기 docstring이 명시) app.enrichment -> app.geoip import 체인 때문에
+# 테스트 수집 단계부터 막혔다(실측 확인). _redis(redis.from_url)는 원래도 지연
+# 연결이라(생성 시점엔 소켓을 안 열고 첫 명령에서만 연결) 이 문제가 없었다 - _reader만
+# 같은 지연 방식으로 맞춘다. 실제 배포 환경(정상적으로 .mmdb 파일이 있는 곳)에서는
+# 첫 이벤트 처리 시 한 번 여는 것으로 동작이 사실상 동일하다(그 이후로는 캐시된
+# 인스턴스를 계속 재사용).
+_reader: Optional["geoip2.database.Reader"] = None
+
+
+def _get_reader() -> "geoip2.database.Reader":
+    global _reader
+    if _reader is None:
+        _reader = geoip2.database.Reader(settings.geoip_db_path)
+    return _reader
+
 
 _CACHE_TTL_SECONDS = 7 * 24 * 3600
 _CACHE_PREFIX = "geoip:"
@@ -66,13 +92,13 @@ def _query(ip: str) -> GeoInfo:
     반환한다 - analytics_api.py가 country_iso_code를 '??'로 취급해 지도 집계에서
     제외한다."""
     try:
-        result = _reader.city(ip)
+        result = _get_reader().city(ip)
     except geoip2.errors.AddressNotFoundError:
-        return dict(_EMPTY)
+        return {**_EMPTY}
 
     lat, lon = result.location.latitude, result.location.longitude
     if lat is None or lon is None or not result.country.iso_code:
-        return dict(_EMPTY)
+        return {**_EMPTY}
 
     # 도시 단위 데이터가 없는 IP도 시/도·주 같은 행정구역은 수록된 경우가 많다.
     # 대시보드의 지역 라벨에는 도시명을 우선 쓰고, 없을 때만 가장 구체적인
@@ -89,19 +115,25 @@ def _query(ip: str) -> GeoInfo:
 
 async def lookup(ip: str) -> GeoInfo:
     if not _is_routable_public(ip):
-        return dict(_EMPTY)
+        return {**_EMPTY}
 
     cache_key = f"{_CACHE_PREFIX}{ip}"
     try:
         cached = await _redis.get(cache_key)
     except Exception as e:
         print(f"[normalizer] WARNING: GeoIP 캐시 조회 실패, 캐시 없이 직접 조회 - {e}")
-        return _query(ip)
+        return await asyncio.to_thread(_query, ip)
 
     if cached is not None:
         return json.loads(cached)
 
-    info = _query(ip)
+    # _query()는 geoip2.database.Reader.city()를 부르는 동기 함수라(mmap 기반 조회 -
+    # 보통은 빠르지만 콜드 페이지캐시/메모리 압박 상황에선 디스크 I/O로 블로킹될 수
+    # 있음), await 없이 그냥 부르면 이 프로세스의 단일 이벤트 루프를 그 시간만큼
+    # 막는다(2026-07-21) - 이 서비스는 컨슈머가 단일 태스크로 4개 토픽 전부를
+    # 순차 처리하므로, GeoIP 조회 하나의 지연이 파이프라인 전체 지연으로 그대로
+    # 번진다. asyncio.to_thread로 별도 스레드에 넘겨 이벤트 루프를 막지 않는다.
+    info = await asyncio.to_thread(_query, ip)
     try:
         await _redis.set(cache_key, json.dumps(info), ex=_CACHE_TTL_SECONDS)
     except Exception as e:

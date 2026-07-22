@@ -43,6 +43,14 @@ class NormalizedEvent(BaseModel):
     # 상관 키 (P4 시나리오 join_on 대상 - 반드시 이 필드명으로 통일)
     source_ip: Optional[str] = Field(default=None, alias="source.ip")  # S4 join_on
     user_name: Optional[str] = Field(default=None, alias="user.name")  # S2 join_on
+    # was/waf/falco 이벤트에 enrichment.py가 채워 넣는 "이 이벤트가 벌어진 대상 pod에
+    # 바인딩된 K8s 신원"(2026-07-19, join_on=user_or_sa로 WAF/Falco를 k8s_audit까지
+    # 한 체인으로 잇기 위해 도입). user_name과 분리한 이유 - falco는 이미 user_name에
+    # 컨테이너 안 OS 유저(root 등, 포렌식 가치가 있는 별개 정보)를 채우고 있어서 같은
+    # 필드에 K8s 신원을 덮어쓰면 그 정보가 사라진다. rules.py의 _join_key()가
+    # user_or_sa 조인 시 이 필드를 user_name보다 우선 사용한다(둘 다 있을 이벤트는
+    # 없음 - k8s_audit은 이 필드를 안 채우고 user_name만 채움).
+    actor_identity: Optional[str] = Field(default=None, alias="actor.identity")
     orchestrator_namespace: Optional[str] = Field(default=None, alias="orchestrator.namespace")
     orchestrator_resource_type: Optional[str] = Field(
         default=None, alias="orchestrator.resource.type"
@@ -50,6 +58,9 @@ class NormalizedEvent(BaseModel):
     orchestrator_resource_name: Optional[str] = Field(
         default=None, alias="orchestrator.resource.name"
     )  # S1 join_on (pod)
+    orchestrator_resource_subresource: Optional[str] = Field(
+        default=None, alias="orchestrator.resource.subresource"
+    )
     # was/waf 전용 - 이 이벤트가 어느 보호 대상 앱(targets 테이블의 name) 소속인지.
     # Falco/k8s_audit은 앱 단위가 아니라 클러스터 단위 이벤트라 이 필드를 안 채운다.
     # allow_list의 target_id 스코프 집행이 이 값으로 이뤄진다(correlation-engine/
@@ -104,6 +115,15 @@ class NormalizedEvent(BaseModel):
         default=None, alias="kubernetes.audit.binding.role_name"
     )  # rolebinding/clusterrolebinding이 가리키는 roleRef.name (requestObject가 JSON
     # Patch 배열이면 배열 안 여러 원소의 이름이 나올 수 있어 리스트로 합친다)
+    audit_binding_subject: Optional[str] = Field(
+        default=None, alias="kubernetes.audit.binding.subject"
+    )  # rolebinding/clusterrolebinding의 subjects를 "kind:namespace:name"(subject가
+    # 여러 개면 정렬 후 쉼표로 합침) 스칼라 문자열 하나로 표현한다(2026-07-20, 여러
+    # 계층 시나리오 Notion 페이지의 M26 - S96 재료). audit_binding_role_name과 달리
+    # List[str]이 아니라 str인 이유 - correlation-engine의 cardinality distinct_field는
+    # getattr()로 뽑은 값을 그대로 Redis SADD 멤버로 쓰므로(app/rules.py의
+    # _eval_cardinality) 리스트를 못 받는다. "이 관리자가 지금까지 서로 다른 몇 명/몇
+    # 개의 주체에게 권한을 부여했는지"를 세는 게 목적이라 스칼라가 필요했다.
 
     # K8s Audit - Pod 생성 request body 분석 (2026-07-12, k3d-audit-policy.yaml이
     # pods의 create만 Request 레벨로 승격한 뒤 가능해짐). 생성 이후 바뀔 수 없는
@@ -139,3 +159,14 @@ class NormalizedEvent(BaseModel):
 
     class Config:
         populate_by_name = True
+
+    @property
+    def event_date(self) -> str:
+        """timestamp(사건 실제 발생 시각, UTC)의 날짜 부분만 "YYYY-MM-DD" 문자열로
+        뽑은 순수 파생 값(2026-07-20, 여러 계층 시나리오 Notion 페이지의 M52 -
+        correlation-engine의 cardinality distinct_field로 "서로 다른 며칠에 걸쳐
+        발생했는지"를 세는 용도). Kafka로 직렬화되는 실제 필드가 아니다 - normalizer가
+        만들 때나 correlation-engine이 평가할 때나 각자 이미 가진 timestamp에서 그때그때
+        계산하므로, event.original 페이로드나 와이어 포맷을 전혀 바꾸지 않고
+        추가할 수 있었다."""
+        return self.timestamp.date().isoformat()

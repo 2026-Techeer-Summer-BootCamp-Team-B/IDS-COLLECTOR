@@ -10,7 +10,7 @@ user_agent는 "관리자 접속 기록"(누가 언제 어떤 기기/브라우저
 app/auth.py의 LOGIN/LOGOUT에서만 채워서 넘긴다(다른 액션엔 굳이 필요 없어서 기본
 NULL). 세션 자체(활성 토큰 조회)는 Redis에 있고, 이 테이블은 그 반대로 "지나간
 기록"을 영구 보관하는 역할 - 세션이 로그아웃/만료로 지워져도 이 로그는 남는다."""
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID
 
 from app.db import pool
@@ -21,7 +21,11 @@ async def record_action(
     target_table: Optional[str],
     ip_address: Optional[str],
     user_id: Optional[UUID] = None,
-    record_id: Optional[UUID] = None,
+    # 호출부 대부분이 FastAPI 경로 파라미터(str)를 그대로 넘긴다(user_id/target_id 등,
+    # asyncpg가 uuid 컬럼에 문자열 표현도 그대로 바인딩해줘서 실제로는 문제없이
+    # 동작함, 실측 확인) - row["id"](asyncpg가 이미 UUID 인스턴스로 채워줌)를 넘기는
+    # 곳도 섞여 있어 타입을 실제 쓰임에 맞게 둘 다 받도록 선언한다.
+    record_id: Optional[Union[UUID, str]] = None,
     user_agent: Optional[str] = None,
 ) -> None:
     async with pool().acquire() as conn:

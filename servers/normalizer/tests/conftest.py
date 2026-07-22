@@ -45,7 +45,11 @@ def base_waf_alert():
 
     def _make(**overrides: Any) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
-            "time": "2026-07-15T10:00:00Z",
+            # WafAlert(Techeer-12th-b/backend/app/models/schemas.py)의 실제 wire
+            # 필드명은 "timestamp"다 - WAS의 "time"과 다르다(2026-07-21, 이 픽스처가
+            # "time"으로 잘못 돼 있던 게 normalize_waf의 동일한 버그를 들키지 않게
+            # 가리고 있었다).
+            "timestamp": "2026-07-15T10:00:00Z",
             "attack_type": "sql_injection",
             "risk_level": "MEDIUM",
             "matched_rule_id": "sqli_union_select",

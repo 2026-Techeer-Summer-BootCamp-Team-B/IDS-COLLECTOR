@@ -86,3 +86,47 @@ class TestS1PodExecThenShell:
         )
         fired = await engine.evaluate(stage2_other_pod)
         assert not any(f["scenario_name"].startswith("Pod Exec") for f in fired)
+
+    async def test_retrying_the_completing_event_still_fires(self, engine, make_event):
+        """upsert_incident 실패 후 main.py가 같은 이벤트로 evaluate()를 재호출하는
+        상황을 재현한다 - state_key는 최초 발화 때 이미 삭제됐으므로, fired-cache가
+        없으면 이 재호출은 아무것도 발화시키지 못하고 인시던트가 영구 유실된다."""
+        pod = "victim-pod-abc123"
+        stage1 = make_event(
+            event_module="k8s_audit", event_action="get pods/exec",
+            orchestrator_resource_name=pod,
+        )
+        stage2 = make_event(
+            event_module="falco", event_action="Contact K8S API Server From Container",
+            orchestrator_resource_name=pod,
+        )
+        await engine.evaluate(stage1)
+        first = await engine.evaluate(stage2)
+        retried = await engine.evaluate(stage2)
+
+        first_hit = next(f for f in first if f["scenario_name"].startswith("Pod Exec"))
+        retried_hit = next(f for f in retried if f["scenario_name"].startswith("Pod Exec"))
+        assert retried_hit == first_hit
+
+    async def test_unrelated_event_after_fire_does_not_replay(self, engine, make_event):
+        """발화 이후 새 stage1 없이 들어오는, 마지막 단계 패턴에 우연히 매칭되는
+        무관한(다른 event_id) 이벤트는 재발화하면 안 된다 - fired-cache는
+        trigger_event_id가 정확히 일치할 때만 재현하는 재시도 전용 안전망이다."""
+        pod = "victim-pod-abc123"
+        stage1 = make_event(
+            event_module="k8s_audit", event_action="get pods/exec",
+            orchestrator_resource_name=pod,
+        )
+        stage2 = make_event(
+            event_module="falco", event_action="Contact K8S API Server From Container",
+            orchestrator_resource_name=pod,
+        )
+        await engine.evaluate(stage1)
+        await engine.evaluate(stage2)
+
+        another_stage2_like_event = make_event(
+            event_module="falco", event_action="Contact K8S API Server From Container",
+            orchestrator_resource_name=pod,
+        )
+        fired_again = await engine.evaluate(another_stage2_like_event)
+        assert not any(f["scenario_name"].startswith("Pod Exec") for f in fired_again)

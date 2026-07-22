@@ -1,6 +1,8 @@
 """normalize_audit() + K8s Audit request-body 헬퍼(_audit_role_rule_flags 등)
 단위 테스트. severity.yaml 실제 규칙까지 그대로 태워서 RBAC/파드보안/시크릿류
 심각도 오분류를 원본 배포 규칙 기준으로 잡는다."""
+import json
+
 from app.normalizer import (
     _audit_configmap_has_credentials,
     _audit_ingress_has_tls,
@@ -117,6 +119,44 @@ class TestNormalizeAuditEndToEnd:
         event = normalize_audit(payload, "e2", "{}")
         assert event.event_action == "get pods/exec"
         assert event.event_severity == 3
+        assert event.orchestrator_resource_subresource == "exec"
+
+    def test_subresource_absent_is_none_and_excluded_from_serialized_json(self, base_audit_event):
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "pods", "namespace": "default", "name": "plain-pod"},
+            responseStatus={"code": 201},
+        )
+        event = normalize_audit(payload, "e25", "{}")
+        assert event.orchestrator_resource_subresource is None
+        serialized = json.loads(event.model_dump_json(by_alias=True, exclude_none=True))
+        assert "orchestrator.resource.subresource" not in serialized
+
+    def test_subresource_present_is_included_in_serialized_json(self, base_audit_event):
+        payload = base_audit_event(
+            verb="get",
+            objectRef={"resource": "pods", "subresource": "exec", "namespace": "default", "name": "victim-pod"},
+        )
+        event = normalize_audit(payload, "e26", "{}")
+        serialized = json.loads(event.model_dump_json(by_alias=True, exclude_none=True))
+        assert serialized["orchestrator.resource.subresource"] == "exec"
+
+    def test_pods_exec_severity_is_high_regardless_of_verb(self, base_audit_event):
+        # severity.yaml의 pods/exec 룰이 verb 열거에서 subresource 단독 조건으로
+        # 전환됐으므로(2026-07-20), create/get뿐 아니라 임의의 다른 verb로 기록돼도
+        # severity=3이어야 한다 - event.action 문자열 합성 로직(verb+resource_full)은
+        # 이 전환과 무관하게 그대로여야 하므로 함께 회귀 검증한다.
+        for verb in ["create", "get", "watch"]:
+            payload = base_audit_event(
+                verb=verb,
+                objectRef={
+                    "resource": "pods", "subresource": "exec",
+                    "namespace": "default", "name": "victim-pod",
+                },
+            )
+            event = normalize_audit(payload, f"e27-{verb}", "{}")
+            assert event.event_severity == 3, f"verb={verb}"
+            assert event.event_action == f"{verb} pods/exec"
 
     def test_serviceaccount_created_in_kube_system_is_critical(self, base_audit_event):
         payload = base_audit_event(
@@ -287,3 +327,56 @@ class TestNormalizeAuditEndToEnd:
         )
         event = normalize_audit(payload, "e20", "{}")
         assert event.audit_binding_role_name == ["cluster-admin"]
+
+    def test_binding_subject_for_single_subject(self, base_audit_event):
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "rolebindings", "namespace": "default", "name": "grant-a"},
+            responseStatus={"code": 201},
+            requestObject={
+                "roleRef": {"kind": "Role", "name": "edit"},
+                "subjects": [
+                    {"kind": "ServiceAccount", "namespace": "default", "name": "sa-a"}
+                ],
+            },
+        )
+        event = normalize_audit(payload, "e21", "{}")
+        assert event.audit_binding_subject == "ServiceAccount:default:sa-a"
+
+    def test_binding_subject_combines_multiple_subjects_sorted(self, base_audit_event):
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "rolebindings", "namespace": "default", "name": "grant-multi"},
+            responseStatus={"code": 201},
+            requestObject={
+                "roleRef": {"kind": "Role", "name": "edit"},
+                "subjects": [
+                    {"kind": "ServiceAccount", "namespace": "default", "name": "sa-b"},
+                    {"kind": "ServiceAccount", "namespace": "default", "name": "sa-a"},
+                ],
+            },
+        )
+        event = normalize_audit(payload, "e22", "{}")
+        assert event.audit_binding_subject == "ServiceAccount:default:sa-a,ServiceAccount:default:sa-b"
+
+    def test_binding_subject_missing_returns_none(self, base_audit_event):
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "rolebindings", "namespace": "default", "name": "grant-none"},
+            responseStatus={"code": 201},
+            requestObject={"roleRef": {"kind": "Role", "name": "edit"}},
+        )
+        event = normalize_audit(payload, "e23", "{}")
+        assert event.audit_binding_subject is None
+
+    def test_binding_subject_only_computed_for_binding_resources(self, base_audit_event):
+        # role_rule_flags 테스트와 대칭 - roles 리소스는 RBAC_BINDING_RESOURCES가
+        # 아니라 _audit_binding_subject를 아예 호출하지 않는다.
+        payload = base_audit_event(
+            verb="create",
+            objectRef={"resource": "roles", "namespace": "default", "name": "role-with-subjects-key"},
+            responseStatus={"code": 201},
+            requestObject={"subjects": [{"kind": "ServiceAccount", "namespace": "default", "name": "sa-a"}]},
+        )
+        event = normalize_audit(payload, "e24", "{}")
+        assert event.audit_binding_subject is None

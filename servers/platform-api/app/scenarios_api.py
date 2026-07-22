@@ -11,6 +11,7 @@ UPDATE 성공 기준으로 그대로 나간다 - correlation-engine이 재시작
 Postgres 값으로 Redis를 다시 시드하므로(app/main.py) 최악의 경우도 다음 재시작
 때 자동 복구된다."""
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 import redis.asyncio as redis
 from fastapi import APIRouter, HTTPException, Request
@@ -26,7 +27,13 @@ router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 _redis = redis.from_url(settings.redis_url, decode_responses=True)
 
 
-async def _set_enabled_flag(scenario_id: str, enabled: bool) -> None:
+async def stop() -> None:
+    """앱 종료 시 커넥션 풀을 정리한다(2026-07-21) - app/auth.py의 stop()과 동일한
+    이유로 누락돼 있었다."""
+    await _redis.aclose()
+
+
+async def _set_enabled_flag(scenario_id: UUID, enabled: bool) -> None:
     try:
         await _redis.set(f"scenario:enabled:{scenario_id}", "1" if enabled else "0")
     except Exception as e:
@@ -120,7 +127,7 @@ async def list_scenarios():
 
 
 @router.patch("/{scenario_id}/enabled", response_model=ScenarioOut)
-async def set_enabled(scenario_id: str, body: EnabledUpdate, request: Request):
+async def set_enabled(scenario_id: UUID, body: EnabledUpdate, request: Request):
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """

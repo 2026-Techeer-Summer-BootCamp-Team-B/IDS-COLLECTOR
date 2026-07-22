@@ -16,7 +16,7 @@ import { getModuleMeta } from "../data/moduleMeta";
 import { getRealSeverityMeta } from "../data/realSeverity";
 import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
-import { groupSimilarIncidents } from "../lib/incidentGrouping";
+import { groupSimilarIncidents, isIpKeyType } from "../lib/incidentGrouping";
 import { ChartHoverPanel } from "../components/HoverPanel";
 import { useAutoCycleIndex, useAnimatedFills, useGrowPulse, renderGlowActiveShape, useBarHoverIndex } from "./LogDashboard";
 
@@ -42,6 +42,22 @@ const STATUS_META = {
   investigating: { label: "Investigating", color: "#F5E400" },
   closed: { label: "Resolved", color: "#00FFA6" },
 };
+
+// 2026-07-19: "조사완료 처리"를 누르면 바로 Resolved로 넘어가버려서 실제로
+// 무슨 조치를 취했는지 안 남는다는 피드백 - investigating 상태에서 바로
+// closed로 보내지 않고, 조치 유형을 먼저 고르게 한다. ip_ban을 고르면
+// handleBanSourceIp(이미 있는 실제 POST /banned-ips 호출)를 같이 실행해서
+// "그냥 라벨만 붙이는 게" 아니라 진짜 조치가 나가게 한다. 나머지 카테고리는
+// 백엔드에 대응하는 액션이 없어(버그트래커 연동 등) status를 closed로
+// 전환하는 것 자체가 실제 조치다. 카테고리 자체는 백엔드 스키마에 컬럼이
+// 없어 세션 동안만 유지되는 프론트 전용 상태(resolutionCategories)로 둔다.
+const RESOLUTION_CATEGORIES = [
+  { key: "ip_ban", label: "IP 밴" },
+  { key: "bug_fix", label: "버그 수정" },
+  { key: "false_positive", label: "오탐(정상 트래픽)" },
+  { key: "policy_update", label: "정책 업데이트" },
+];
+const RESOLUTION_CATEGORY_LABEL = Object.fromEntries(RESOLUTION_CATEGORIES.map((c) => [c.key, c.label]));
 function tooltipStyle(C) {
   // LogDashboard.jsx의 동일 함수와 같은 이유 - 순수 블랙 테마에서 border:none이면
   // 배경과 안 구분됨 (2026-07-16, 도넛 차트 호버 가시성 피드백).
@@ -561,6 +577,12 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   const [groupSimilar, setGroupSimilar] = useState(false);
   const [ipTolerance, setIpTolerance] = useState(24);
   const [expandedGroups, setExpandedGroups] = useState(() => new Set());
+  // 조치 유형 선택 플로우(위 RESOLUTION_CATEGORIES 참고) - showCategoryPicker는
+  // "조사완료 처리"를 눌러 선택지가 펼쳐진 상태, resolutionCategories는
+  // 인시던트 id -> 선택된 카테고리 key 매핑(closed 배지에 표시할 용도).
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [resolutionCategories, setResolutionCategories] = useState({});
+  const [resolving, setResolving] = useState(false);
 
   function toggleGroupExpanded(key) {
     setExpandedGroups((prev) => {
@@ -588,6 +610,12 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
     if (pendingIncident?.id) setSelectedId(pendingIncident.id);
   }, [pendingIncident]);
 
+  // 다른 인시던트로 전환하면 이전에 펼쳐둔 조치 유형 선택 UI가 그대로 남아있지
+  // 않도록 초기화.
+  useEffect(() => {
+    setShowCategoryPicker(false);
+  }, [selectedId]);
+
   const filteredIncidents = useMemo(
     () => (statusFilter === "ALL" ? incidents : incidents.filter((i) => i.status === statusFilter)),
     [incidents, statusFilter]
@@ -597,6 +625,19 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
     () => (groupSimilar ? groupSimilarIncidents(filteredIncidents, ipTolerance) : null),
     [groupSimilar, filteredIncidents, ipTolerance]
   );
+
+  // 2026-07-19: "유사 항목 묶어보기"가 OFF일 때는 그냥 최신순 flat list라
+  // 심각도가 뒤섞여 훑어보기 어렵다는 피드백 - CRITICAL/HIGH/MEDIUM/LOW
+  // 섹션으로 나눠서 보여준다. 각 섹션 안에서는 기존 정렬(최신순, incidents가
+  // updated_at DESC로 옴)을 그대로 유지.
+  const severityGroups = useMemo(() => {
+    if (groupSimilar) return null;
+    const buckets = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
+    filteredIncidents.forEach((inc) => {
+      buckets[severityBadgeKey(inc.severity)].push(inc);
+    });
+    return SEVERITY_BADGE_ORDER.map((key) => ({ key, items: buckets[key] })).filter((g) => g.items.length > 0);
+  }, [groupSimilar, filteredIncidents]);
 
   const selected = incidents.find((i) => i.id === selectedId) || null;
   const { timeline, status: timelineStatus } = useIncidentTimeline(selected?.id);
@@ -637,6 +678,28 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
     }
   }
 
+  // investigating -> closed로 바로 넘기지 않고 조치 유형을 먼저 고른 뒤
+  // 전환한다. ip_ban을 고르면 이미 있는 실제 차단 API(handleBanSourceIp)를
+  // 같이 태워서 "카테고리 라벨만 붙이는" 게 아니라 진짜 조치가 나가게 한다.
+  async function handleResolveWithCategory(categoryKey) {
+    if (!selected) return;
+    setResolving(true);
+    try {
+      if (categoryKey === "ip_ban" && isIpKeyType(selected.correlation_key_type) && !alreadyBanned) {
+        await handleBanSourceIp();
+      }
+      await apiPatch(`/incidents/${selected.id}/status`, { status: "closed" });
+      setResolutionCategories((prev) => ({ ...prev, [selected.id]: categoryKey }));
+      toast(`${RESOLUTION_CATEGORY_LABEL[categoryKey]} 조치 후 인시던트를 종결했습니다.`, "success");
+      setShowCategoryPicker(false);
+      reload();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "조치 처리에 실패했습니다.", "error");
+    } finally {
+      setResolving(false);
+    }
+  }
+
   // 2026-07-16: 차단 IP 수동 추가/해제와 그 목록 테이블(BannedIpsTable)은
   // Admin/Audit 페이지로 옮겼다 - "소스 IP 차단" 버튼(handleBanSourceIp, 위)만
   // 조사 중인 인시던트에서 바로 차단하는 용도로 여기 남겨뒀다. bannedIps/
@@ -653,7 +716,7 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
       correlationRule: selectedScenario?.name || "-",
       mitrePath: selected.mitre_tactics?.length ? selected.mitre_tactics : ["-"],
       target: `${selected.correlation_key_type}=${selected.correlation_key_value}`,
-      sourceIp: selected.correlation_key_type === "source_ip" ? selected.correlation_key_value : "-",
+      sourceIp: isIpKeyType(selected.correlation_key_type) ? selected.correlation_key_value : "-",
       sourceCountry: "-",
       firstDetected: new Date(selected.created_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE }),
       storyline: timeline.map((t) => ({
@@ -738,8 +801,22 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
               <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>
             )}
             {!groupSimilar &&
-              filteredIncidents.map((inc) => (
-                <IncidentCard key={inc.id} incident={inc} active={inc.id === selectedId} onClick={() => setSelectedId(inc.id)} />
+              severityGroups.map((group) => (
+                <div key={group.key}>
+                  <p className="text-dash-faint text-[10px] uppercase tracking-wide px-1 pt-2 pb-1 first:pt-0">
+                    {SEVERITY_META[group.key].label} · {group.items.length}
+                  </p>
+                  <div className="space-y-2">
+                    {group.items.map((inc) => (
+                      <IncidentCard
+                        key={inc.id}
+                        incident={inc}
+                        active={inc.id === selectedId}
+                        onClick={() => setSelectedId(inc.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
               ))}
             {groupSimilar &&
               incidentGroups.map((group) => (
@@ -794,22 +871,45 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
                     조사 시작
                   </button>
                 )}
-                {selected.status === "investigating" && (
+                {selected.status === "investigating" && !showCategoryPicker && (
                   <button
-                    onClick={() => handleAdvanceStatus("closed")}
+                    onClick={() => setShowCategoryPicker(true)}
                     className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25"
                   >
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                     조사완료 처리
                   </button>
                 )}
+                {selected.status === "investigating" && showCategoryPicker && (
+                  <div className="flex items-center gap-1.5 flex-wrap bg-dash-bg rounded-lg px-2.5 py-1.5">
+                    <span className="text-dash-faint text-[10px] whitespace-nowrap">조치 유형 선택</span>
+                    {RESOLUTION_CATEGORIES.map((cat) => (
+                      <button
+                        key={cat.key}
+                        disabled={resolving}
+                        onClick={() => handleResolveWithCategory(cat.key)}
+                        className="text-[11px] font-medium px-2 py-1 rounded-md bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25 disabled:opacity-50"
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                    <button
+                      disabled={resolving}
+                      onClick={() => setShowCategoryPicker(false)}
+                      className="text-[11px] text-dash-faint hover:text-dash-muted whitespace-nowrap disabled:opacity-50"
+                    >
+                      취소
+                    </button>
+                  </div>
+                )}
                 {selected.status === "closed" && (
                   <span className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                     조치 완료
+                    {resolutionCategories[selected.id] ? ` · ${RESOLUTION_CATEGORY_LABEL[resolutionCategories[selected.id]]}` : ""}
                   </span>
                 )}
-                {selected.correlation_key_type === "source_ip" &&
+                {isIpKeyType(selected.correlation_key_type) &&
                   (alreadyBanned ? (
                     <span className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical whitespace-nowrap">
                       <Ban className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />

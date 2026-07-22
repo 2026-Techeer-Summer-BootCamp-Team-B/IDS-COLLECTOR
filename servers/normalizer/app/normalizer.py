@@ -122,7 +122,13 @@ def normalize_waf(payload: Dict[str, Any], event_id: str, original: str) -> Norm
     """
     return NormalizedEvent(
         **{
-            "@timestamp": _parse_timestamp(payload.get("time")),
+            # WafAlert(Techeer-12th-b/backend/app/models/schemas.py)의 실제 wire
+            # 필드명은 "timestamp"다 - "time"으로 읽던 예전 코드는 항상 못 찾아서
+            # 매번 폴백(_now_utc(), 이 정규화 처리 시각)으로 대체됐다(2026-07-21
+            # 실측 확인). WAS는 nginx log_format이 실제로 "time" 키를 쓰므로
+            # normalize_was의 payload.get("time")은 그대로 맞다 - 소스마다 wire
+            # 필드명이 다르므로 두 파서 사이에서 복붙하며 헷갈리지 않도록 주의.
+            "@timestamp": _parse_timestamp(payload.get("timestamp")),
             "event.ingested": _now_utc(),
             "event.id": event_id,
             "event.module": "waf",
@@ -188,8 +194,15 @@ def normalize_falco(payload: Dict[str, Any], event_id: str, original: str) -> No
             "source.ip": output_fields.get("fd.rip") or output_fields.get("fd.sip"),
             "user.name": output_fields.get("user.name"),
             "orchestrator.namespace": output_fields.get("k8s.ns.name"),
-            "orchestrator.resource.type": "pod",
-            "orchestrator.resource.name": output_fields.get("k8s.pod.name"),
+            # host-level Falco 룰(컨테이너/k8s 컨텍스트 없이 노드 자체에서 발화하는
+            # 룰)은 output_fields에 k8s.pod.name이 없다 - 예전엔 이 경우에도
+            # resource.type을 무조건 "pod"로 채워서, resource.name은 None인데
+            # resource.type만 "pod"인 앞뒤가 안 맞는 이벤트가 나왔다(2026-07-21
+            # 실측 확인, resource.type/name 조합으로 필터/조인하는 쪽에서 host-level
+            # 알림을 pod-scoped로 잘못 취급할 위험). normalize_was/normalize_waf와
+            # 동일하게 실제 pod 이름이 있을 때만 "pod"로 채운다.
+            "orchestrator.resource.type": "pod" if output_fields.get("k8s.pod.name") else None,
+            "orchestrator.resource.name": output_fields.get("k8s.pod.name") or None,
             "process.name": output_fields.get("proc.name"),
             "process.command_line": output_fields.get("proc.cmdline"),
             "process.parent.name": output_fields.get("proc.pname"),
@@ -263,6 +276,37 @@ def _audit_binding_role_name(payload: Dict[str, Any]) -> Any:
             names.add(name)
 
     return sorted(names) if names else None
+
+
+def _audit_binding_subject(payload: Dict[str, Any]) -> Any:
+    """rolebinding/clusterrolebinding의 request body에서 subjects[].{kind,namespace,name}을
+    뽑아 "kind:namespace:name" 형태의 스칼라 문자열 하나로 합친다(2026-07-20, 여러
+    계층 시나리오 Notion 페이지의 M26 - S96 재료: "이 관리자가 서로 다른 몇 개의
+    주체에게 권한을 부여했는지"를 correlation-engine의 cardinality distinct_field로
+    센다). _audit_binding_role_name과 달리 List[str]이 아니라 스칼라를 반환한다 -
+    cardinality distinct_field는 getattr() 결과를 그대로 Redis SADD 멤버로 쓰므로
+    리스트 필드를 못 받는다(schemas.py의 audit_binding_subject 주석 참고).
+
+    한 바인딩 요청 안에 subject가 여러 개 있는 경우(드묾 - kubectl로 바인딩을 만들
+    때 보통 --serviceaccount/--user를 하나만 지정)는 정렬 후 쉼표로 합쳐서 "이
+    조합 자체"를 하나의 distinct 값으로 센다 - 개별 subject 단위로 정확히 쪼개
+    세지는 못하지만(알려진 한계), S96이 노리는 공격 패턴(계정별로 나눠서 여러 번
+    바인딩) 자체가 "한 바인딩 = 한 subject"를 전제로 하므로 실전 영향은 작다.
+    requestObject가 JSON Patch 배열인 경우 배열 안의 모든 dict 원소에서 나온
+    subject를 전부 합쳐 하나의 값으로 만든다(다른 _audit_* 함수처럼 원소별로
+    쪼개지 않는다 - 이 필드는 "이 이벤트 전체를 대표하는 값 하나"가 목적이라서)."""
+    subjects = set()
+    for request_object in _audit_request_objects(payload):
+        for subject in request_object.get("subjects") or []:
+            if not isinstance(subject, dict):
+                continue
+            kind = subject.get("kind") or ""
+            namespace = subject.get("namespace") or ""
+            name = subject.get("name") or ""
+            if kind or name:
+                subjects.add(f"{kind}:{namespace}:{name}")
+
+    return ",".join(sorted(subjects)) if subjects else None
 
 
 def _audit_pod_security_flags(payload: Dict[str, Any]) -> Any:
@@ -409,6 +453,7 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
 
     role_rule_flags = _audit_role_rule_flags(payload) if resource in RBAC_ROLE_RESOURCES else None
     binding_role_name = _audit_binding_role_name(payload) if resource in RBAC_BINDING_RESOURCES else None
+    binding_subject = _audit_binding_subject(payload) if resource in RBAC_BINDING_RESOURCES else None
     pod_security_flags = _audit_pod_security_flags(payload) if (resource == "pods" and verb == "create") else None
 
     # event.action에 위험 플래그를 붙여서 "create pods"(severity=2, 일반 생성)와
@@ -462,11 +507,13 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
             "orchestrator.namespace": object_ref.get("namespace"),
             "orchestrator.resource.type": resource or None,
             "orchestrator.resource.name": object_ref.get("name"),
+            "orchestrator.resource.subresource": subresource or None,
             "kubernetes.audit.stage": payload.get("stage"),
             "kubernetes.audit.verb": verb or None,
             "kubernetes.audit.user.groups": user.get("groups"),
             "kubernetes.audit.role.rule_flags": role_rule_flags,
             "kubernetes.audit.binding.role_name": binding_role_name,
+            "kubernetes.audit.binding.subject": binding_subject,
             "kubernetes.audit.pod.security_flags": pod_security_flags,
             "kubernetes.audit.service.type": service_type,
             "kubernetes.audit.configmap.has_credentials": configmap_has_credentials,

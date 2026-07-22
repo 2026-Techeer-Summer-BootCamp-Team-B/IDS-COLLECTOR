@@ -1,0 +1,10 @@
+# otlp-grpc mTLS - servers/otel/docker-compose.yml의 otlp-grpc 라우터가
+# tls.options=otlp-mtls@file로 참조한다. Docker 라벨로는 clientAuth/caFiles를
+# 정의할 수 없어(Traefik file/KV provider 전용) file provider로 분리했다.
+tls:
+  options:
+    otlp-mtls:
+      clientAuth:
+        caFiles:
+          - /etc/traefik/certs/otlp-client-ca.crt
+        clientAuthType: RequireAndVerifyClientCert
