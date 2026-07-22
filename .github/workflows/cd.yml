@@ -136,3 +136,12 @@ jobs:
             git pull origin main
             docker compose -f servers/docker-compose.yml pull
             docker compose -f servers/docker-compose.yml up -d --remove-orphans
+            # 2026-07-22 실측 발견: otel/proxy는 여기 없어서 커밋해도 컨테이너가
+            # 재생성 안 되고 있었다(예: otel-collector가 2026-07-15 라벨로 멈춰
+            # 있어서 Traefik 라우팅이 실제로는 옛날 규칙 그대로였음, 그날 이후
+            # 수동 재생성 전까지 발견 못 함) - 커스텀 이미지가 아니라 pull은
+            # 필수는 아니지만 up -d와 짝을 맞춰 동일 패턴으로 둔다.
+            docker compose -f servers/otel/docker-compose.yml pull
+            docker compose -f servers/otel/docker-compose.yml up -d --remove-orphans
+            docker compose -f servers/proxy/docker-compose.yml pull
+            docker compose -f servers/proxy/docker-compose.yml up -d --remove-orphans
