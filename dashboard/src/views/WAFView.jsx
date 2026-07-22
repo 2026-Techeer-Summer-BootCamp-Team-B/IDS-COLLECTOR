@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { Shield, Ban, ShieldCheck, ChevronDown, ChevronRight } from "lucide-react";
 import { RANGE_PRESETS } from "../data/timeSeries";
 import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, getRealSeverityMeta } from "../data/realSeverity";
 import { useLogs } from "../hooks/useLogs";
@@ -33,7 +34,9 @@ function RecentWafEvents({ events, status, error }) {
                   onClick={() => setExpandedId(isOpen ? null : e.id)}
                   className="w-full flex items-center gap-3 py-2 text-left text-xs hover:bg-dash-surfaceAlt/50 rounded-lg px-1"
                 >
-                  <span className="text-dash-faint shrink-0">{isOpen ? "▾" : "▸"}</span>
+                  <span className="text-dash-faint shrink-0 inline-flex">
+                    {isOpen ? <ChevronDown size={12} strokeWidth={2.5} /> : <ChevronRight size={12} strokeWidth={2.5} />}
+                  </span>
                   <span className="text-dash-faint whitespace-nowrap w-16 shrink-0">
                     {e.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: DISPLAY_TIMEZONE })}
                   </span>
@@ -47,10 +50,12 @@ function RecentWafEvents({ events, status, error }) {
                   <span className="text-dash-fg truncate">{attackType}</span>
                   <span className="text-dash-muted truncate">{e.path}</span>
                   <span
-                    className={`ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                    className={`ml-auto shrink-0 flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ${
                       blocked ? "text-dash-critical bg-dash-critical/15" : "text-dash-muted bg-dash-surfaceAlt"
                     }`}
                   >
+                    {blocked === true && <Ban size={10} strokeWidth={2.5} />}
+                    {blocked === false && <ShieldCheck size={10} strokeWidth={2.5} />}
                     {blocked === true ? "차단됨" : blocked === false ? "허용됨" : "-"}
                   </span>
                 </button>
@@ -173,7 +178,10 @@ export default function WAFView() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-dash-fg text-base font-semibold mb-1">WAF 상세</h2>
+          <h2 className="text-dash-fg text-base font-semibold mb-1 flex items-center gap-2">
+            <Shield className="w-4 h-4 shrink-0" strokeWidth={2} />
+            WAF 상세
+          </h2>
           <p className="text-dash-muted text-xs">
             웹 방화벽 탐지/차단 로그 전용 뷰 (module=waf) · 공격 페이로드 매칭 기반
           </p>

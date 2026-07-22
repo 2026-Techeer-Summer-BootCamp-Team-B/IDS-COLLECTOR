@@ -127,11 +127,18 @@ def _build_user_prompt(days: int, stats: List[Dict[str, Any]]) -> str:
     )
 
 
-async def generate_trend_report(days: int = 7) -> Dict[str, Any]:
+async def generate_trend_report(days: int = 7, *, occurred_at: Optional[datetime] = None) -> Dict[str, Any]:
     """반환 딕셔너리의 generated_at은 실제 요약이 생성/캐시된 시각(UTC ISO 문자열)이고,
     GEMINI_API_KEY 미설정이나 생성 실패처럼 실제 생성 시각이 없는 경우 None이다 -
     호출부(app/main.py의 POST /reports/trend/notify)가 그런 경우 자체적으로 "현재 시각"을
-    채워 넣는다."""
+    채워 넣는다.
+
+    occurred_at은 trend_report_scheduler.py의 예약 슬롯 사전생성(_prepare_reports)
+    전용 - 슬롯 3분 전에 실제로 Gemini 호출이 끝난 시각이 아니라, 그 리포트가
+    "몇 시 슬롯을 위한 것인지"(예약 시각)를 generated_at으로 남기기 위함이다.
+    자정(00:00) 슬롯처럼 사전생성이 전날로 넘어가는 경우, 이걸 안 넘기면
+    대시보드에 리포트 날짜가 하루 전으로 잘못 표시된다. 수동 생성(버튼)은 항상
+    None으로 호출해 실제 생성 시각을 그대로 쓴다."""
     stats = await _gather_stats(days)
 
     if not settings.gemini_api_key:
@@ -184,7 +191,7 @@ async def generate_trend_report(days: int = 7) -> Dict[str, Any]:
             "generated_at": None,
         }
 
-    generated_at = datetime.now(timezone.utc)
+    generated_at = occurred_at or datetime.now(timezone.utc)
     await _save_cache(days, stats_hash, response.text, generated_at)
 
     # 프론트(dashboard/src/views/AdminAuditView.jsx TrendReportPanel)가 message를

@@ -42,18 +42,22 @@ def _slot_candidates(rows, now):
                     key = f"{target_date}:{hour:02d}:{minute:02d}"
                     if key in sent_slots:
                         continue
-                    candidates[key] = (target_date, f"{hour:02d}:{minute:02d}")
+                    candidates[key] = (target_date, f"{hour:02d}:{minute:02d}", target)
     return candidates
 
 
 async def _prepare_reports(rows, now):
-    for slot_key, (target_date, time_value) in _slot_candidates(rows, now).items():
+    for slot_key, (target_date, time_value, target) in _slot_candidates(rows, now).items():
         if slot_key in _prepared_reports or slot_key in _preparing_slots:
             continue
         _preparing_slots.add(slot_key)
         try:
             # 채널 수와 무관하게 같은 예약 슬롯에서는 Gemini를 한 번만 호출한다.
-            _prepared_reports[slot_key] = await generate_trend_report(7)
+            # occurred_at=target(예약 슬롯 시각) - 사전생성이 실제로 끝난 시각이
+            # 아니라 이 리포트가 "몇 시 슬롯을 위한 것인지"를 generated_at으로
+            # 남겨야, 자정 슬롯처럼 사전생성이 전날로 넘어가는 경우에도 대시보드
+            # 날짜 표시가 하루 전으로 밀리지 않는다.
+            _prepared_reports[slot_key] = await generate_trend_report(7, occurred_at=target)
             print(f"[platform-api] AI 리포트 사전 생성 완료: {target_date} {time_value}")
         finally:
             _preparing_slots.discard(slot_key)

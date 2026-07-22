@@ -127,7 +127,19 @@ export const WIDGET_CATALOG = [
   // LayerAttackStatsCompact 참고). 이 type을 바꾸면 이미 저장된 커스텀
   // 대시보드(localStorage)에 이 타입으로 박혀있는 위젯이 CATALOG_BY_TYPE에서
   // 안 찾아져서 통째로 사라진다 - 그래서 라벨/차트타입만 바꾸고 키는 안 건드림.
-  { type: "donut-k8s-namespace", label: "계층별 공격 통계", w: 4, h: 9, minW: 3, minH: 8, icon: "hbar" },
+  {
+    type: "donut-k8s-namespace",
+    label: "계층별 공격 통계",
+    w: 4,
+    h: 9,
+    minW: 3,
+    minH: 8,
+    icon: "hbar",
+    chartTypeOptions: [
+      { value: "bar", label: "막대" },
+      { value: "donut", label: "도넛" },
+    ],
+  },
   { type: "latency-stats", label: "API Latency", w: 12, h: 6, minW: 8, minH: 6, icon: "gauge" },
   { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 23, minW: 6, minH: 23, icon: "area" },
   { type: "recent-logs", label: "Recent Logs", w: 8, h: 20, minW: 6, minH: 20, icon: "list" },

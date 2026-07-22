@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { Globe } from "lucide-react";
 import { latencyStatsFor } from "../data/mockLogs";
 import { RANGE_PRESETS } from "../data/timeSeries";
 import { REAL_SEVERITY_LEVELS } from "../data/realSeverity";
@@ -87,7 +88,10 @@ export default function WASView() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-dash-fg text-base font-semibold mb-1">WAS 상세</h2>
+          <h2 className="text-dash-fg text-base font-semibold mb-1 flex items-center gap-2">
+            <Globe className="w-4 h-4 shrink-0" strokeWidth={2} />
+            WAS 상세
+          </h2>
           <p className="text-dash-muted text-xs">애플리케이션 요청 로그 전용 뷰 (module=was) · nginx 액세스 로그 기반</p>
         </div>
         <TimeRangePicker value={rangeKey} onChange={setRangeKey} />

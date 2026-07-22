@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { Boxes } from "lucide-react";
 import { RANGE_PRESETS } from "../data/timeSeries";
 import { useLogs } from "../hooks/useLogs";
 import { useDetectionSources } from "../hooks/useDetectionSources";
@@ -155,7 +156,10 @@ export default function K8sAuditView() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-dash-fg text-base font-semibold mb-1">K8s API 상세</h2>
+          <h2 className="text-dash-fg text-base font-semibold mb-1 flex items-center gap-2">
+            <Boxes className="w-4 h-4 shrink-0" strokeWidth={2} />
+            K8s API 상세
+          </h2>
           <p className="text-dash-muted text-xs">kube-apiserver 감사 로그 전용 뷰 (module=k8s_audit) · verb/resource/user 기준</p>
         </div>
         <TimeRangePicker value={rangeKey} onChange={setRangeKey} />

@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
-import { CHART_COLORS, DONUT_PALETTE } from "../data/theme";
+import { CHART_COLORS, donutPalette } from "../data/theme";
+import { useBarHoverIndex } from "./LogDashboard";
+import { RefreshCw, Target, Ban, ShieldOff, Bell, Sparkles, Send, Database, BarChart3, ListChecks, FileClock, ShieldCheck } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { useAuditLogs } from "../hooks/useAuditLogs";
@@ -18,6 +20,7 @@ import { connectSlack, connectDiscord } from "../lib/reportIntegrationsMock";
 import { apiPost, apiPatch, apiDelete, ApiError } from "../lib/authApi";
 import { renderMarkdownLite } from "../lib/markdownLite";
 import { usePollInterval } from "../context/PollIntervalContext";
+import { ChartHoverPanel } from "../components/HoverPanel";
 
 // 실시간 패널(Overview/WAS/Falco/K8sAudit + LiveTicker)이 공유하는 갱신 주기를
 // 관리자가 여기서 바꿀 수 있게 한 프리셋 - 너무 짧으면(500ms) 백엔드 집계 쿼리
@@ -38,7 +41,10 @@ function PollIntervalPanel() {
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">실시간 갱신 주기</h3>
+      <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+        <RefreshCw className="w-4 h-4 shrink-0" strokeWidth={2} />
+        실시간 갱신 주기
+      </h3>
       <p className="text-dash-muted text-xs mb-3">
         Overview · WAS · Falco · K8s Audit 상세 화면과 실시간 티커가 서버를 다시 조회하는 간격 —
         짧을수록 화면이 더 빨리 따라오지만 백엔드 조회 부하도 늘어난다. 브라우저에 저장되며 지금은
@@ -120,10 +126,18 @@ function RuleRow({ rule, rank, onToggle }) {
 // 피드백 - 전체 목록(스크롤)은 그대로 두고 그 위에 적중 건수 상위 5개만 뽑아
 // 가로 막대로 보여준다. 룰 이름이 길어서 Y축 라벨을 잘라 보여주고, 잘린 이름은
 // Tooltip에서 전체를 다시 보여준다.
-function RuleRankingBarChart({ data, C }) {
+function RuleRankingBarChart({ data, C, theme }) {
+  const [hoveredBarIndex, barHoverHandlers] = useBarHoverIndex();
+  const chartData = useMemo(
+    // DONUT_PALETTE 5번째 값(#8890B5)이 muted/low와 같은 회색빛 톤이라 5개를 꽉
+    // 채운 랭킹에서 유독 하나만 죽어 보인다는 피드백(2026-07-21) - 5번째 자리만
+    // 팔레트의 pink로 바꿔 다섯 막대 모두 또렷하게 구분되게 한다.
+    () => data.map((rule, i) => ({ ...rule, color: i < 4 ? donutPalette(theme)[i] : C.pink })),
+    [data, theme, C.pink]
+  );
   return (
-    <ResponsiveContainer width="100%" height={Math.max(180, data.length * 44)}>
-      <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
+    <ResponsiveContainer width="100%" height={Math.max(180, chartData.length * 44)}>
+      <BarChart data={chartData} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }} {...barHoverHandlers}>
         <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
         <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
         <YAxis
@@ -137,16 +151,17 @@ function RuleRankingBarChart({ data, C }) {
           tickFormatter={(v) => (v.length > 16 ? `${v.slice(0, 16)}…` : v)}
         />
         <Tooltip
-          contentStyle={{ background: C.surface, border: `1px solid ${C.surfaceAlt}`, borderRadius: 8, fontSize: 12, color: C.fg }}
-          labelStyle={{ color: C.fg }}
-          itemStyle={{ color: C.fg }}
-          cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-          formatter={(value) => [`${value}건`, "적중 건수"]}
-          labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+          content={<ChartHoverPanel theme={theme} labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label} formatter={(value) => [`${value}건`, "적중 건수"]} />}
+          allowEscapeViewBox={{ x: true, y: true }}
+          reverseDirection={{ x: false, y: false }}
+          offset={0}
+          isAnimationActive={false}
+          wrapperStyle={{ pointerEvents: "none" }}
+          cursor={{ fill: C.surfaceAlt, opacity: theme === "dark" ? 1 : 0.5 }}
         />
         <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
-          {data.map((d, i) => (
-            <Cell key={d.id} fill={DONUT_PALETTE[i % DONUT_PALETTE.length]} />
+          {chartData.map((d, i) => (
+            <Cell key={d.id} fill={hoveredBarIndex !== null && i !== hoveredBarIndex ? C.donutDim : d.color} style={{ transition: "fill 180ms ease-out" }} />
           ))}
         </Bar>
       </BarChart>
@@ -162,11 +177,56 @@ function RuleRankingBarChart({ data, C }) {
 // 커밋하면 느리고 레이스도 생긴다 - 타이핑 중엔 로컬 draft만 갱신하고, blur
 // 시점에 클램프한 값을 커밋한다.
 function PolicyRow({ policy, onUpdate }) {
-  const [draft, setDraft] = useState(policy);
+  const storageKey = `sentinel-ops:policy-retention:${policy.layer}`;
+  const [draft, setDraft] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      return saved == null ? policy : { ...policy, retention_days: saved };
+    } catch {
+      return policy;
+    }
+  });
+  const draftRef = useRef(draft);
+  const policyRef = useRef(policy);
+  const onUpdateRef = useRef(onUpdate);
 
   useEffect(() => {
-    setDraft(policy);
-  }, [policy]);
+    onUpdateRef.current = onUpdate;
+  }, [onUpdate]);
+
+  useEffect(() => {
+    policyRef.current = policy;
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      // 서버 반영이 끝난 값이면 임시 보관본을 정리하고, 아직 반영 전인 값은
+      // 페이지를 나갔다 와도 입력칸에서 잃지 않게 유지한다.
+      if (saved != null && Number(saved) === policy.retention_days) {
+        window.localStorage.removeItem(storageKey);
+        setDraft(policy);
+      } else if (saved != null) {
+        setDraft({ ...policy, retention_days: saved });
+      } else {
+        setDraft(policy);
+      }
+    } catch {
+      setDraft(policy);
+    }
+  }, [policy.layer, policy.retention_days, policy.archive_enabled, storageKey]);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  // 메뉴 이동은 input의 blur보다 먼저 컴포넌트를 언마운트할 수 있다. 그 경우에도
+  // 마지막 입력값을 서버로 커밋해 재진입 시 초기값으로 돌아가지 않게 한다.
+  useEffect(() => () => {
+    const latest = draftRef.current;
+    const source = policyRef.current;
+    const retention = Math.min(3650, Math.max(1, Number(latest.retention_days) || 0));
+    if (retention !== source.retention_days) {
+      onUpdateRef.current(source.layer, { retention_days: retention });
+    }
+  }, []);
 
   function commit(field, min, max) {
     const num = Math.min(max, Math.max(min, Number(draft[field]) || 0));
@@ -185,7 +245,15 @@ function PolicyRow({ policy, onUpdate }) {
           min={1}
           max={3650}
           value={draft.retention_days}
-          onChange={(e) => setDraft((d) => ({ ...d, retention_days: e.target.value }))}
+          onChange={(e) => {
+            const retention_days = e.target.value;
+            setDraft((d) => ({ ...d, retention_days }));
+            try {
+              window.localStorage.setItem(storageKey, retention_days);
+            } catch {
+              // 현재 화면의 draft는 그대로 유지한다.
+            }
+          }}
           onBlur={() => commit("retention_days", 1, 3650)}
           className="w-16 bg-dash-bg text-dash-fg text-right rounded-md px-1.5 py-1 border border-dash-surfaceAlt focus:outline-none focus:border-dash-mint"
         />
@@ -230,7 +298,10 @@ function TargetsPanel({ targets, status, error, onCreate, onToggleActive, onDele
     <div className="bg-dash-surface rounded-2xl p-5">
       <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-dash-fg text-sm font-semibold">보호 대상 (Targets)</h3>
+          <h3 className="text-dash-fg text-sm font-semibold flex items-center gap-1.5">
+            <Target className="w-4 h-4 shrink-0" strokeWidth={2} />
+            보호 대상 (Targets)
+          </h3>
           <p className="text-dash-muted text-xs mt-0.5">
             GET/POST/PATCH/DELETE /targets · 등록만 되고 파이프라인 소비는 아직 없음
           </p>
@@ -336,7 +407,10 @@ function BannedIpsTable({ bannedIps, status, error, onBan, onUnban }) {
     <div className="bg-dash-surface rounded-2xl p-5">
       <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-dash-fg text-sm font-semibold">차단된 IP</h3>
+          <h3 className="text-dash-fg text-sm font-semibold flex items-center gap-1.5">
+            <Ban className="w-4 h-4 shrink-0" strokeWidth={2} />
+            차단된 IP
+          </h3>
           <p className="text-dash-muted text-xs mt-0.5">GET /banned-ips · 감사 트레일 (실제 트래픽 차단은 아님)</p>
         </div>
         <form onSubmit={handleSubmit} className="flex flex-wrap gap-1.5">
@@ -441,7 +515,10 @@ function AllowListPanel({ entries, status, error, targets, onCreate, onDelete })
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
       <div className="mb-3">
-        <h3 className="text-dash-fg text-sm font-semibold">탐지 예외 (Allow List)</h3>
+        <h3 className="text-dash-fg text-sm font-semibold flex items-center gap-1.5">
+          <ShieldOff className="w-4 h-4 shrink-0" strokeWidth={2} />
+          탐지 예외 (Allow List)
+        </h3>
         <p className="text-dash-muted text-xs mt-0.5">
           GET/POST/DELETE /allow-list · 등록만 되고 파이프라인이 실제로 걸러내진 않음
         </p>
@@ -716,7 +793,10 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggl
     <div className="bg-dash-surface rounded-2xl p-5">
       <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div>
-          <h3 className="text-dash-fg text-sm font-semibold">알림 채널 (Slack / Discord)</h3>
+          <h3 className="text-dash-fg text-sm font-semibold flex items-center gap-1.5">
+            <Bell className="w-4 h-4 shrink-0" strokeWidth={2} />
+            알림 채널 (Slack / Discord)
+          </h3>
           <p className="text-dash-muted text-xs mt-0.5">
             채널별로 인시던트 즉시 알림과 AI 리포트 일일 발송을 따로 설정합니다. 리포트 시각은 한국 시간(KST)입니다.
           </p>
@@ -823,7 +903,7 @@ function AlertConfigsPanel({ configs, status, error, onCreate, onUpdate, onToggl
 // GET /reports/trend — 최근 N일 scenario별 인시던트 집계와 마지막으로 생성된 요약을
 // 읽는다. 알림 설정 화면을 열 때 Gemini를 새로 호출하지 않는다.
 function TrendReportPanel({ scenarios }) {
-  const { report, status, error } = useTrendReport({ days: 7 });
+  const { report, status, error, generating, generateNow } = useTrendReport({ days: 7 });
   const scenarioNameById = useMemo(() => {
     const map = {};
     scenarios.forEach((s) => (map[s.id] = s.name));
@@ -832,10 +912,25 @@ function TrendReportPanel({ scenarios }) {
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">AI 트렌드 리포트</h3>
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <h3 className="text-dash-fg text-sm font-semibold flex items-center gap-1.5">
+          <Sparkles className="w-4 h-4 shrink-0" strokeWidth={2} />
+          AI 트렌드 리포트
+        </h3>
+        <button
+          type="button"
+          onClick={() => generateNow().catch(() => {})}
+          disabled={generating}
+          className="shrink-0 flex items-center gap-1.5 text-xs font-medium text-dash-fg bg-dash-surfaceAlt hover:bg-dash-surfaceAlt/70 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg px-2.5 py-1.5 transition-colors"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} strokeWidth={2} />
+          {generating ? "생성 중..." : "리포트 생성"}
+        </button>
+      </div>
       <p className="text-dash-muted text-xs mb-3">최근 7일 인시던트 집계</p>
       {status === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs py-3">{error}</p>}
+      {status === "ready" && error && <p className="text-dash-critical text-xs mb-3">{error}</p>}
       {status === "ready" && report && (
         <>
           <div
@@ -843,6 +938,19 @@ function TrendReportPanel({ scenarios }) {
               report.configured ? "bg-dash-mint/10 text-dash-mint" : "bg-dash-surfaceAlt text-dash-muted"
             }`}
           >
+            {report.generated_at && (
+              <p
+                className="text-dash-muted font-medium mb-1.5"
+                title={new Date(report.generated_at).toLocaleString("ko-KR", { timeZone: DISPLAY_TIMEZONE })}
+              >
+                {new Date(report.generated_at).toLocaleDateString("en-US", {
+                  timeZone: DISPLAY_TIMEZONE,
+                  month: "numeric",
+                  day: "numeric",
+                })}{" "}
+                리포트
+              </p>
+            )}
             {report.configured ? renderMarkdownLite(report.message) : report.message}
             {report.cached && (
               <p className="text-dash-muted mt-2">
@@ -918,7 +1026,10 @@ function ReportIntegrationsPanel({
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">리포트 알림 연동 (Slack / Discord)</h3>
+      <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+        <Send className="w-4 h-4 shrink-0" strokeWidth={2} />
+        리포트 알림 연동 (Slack / Discord)
+      </h3>
       <p className="text-dash-muted text-xs mb-3">
         GET/POST/PATCH/DELETE /report-notifications/connections · 스케줄로 자동 생성되는 AI 트렌드
         리포트만 이 연동 채널로 발송됨(대시보드에서 직접 보기는 발송 안 함) · OAuth는 목업 상태
@@ -1248,7 +1359,10 @@ export default function AdminAuditView({ pushToast }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-dash-fg text-base font-semibold">Admin / Audit</h2>
+        <h2 className="text-dash-fg text-base font-semibold flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 shrink-0" strokeWidth={2} />
+          Admin / Audit
+        </h2>
         <AdminTabSwitcher active={activeTab} onChange={setActiveTab} />
       </div>
 
@@ -1257,7 +1371,10 @@ export default function AdminAuditView({ pushToast }) {
           <PollIntervalPanel />
 
           <div className="bg-dash-surface rounded-2xl p-5">
-            <h3 className="text-dash-fg text-sm font-semibold mb-1">데이터 정책 (보존 기간)</h3>
+            <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+              <Database className="w-4 h-4 shrink-0" strokeWidth={2} />
+              데이터 정책 (보존 기간)
+            </h3>
             <p className="text-dash-muted text-xs mb-3">
               3등급(기록 · 원본 · 파생) 보존 기간 — app/log_retention.py가 이 값을 읽어 오래된
               인덱스/레코드를 주기적으로 정리한다. (제외 규칙 기능은 탐지 누락 위험으로 2026-07-16 제거됨)
@@ -1274,14 +1391,17 @@ export default function AdminAuditView({ pushToast }) {
           </div>
 
           <div className="bg-dash-surface rounded-2xl p-5">
-            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰별 적중 랭킹 TOP 5</h3>
+            <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+              <BarChart3 className="w-4 h-4 shrink-0" strokeWidth={2} />
+              탐지 룰별 적중 랭킹 TOP 5
+            </h3>
             <p className="text-dash-muted text-xs mb-3">
               적중 건수가 가장 많은 룰 5개 — 아래 전체 목록과 같은 GET /scenarios 데이터 기준
             </p>
             {scenariosStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
             {scenariosStatus === "error" && <p className="text-dash-critical text-xs py-3">{scenariosError}</p>}
             {scenariosStatus === "ready" && top5Scenarios.length > 0 && (
-              <RuleRankingBarChart data={top5Scenarios} C={C} />
+              <RuleRankingBarChart data={top5Scenarios} C={C} theme={theme} />
             )}
             {scenariosStatus === "ready" && top5Scenarios.length === 0 && (
               <p className="text-dash-muted text-xs py-3">등록된 탐지 룰이 없습니다.</p>
@@ -1289,7 +1409,10 @@ export default function AdminAuditView({ pushToast }) {
           </div>
 
           <div className="bg-dash-surface rounded-2xl p-5">
-            <h3 className="text-dash-fg text-sm font-semibold mb-1">탐지 룰 전체 목록</h3>
+            <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+              <ListChecks className="w-4 h-4 shrink-0" strokeWidth={2} />
+              탐지 룰 전체 목록
+            </h3>
             <p className="text-dash-muted text-xs mb-1">
               GET /scenarios · 실제 인시던트 적중 건수 기준 · 총 {scenarios.length}개 룰 · 스위치로 켜고 끌 수 있음
             </p>
@@ -1366,7 +1489,10 @@ export default function AdminAuditView({ pushToast }) {
 
       {activeTab === "audit" && (
         <div className="bg-dash-surface rounded-2xl p-5">
-          <h3 className="text-dash-fg text-sm font-semibold mb-1">Audit Log</h3>
+          <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+            <FileClock className="w-4 h-4 shrink-0" strokeWidth={2} />
+            Audit Log
+          </h3>
           <p className="text-dash-muted text-xs mb-3">누가 · 언제 · 어떤 조치를 했는지 (최근 50건)</p>
           {auditStatus === "loading" && <p className="text-dash-muted text-xs py-3">불러오는 중...</p>}
           {auditStatus === "error" && <p className="text-dash-critical text-xs py-3">{auditError}</p>}

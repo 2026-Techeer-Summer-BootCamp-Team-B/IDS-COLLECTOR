@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Sector } from "recharts";
+import { BarChart3, PieChart as PieChartIcon, FileSpreadsheet, FileText, Search, CheckCircle2, Ban, Layers, ChevronUp, ChevronDown, AlertTriangle, AlertOctagon, Activity, Crosshair } from "lucide-react";
 import { SeverityBadge, SourceBadge, SEVERITY_META } from "../components/badges";
 import { CHART_COLORS, forTheme, DONUT_PALETTE, donutPalette } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { usePersistedPreference } from "../hooks/usePersistedPreference";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
 import { useIncidents } from "../hooks/useIncidents";
 import { useIncidentsSocket } from "../hooks/useIncidentsSocket";
@@ -15,6 +17,8 @@ import { getRealSeverityMeta } from "../data/realSeverity";
 import { apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { groupSimilarIncidents } from "../lib/incidentGrouping";
+import { ChartHoverPanel } from "../components/HoverPanel";
+import { useAutoCycleIndex, useAnimatedFills, useGrowPulse, renderGlowActiveShape, useBarHoverIndex } from "./LogDashboard";
 
 // incidents.severity(1~4, event.severity와 같은 실 스케일)를 badges.jsx의
 // SEVERITY_META 키(CRITICAL/HIGH/MEDIUM/LOW)로 별칭 처리.
@@ -44,16 +48,21 @@ function tooltipStyle(C) {
   return { background: C.surfaceAlt, border: `1px solid ${C.faint}`, borderRadius: 8, color: C.fg, fontSize: 12 };
 }
 
-function MiniKpi({ label, value, sub, color, onClick, active = false }) {
+function MiniKpi({ label, value, sub, color, onClick, active = false, accent = "mint" }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const Tag = onClick ? "button" : "div";
+  const accentBorder = accent === "critical" ? "border-dash-critical/50" : "border-dash-mint/50";
   return (
     <Tag
       onClick={onClick}
-      className={`bg-dash-surface rounded-2xl p-4 flex-1 min-w-[160px] text-left transition-shadow ${
-        onClick ? "cursor-pointer hover:bg-dash-surfaceAlt/60" : ""
-      } ${active ? "glow-box-mint" : ""}`}
+      className={`rounded-2xl p-4 flex-1 min-w-[160px] text-left transition-colors border ${
+        onClick ? "cursor-pointer" : ""
+      } ${
+        active
+          ? `bg-dash-bg/60 ${accentBorder}`
+          : `bg-dash-surface border-transparent ${onClick ? "hover:bg-dash-surfaceAlt/60" : ""}`
+      }`}
     >
       <p className="text-dash-muted text-xs mb-1.5">{label}</p>
       <p className="text-lg font-semibold truncate" style={{ color: color || C.fg }}>
@@ -77,11 +86,11 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
 
   return (
     <div className="flex flex-wrap gap-4">
-      <MiniKpi label="Total" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
       <MiniKpi
         label="Open"
         value={openCount}
         color={C.critical}
+        accent="critical"
         onClick={() => onFilterChange("open")}
         active={statusFilter === "open"}
       />
@@ -98,6 +107,7 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
         onClick={() => onFilterChange("closed")}
         active={statusFilter === "closed"}
       />
+      <MiniKpi label="Total" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
     </div>
   );
 }
@@ -128,9 +138,36 @@ function TopSignalsCard({ topScenario, topIp }) {
   );
 }
 
+function DistributionTypeToggle({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-0.5 shrink-0">
+      {[
+        { key: "donut", label: "도넛", icon: PieChartIcon },
+        { key: "bar", label: "막대", icon: BarChart3 },
+      ].map((option) => {
+        const Icon = option.icon;
+        return (
+        <button
+          key={option.key}
+          type="button"
+          onClick={() => onChange(option.key)}
+          className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+            value === option.key ? "bg-dash-mint/25 text-dash-mint" : "text-dash-muted hover:text-dash-fg hover:bg-dash-surfaceAlt"
+          }`}
+        >
+          <Icon size={11} strokeWidth={2.5} />
+          {option.label}
+        </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function SeverityDonut({ incidents }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const [chartType, setChartType] = usePersistedPreference("sentinel-ops:chart-type:incident-severity", "donut", ["donut", "bar"]);
   const data = useMemo(() => {
     const counts = {};
     incidents.forEach((i) => {
@@ -150,30 +187,62 @@ function SeverityDonut({ incidents }) {
     }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  const targetFills = useMemo(() => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)), [data, highlighting, activeIndex, C.donutDim]);
+  const animatedFills = useAnimatedFills(targetFills);
+  const growth = useGrowPulse(activeIndex);
+  const [hoveredBarIndex, barHoverHandlers] = useBarHoverIndex();
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">심각도 분포</h3>
-      <p className="text-dash-muted text-xs mb-3">전체 인시던트 · 총 {total}건</p>
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div>
+          <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+            <AlertOctagon className="w-4 h-4 shrink-0" strokeWidth={2} />
+            심각도 분포
+          </h3>
+          <p className="text-dash-muted text-xs">전체 인시던트 · 총 {total}건</p>
+        </div>
+        <DistributionTypeToggle value={chartType} onChange={setChartType} />
+      </div>
       {total === 0 ? (
         <p className="text-dash-muted text-xs">인시던트가 없습니다.</p>
+      ) : chartType === "bar" ? (
+        <ResponsiveContainer width="100%" height={150}>
+          <BarChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }} {...barHoverHandlers}>
+            <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+            <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
+            <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
+            <Tooltip
+              content={<ChartHoverPanel theme={theme} />}
+              allowEscapeViewBox={{ x: true, y: true }}
+              reverseDirection={{ x: false, y: false }}
+              offset={0}
+              isAnimationActive={false}
+              wrapperStyle={{ pointerEvents: "none" }}
+              cursor={{ fill: C.surfaceAlt, opacity: theme === "dark" ? 1 : 0.5 }}
+            />
+            <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+              {data.map((d, i) => <Cell key={d.key} fill={hoveredBarIndex !== null && i !== hoveredBarIndex ? C.donutDim : d.color} style={{ transition: "fill 180ms ease-out" }} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       ) : (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={130} height={130}>
-            <PieChart>
-              <Pie data={data} dataKey="count" nameKey="label" innerRadius={38} outerRadius={62} stroke="none">
+          <ResponsiveContainer width={132} height={132}>
+            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+              <Pie data={data} dataKey="count" nameKey="label" innerRadius={32} outerRadius={52} startAngle={90} endAngle={-270} stroke="none" isAnimationActive={false} activeIndex={activeIndex} activeShape={(props) => renderGlowActiveShape(props, growth)} onMouseEnter={(_, index) => focusIndex(index)} onMouseLeave={blurIndex}>
                 {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
+                  <Cell key={d.key} fill={animatedFills[data.indexOf(d)]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} isAnimationActive={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
-            {data.map((d) => (
-              <div key={d.key} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-1.5 text-dash-muted truncate">
-                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+            {data.map((d, i) => (
+              <div key={d.key} onMouseEnter={() => focusIndex(i)} onMouseLeave={blurIndex} className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${i === activeIndex ? "bg-dash-surfaceAlt/60" : ""}`} style={theme === "dark" && i === activeIndex ? { backgroundColor: C.surfaceAlt } : undefined}>
+                <span className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${!highlighting ? i === activeIndex ? "text-dash-fg" : "text-dash-muted" : i === activeIndex ? "text-dash-fg font-bold" : ""}`} style={highlighting && i !== activeIndex ? { color: C.donutDim } : undefined}>
+                  <span className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-200 ease-in-out" style={{ backgroundColor: highlighting && i !== activeIndex ? C.donutDim : d.color }} />
                   {d.label}
                 </span>
                 <span className="text-dash-fg">{d.count}</span>
@@ -189,6 +258,7 @@ function SeverityDonut({ incidents }) {
 function StatusDonut({ incidents }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const [chartType, setChartType] = usePersistedPreference("sentinel-ops:chart-type:incident-status", "donut", ["donut", "bar"]);
   const data = useMemo(() => {
     const counts = {};
     incidents.forEach((i) => {
@@ -204,30 +274,62 @@ function StatusDonut({ incidents }) {
       }));
   }, [incidents, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
+  const targetFills = useMemo(() => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)), [data, highlighting, activeIndex, C.donutDim]);
+  const animatedFills = useAnimatedFills(targetFills);
+  const growth = useGrowPulse(activeIndex);
+  const [hoveredBarIndex, barHoverHandlers] = useBarHoverIndex();
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">상태별 분포</h3>
-      <p className="text-dash-muted text-xs mb-3">Open / Investigating / Closed · 총 {total}건</p>
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div>
+          <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+            <Activity className="w-4 h-4 shrink-0" strokeWidth={2} />
+            상태별 분포
+          </h3>
+          <p className="text-dash-muted text-xs">Open / Investigating / Closed · 총 {total}건</p>
+        </div>
+        <DistributionTypeToggle value={chartType} onChange={setChartType} />
+      </div>
       {total === 0 ? (
         <p className="text-dash-muted text-xs">인시던트가 없습니다.</p>
+      ) : chartType === "bar" ? (
+        <ResponsiveContainer width="100%" height={150}>
+          <BarChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }} {...barHoverHandlers}>
+            <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
+            <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
+            <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
+            <Tooltip
+              content={<ChartHoverPanel theme={theme} />}
+              allowEscapeViewBox={{ x: true, y: true }}
+              reverseDirection={{ x: false, y: false }}
+              offset={0}
+              isAnimationActive={false}
+              wrapperStyle={{ pointerEvents: "none" }}
+              cursor={{ fill: C.surfaceAlt, opacity: theme === "dark" ? 1 : 0.5 }}
+            />
+            <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
+              {data.map((d, i) => <Cell key={d.key} fill={hoveredBarIndex !== null && i !== hoveredBarIndex ? C.donutDim : d.color} style={{ transition: "fill 180ms ease-out" }} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       ) : (
         <div className="flex items-center gap-4">
-          <ResponsiveContainer width={130} height={130}>
-            <PieChart>
-              <Pie data={data} dataKey="count" nameKey="label" innerRadius={38} outerRadius={62} stroke="none">
+          <ResponsiveContainer width={132} height={132}>
+            <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+              <Pie data={data} dataKey="count" nameKey="label" innerRadius={32} outerRadius={52} startAngle={90} endAngle={-270} stroke="none" isAnimationActive={false} activeIndex={activeIndex} activeShape={(props) => renderGlowActiveShape(props, growth)} onMouseEnter={(_, index) => focusIndex(index)} onMouseLeave={blurIndex}>
                 {data.map((d) => (
-                  <Cell key={d.key} fill={d.color} />
+                  <Cell key={d.key} fill={animatedFills[data.indexOf(d)]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
                 ))}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle(C)} cursor={false} isAnimationActive={false} />
             </PieChart>
           </ResponsiveContainer>
           <div className="flex-1 space-y-1.5 text-xs">
-            {data.map((d) => (
-              <div key={d.key} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-1.5 text-dash-muted truncate">
-                  <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ backgroundColor: d.color }} />
+            {data.map((d, i) => (
+              <div key={d.key} onMouseEnter={() => focusIndex(i)} onMouseLeave={blurIndex} className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${i === activeIndex ? "bg-dash-surfaceAlt/60" : ""}`} style={theme === "dark" && i === activeIndex ? { backgroundColor: C.surfaceAlt } : undefined}>
+                <span className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${!highlighting ? i === activeIndex ? "text-dash-fg" : "text-dash-muted" : i === activeIndex ? "text-dash-fg font-bold" : ""}`} style={highlighting && i !== activeIndex ? { color: C.donutDim } : undefined}>
+                  <span className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-200 ease-in-out" style={{ backgroundColor: highlighting && i !== activeIndex ? C.donutDim : d.color }} />
                   {d.label}
                 </span>
                 <span className="text-dash-fg">{d.count}</span>
@@ -249,19 +351,33 @@ function StatusDonut({ incidents }) {
 function TopAttackTypesBarChart({ scenarios }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const [hoveredBarIndex, barHoverHandlers] = useBarHoverIndex();
   const data = useMemo(
     () =>
       [...scenarios]
         .filter((s) => s.hit_count > 0)
         .sort((a, b) => b.hit_count - a.hit_count)
         .slice(0, 5)
-        .map((s) => ({ id: s.id, name: s.name, hits: s.hit_count })),
-    [scenarios]
+        .map((s, i) => ({
+          id: s.id,
+          name: s.name,
+          hits: s.hit_count,
+          // Cell 색은 SVG에만 적용되고 Tooltip payload에는 자동으로 복사되지 않는다.
+          // 패널의 색 점도 같은 팔레트를 읽도록 데이터 자체에 명시한다.
+          // DONUT_PALETTE 5번째 값(#8890B5)이 muted/low와 같은 회색빛 톤이라 5개를
+          // 꽉 채운 랭킹에서 유독 하나만 죽어 보인다는 피드백(2026-07-21) - 5번째
+          // 자리만 팔레트의 pink로 바꿔 다섯 막대 모두 또렷하게 구분되게 한다.
+          color: i < 4 ? donutPalette(theme)[i] : C.pink,
+        })),
+    [scenarios, theme, C.pink]
   );
 
   return (
     <div className="bg-dash-surface rounded-2xl p-5">
-      <h3 className="text-dash-fg text-sm font-semibold mb-1">공격 유형별 적중 통계 TOP 5</h3>
+      <h3 className="text-dash-fg text-sm font-semibold mb-1 flex items-center gap-1.5">
+        <Crosshair className="w-4 h-4 shrink-0" strokeWidth={2} />
+        공격 유형별 적중 통계 TOP 5
+      </h3>
       <p className="text-dash-muted text-xs mb-3">
         어떤 상관 규칙(공격 패턴)이 인시던트를 가장 많이 만들었는지 · GET /scenarios 기준
       </p>
@@ -271,7 +387,7 @@ function TopAttackTypesBarChart({ scenarios }) {
         <p className="text-dash-muted text-xs py-3">적중된 상관 규칙이 없습니다.</p>
       ) : (
         <ResponsiveContainer width="100%" height={Math.max(160, data.length * 36)}>
-          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }}>
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 28, top: 4, bottom: 4 }} {...barHoverHandlers}>
             <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
             <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
             <YAxis
@@ -285,15 +401,17 @@ function TopAttackTypesBarChart({ scenarios }) {
               tickFormatter={(v) => (v.length > 16 ? `${v.slice(0, 16)}…` : v)}
             />
             <Tooltip
-              contentStyle={tooltipStyle(C)}
-              cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-              formatter={(value) => [`${value}건`, "적중 건수"]}
-              labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+              content={<ChartHoverPanel theme={theme} labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label} formatter={(value) => [`${value}건`, "적중 건수"]} />}
+              allowEscapeViewBox={{ x: true, y: true }}
+              reverseDirection={{ x: false, y: false }}
+              offset={0}
+              wrapperStyle={{ pointerEvents: "none" }}
+              cursor={{ fill: C.surfaceAlt, opacity: theme === "dark" ? 1 : 0.5 }}
               isAnimationActive={false}
             />
             <Bar dataKey="hits" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
               {data.map((d, i) => (
-                <Cell key={d.id} fill={donutPalette(theme)[i % DONUT_PALETTE.length]} />
+                <Cell key={d.id} fill={hoveredBarIndex !== null && i !== hoveredBarIndex ? C.donutDim : d.color} style={{ transition: "fill 180ms ease-out" }} />
               ))}
             </Bar>
           </BarChart>
@@ -370,7 +488,9 @@ function GroupedIncidentCard({ group, expanded, onToggleExpand, selectedId, onSe
           {group.count > 1 && (
             <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-dash-mint/15 text-dash-mint">
               ×{group.count}
-              <span className="ml-0.5">{expanded ? "▲" : "▼"}</span>
+              <span className="ml-0.5 inline-flex align-middle">
+                {expanded ? <ChevronUp size={11} strokeWidth={2.5} /> : <ChevronDown size={11} strokeWidth={2.5} />}
+              </span>
             </span>
           )}
         </div>
@@ -551,7 +671,10 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
       {/* 페이지 상단 설명 문구 (2026-07-16) - ATT&CK 페이지의 타이틀+서브타이틀
           패턴을 그대로 가져왔다. */}
       <div>
-        <h2 className="text-dash-fg text-base font-semibold mb-1">인시던트</h2>
+        <h2 className="text-dash-fg text-base font-semibold mb-1 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" strokeWidth={2} />
+          인시던트
+        </h2>
         <p className="text-dash-muted text-xs">
           여러 로그(WAS / Falco / K8s Audit)가 상관 규칙에 의해 하나의 사건으로 묶인 인시던트 목록입니다
         </p>
@@ -586,12 +709,13 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
           <div className="flex flex-col gap-1.5 mb-2">
             <button
               onClick={() => setGroupSimilar((v) => !v)}
-              className={`text-[11px] font-medium px-2 py-1.5 rounded-lg border transition-colors text-left ${
+              className={`flex items-center gap-1.5 text-[11px] font-medium px-2 py-1.5 rounded-lg border transition-colors text-left ${
                 groupSimilar
                   ? "bg-dash-mint/15 text-dash-mint border-dash-mint/40"
                   : "bg-dash-bg text-dash-muted border-transparent hover:text-dash-fg hover:bg-dash-surfaceAlt"
               }`}
             >
+              <Layers className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
               유사 항목 묶어보기 {groupSimilar ? "ON" : "OFF"}
             </button>
             {groupSimilar && (
@@ -647,49 +771,56 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
               <div className="flex items-center gap-2 shrink-0 flex-wrap">
                 <button
                   onClick={() => exportAdapter && exportIncidentCSV(exportAdapter)}
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
                   title="이 인시던트를 CSV로 내보내기"
                 >
+                  <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                   CSV 내보내기
                 </button>
                 <button
                   onClick={() => exportAdapter && exportIncidentPDF(exportAdapter)}
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-surfaceAlt text-dash-muted hover:text-dash-fg whitespace-nowrap"
                   title="이 인시던트를 PDF 리포트로 내보내기"
                 >
+                  <FileText className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                   PDF 내보내기
                 </button>
                 {selected.status === "open" && (
                   <button
                     onClick={() => handleAdvanceStatus("investigating")}
-                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25"
+                    className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25"
                   >
+                    <Search className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                     조사 시작
                   </button>
                 )}
                 {selected.status === "investigating" && (
                   <button
                     onClick={() => handleAdvanceStatus("closed")}
-                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25"
+                    className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap hover:bg-dash-mint/25"
                   >
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                     조사완료 처리
                   </button>
                 )}
                 {selected.status === "closed" && (
-                  <span className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap">
+                  <span className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-mint/15 text-dash-mint whitespace-nowrap">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                     조치 완료
                   </span>
                 )}
                 {selected.correlation_key_type === "source_ip" &&
                   (alreadyBanned ? (
-                    <span className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical whitespace-nowrap">
+                    <span className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical whitespace-nowrap">
+                      <Ban className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                       IP 차단됨
                     </span>
                   ) : (
                     <button
                       onClick={handleBanSourceIp}
-                      className="text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical whitespace-nowrap hover:bg-dash-critical/25"
+                      className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-dash-critical/15 text-dash-critical whitespace-nowrap hover:bg-dash-critical/25"
                     >
+                      <Ban className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
                       소스 IP 차단
                     </button>
                   ))}

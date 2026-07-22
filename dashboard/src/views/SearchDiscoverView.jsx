@@ -10,6 +10,7 @@ import TimeRangePicker from "../components/TimeRangePicker";
 import { CHART_COLORS, forTheme, DONUT_PALETTE, donutPalette, chartTooltipProps } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
+import { ChartHoverPanel } from "../components/HoverPanel";
 
 /**
  * Discover-style search bar over GET /logs (servers/platform-api/app/logs_api.py).
@@ -223,7 +224,15 @@ export default function SearchDiscoverView({ rangeKey, onRangeChange, expanded: 
                     <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                     <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} minTickGap={20} />
                     <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} />
-                    <Tooltip {...chartTooltipProps(C)} cursor={false} />
+                    <Tooltip
+                      content={<ChartHoverPanel theme={theme} />}
+                      allowEscapeViewBox={{ x: true, y: true }}
+                      reverseDirection={{ x: false, y: false }}
+                      offset={0}
+                      isAnimationActive={false}
+                      wrapperStyle={{ pointerEvents: "none" }}
+                      cursor={false}
+                    />
                     <Bar dataKey="count" fill={donutPalette(theme)[3]} radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

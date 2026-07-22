@@ -85,7 +85,7 @@ export function HoverPanel({ title, titleFlag, subtitle, rows = [], style, class
 // (formatter(value, name, entry) => [값, 이름], labelFormatter(label, payload) => node)라
 // 호출부 코드를 거의 그대로 옮겨 쓸 수 있다. offsetX는 Log Levels처럼 커서
 // 위치(coordinate)에 따라 좌/우로 추가 이동을 줄 때 쓴다.
-export function RechartsHoverPanel({ active, payload, label, formatter, labelFormatter, offsetX = 0, theme = "light" }) {
+export function RechartsHoverPanel({ active, payload, label, formatter, labelFormatter, offsetX = 0, transform, theme = "light" }) {
   if (!active || !payload || !payload.length) return null;
 
   const rows = payload.map((entry) => {
@@ -101,19 +101,44 @@ export function RechartsHoverPanel({ active, payload, label, formatter, labelFor
     } else if (typeof value === "number") {
       value = value.toLocaleString();
     }
-    return { color: entry.color || entry.fill || entry.payload?.color, value, label: name };
+    // Recharts가 Bar의 fill을 payload에 넣지 않는 구성도 있다. 그 경우에도 모든
+    // 막대 툴팁이 같은 정보 밀도(색 점 + 값)를 유지하도록 테마 보조색을 쓴다.
+    return {
+      color:
+        entry.color ||
+        entry.fill ||
+        entry.stroke ||
+        entry.payload?.color ||
+        entry.payload?.fill ||
+        entry.payload?.stroke ||
+        entry.payload?.payload?.color ||
+        entry.payload?.payload?.fill ||
+        entry.payload?.payload?.stroke ||
+        PANEL_LABEL[theme] ||
+        PANEL_LABEL.light,
+      value,
+      label: name,
+    };
   });
 
-  const titleText = labelFormatter ? labelFormatter(label, payload) : label;
+  // Pie는 축 레이블이 없어서 label이 비어 있을 수 있다. 그 경우에도 다른 차트와
+  // 같은 제목을 보이도록 payload의 항목명을 사용한다.
+  const titleText = labelFormatter ? labelFormatter(label, payload) : label ?? payload[0]?.name ?? payload[0]?.payload?.label;
 
   return (
     <HoverPanel
       title={titleText}
       rows={rows}
       theme={theme}
-      style={offsetX ? { transform: `translateX(${offsetX}px)` } : undefined}
+      style={transform ? { transform } : offsetX ? { transform: `translateX(${offsetX}px)` } : undefined}
     />
   );
+}
+
+// 도넛·세로 막대·가로 막대에 공통으로 쓰는 표준 위치. Recharts의 기본 경계 보정은
+// 좌우에서 패널을 반대편으로 보내므로, 호출부에서는 allowEscapeViewBox와 함께 쓴다.
+export function ChartHoverPanel(props) {
+  return <RechartsHoverPanel {...props} transform={props.transform ?? "translate(-50%, calc(-100% - 16px))"} />;
 }
 
 let renderToStaticMarkup = null;

@@ -1,7 +1,9 @@
 import React, { useMemo, useState, Suspense, lazy } from "react";
+import { Server } from "lucide-react";
 import GoogleGeoMap from "../components/GoogleGeoMap";
-import { CHART_COLORS, DONUT_PALETTE, forTheme } from "../data/theme";
+import { CHART_COLORS, donutPalette } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { usePersistedPreference } from "../hooks/usePersistedPreference";
 import { usePipelineHealth } from "../hooks/usePipelineHealth";
 import { useSourceHealth } from "../hooks/useSourceHealth";
 import { useGeoStats } from "../hooks/useGeoStats";
@@ -193,9 +195,10 @@ function PipelineHealthPanel() {
 // 새 색을 발명하지 않고 이미 검증된 톤을 재사용하는 쪽으로 방향을 바꿨다.
 function intensityColor(count, max, C, theme) {
   const ratio = max ? count / max : 0;
-  if (ratio > 0.66) return forTheme(DONUT_PALETTE[0], theme); // 테라코타 - 가장 집중된 곳
-  if (ratio > 0.33) return forTheme(DONUT_PALETTE[1], theme); // 앰버
-  if (ratio > 0) return forTheme(DONUT_PALETTE[3], theme); // 스틸 블루
+  const palette = donutPalette(theme);
+  if (ratio > 0.66) return palette[0];
+  if (ratio > 0.33) return palette[1];
+  if (ratio > 0) return palette[3];
   return C.surfaceAlt;
 }
 
@@ -254,7 +257,7 @@ export default function InfrastructureView() {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { countries, status: geoStatus, error: geoError } = useGeoStats({ limit: 50 });
-  const [mapMode, setMapMode] = useState("2d"); // "2d" (Google Maps) | "3d" (지구본)
+  const [mapMode, setMapMode] = usePersistedPreference("sentinel-ops:map-mode:infrastructure-geo", "2d", ["2d", "3d"]);
 
   return (
     <div className="space-y-6">
@@ -262,7 +265,10 @@ export default function InfrastructureView() {
           패턴을 그대로 가져왔다. Infrastructure는 섹션별 소제목은 이미 있었지만
           "이 페이지 전체가 뭘 보여주는 곳인지"를 알려주는 헤더가 없었다. */}
       <div>
-        <h2 className="text-dash-fg text-base font-semibold mb-1">인프라 현황</h2>
+        <h2 className="text-dash-fg text-base font-semibold mb-1 flex items-center gap-2">
+          <Server className="w-4 h-4 shrink-0" strokeWidth={2} />
+          인프라 현황
+        </h2>
         <p className="text-dash-muted text-xs">
           로그 파이프라인 상태와 실제 공격이 집중된 K8s 클러스터 대상(네임스페이스/파드), 공격 발원지를 표시합니다
         </p>

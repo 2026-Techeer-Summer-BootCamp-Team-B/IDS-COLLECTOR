@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertOctagon, AlertTriangle, AlertCircle, Info, Globe, Eye, Boxes, Loader2, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, AlertCircle, Info, Globe, Eye, Boxes, Loader2, CheckCircle2 } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
 import { forTheme } from "../data/theme";
 
@@ -14,8 +14,8 @@ import { forTheme } from "../data/theme";
  */
 
 export const SEVERITY_META = {
-  CRITICAL: { label: "CRITICAL", color: "#FF1F4B", icon: AlertOctagon },
-  HIGH: { label: "HIGH", color: "#FF7A18", icon: AlertTriangle },
+  CRITICAL: { label: "CRITICAL", color: "#FF1F4B", icon: AlertTriangle },
+  HIGH: { label: "HIGH", color: "#FF7A18", icon: AlertCircle },
   MEDIUM: { label: "MEDIUM", color: "#F5E400", icon: AlertCircle },
   LOW: { label: "LOW", color: "#6B7BAA", icon: Info },
 };

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { SOURCE_META } from "./badges";
 import { forTheme } from "../data/theme";
@@ -16,6 +16,9 @@ import { fetchEventIncident, fetchIncidentTimeline } from "../lib/authApi";
 // 붙은 항목을 전부(한 폴링 틱에 여러 건이 몰렸어도 전부) 화면 큐에 넣고
 // 소멸시키는 책임을 진다.
 const MAX_TOASTS = 5;
+const TOAST_STACK_GAP_PX = 8;
+const TOAST_STACK_BOTTOM_PX = 24;
+const TOAST_SAFE_GAP_PX = 16;
 // 2026-07-18: "스토리라인 보기가 활성화되기 전에 알림이 사라져서 의미가 없다"는
 // 피드백 - 자동소멸 기준을 고정 시간이 아니라 "스토리라인 보기 활성화 여부"로
 // 바꿨다. incidentId가 아직 없으면(=인시던트로 안 묶임) FALLBACK_LIFETIME_MS
@@ -47,7 +50,7 @@ function groupKeyFor(event) {
   return `${event.module}|${event.message}`;
 }
 
-export default function CriticalToastStack({ events, onInvestigate, onGoToIncident }) {
+export default function CriticalToastStack({ events, onInvestigate, onGoToIncident, safeTopRef, sidebarOpen = true }) {
   const { theme } = useTheme();
   const [toasts, setToasts] = useState([]);
   // id -> { expireTimer, removeTimer, expireAt, remainingMs }. 상태(toasts)와 별도로
@@ -61,10 +64,51 @@ export default function CriticalToastStack({ events, onInvestigate, onGoToIncide
   // 타이머가 계속 리셋되어 실제로 안 불릴 수 있음).
   const toastsRef = useRef([]);
   const incidentPollInFlightRef = useRef(new Set());
+  const stackRef = useRef(null);
+  const [visibleLimit, setVisibleLimit] = useState(MAX_TOASTS);
   const reducedMotionRef = useRef(
     typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
   );
+
+  // 고정 5개를 그대로 쌓으면 짧은 화면에서 사이드바의 Falco/K8s API 메뉴 위로
+  // 올라온다. 마지막 메뉴의 실제 하단과 각 카드의 실제 높이를 재서, 그 아래
+  // 공간에 완전히 들어가는 최신 알림만 렌더한다. useLayoutEffect라서 새 알림이
+  // 추가될 때도 "5개가 잠깐 메뉴를 덮었다가 줄어드는" 깜빡임 없이 그려진다.
+  useLayoutEffect(() => {
+    const recalculate = () => {
+      const safeTop = safeTopRef?.current?.getBoundingClientRect?.().bottom;
+      if (!sidebarOpen || !safeTop || typeof window === "undefined") {
+        setVisibleLimit(MAX_TOASTS);
+        return;
+      }
+
+      const availableHeight = window.innerHeight - safeTop - TOAST_SAFE_GAP_PX - TOAST_STACK_BOTTOM_PX;
+      const cards = Array.from(stackRef.current?.querySelectorAll("[data-critical-toast-card]") || []);
+      const heights = cards.map((card) => card.getBoundingClientRect().height).filter((height) => height > 0);
+      // jsdom처럼 레이아웃 높이를 알 수 없는 환경은 기존 최대치로 유지한다.
+      if (availableHeight <= 0 || heights.length === 0) {
+        setVisibleLimit(MAX_TOASTS);
+        return;
+      }
+
+      // 현재 보이는 카드 중 가장 높은 값을 기준으로 잡으면, 화면을 키울 때
+      // 숨겨졌던 알림도 다시 늘릴 수 있으면서 긴 메시지 카드가 섞여도 안전하다.
+      const cardHeight = Math.max(...heights);
+      const count = Math.floor((availableHeight + TOAST_STACK_GAP_PX) / (cardHeight + TOAST_STACK_GAP_PX));
+      setVisibleLimit(Math.min(MAX_TOASTS, Math.max(1, count)));
+    };
+
+    recalculate();
+    window.addEventListener("resize", recalculate);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(recalculate);
+    if (safeTopRef?.current) observer?.observe(safeTopRef.current);
+    if (stackRef.current) observer?.observe(stackRef.current);
+    return () => {
+      window.removeEventListener("resize", recalculate);
+      observer?.disconnect();
+    };
+  }, [toasts, safeTopRef, sidebarOpen]);
 
   const startExit = useCallback((id, reason) => {
     setToasts((prev) =>
@@ -278,9 +322,11 @@ export default function CriticalToastStack({ events, onInvestigate, onGoToIncide
 
   if (toasts.length === 0) return null;
 
+  const visibleToasts = toasts.slice(-visibleLimit);
+
   return (
-    <div className="fixed bottom-6 left-[5px] z-50 flex flex-col gap-2 w-[230px] pointer-events-none">
-      {toasts.map((t) => (
+    <div ref={stackRef} className="fixed bottom-6 left-[5px] z-50 flex flex-col gap-2 w-[230px] pointer-events-none">
+      {visibleToasts.map((t) => (
         <ToastCard
           key={t.id}
           toast={t}
@@ -346,6 +392,7 @@ function ToastCard({
       <div className="min-h-0 min-w-0">
         <div
           role="alert"
+          data-critical-toast-card
           onMouseEnter={onMouseEnter}
           onMouseLeave={onMouseLeave}
           className={`pointer-events-auto min-w-0 bg-dash-surface border border-dash-critical rounded-2xl shadow-2xl p-3 glow-box-critical ${contentTransform}`}
@@ -401,7 +448,9 @@ function ToastCard({
               }
             >
               {(navState === "loading" || !incidentId) && <LoaderCircle size={12} className="animate-spin shrink-0" />}
-              {navState === "loading" || !incidentId ? "스토리라인 분석중" : navState === "error" ? "다시 시도" : "스토리라인 보기"}
+              {navState === "loading" || !incidentId ? (
+                <span>분석 중</span>
+              ) : navState === "error" ? "다시 시도" : "스토리라인 보기"}
             </button>
           </div>
         </div>

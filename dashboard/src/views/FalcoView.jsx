@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { Eye } from "lucide-react";
 import { RANGE_PRESETS } from "../data/timeSeries";
 import { REAL_SEVERITY_LEVELS, REAL_ERROR_MIN_SEVERITY, getRealSeverityMeta } from "../data/realSeverity";
 import { useLogs } from "../hooks/useLogs";
@@ -148,7 +149,10 @@ export default function FalcoView() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-dash-fg text-base font-semibold mb-1">Falco 상세</h2>
+          <h2 className="text-dash-fg text-base font-semibold mb-1 flex items-center gap-2">
+            <Eye className="w-4 h-4 shrink-0" strokeWidth={2} />
+            Falco 상세
+          </h2>
           <p className="text-dash-muted text-xs">런타임 보안 이벤트 전용 뷰 (module=falco) · 컨테이너 syscall 기반 탐지</p>
         </div>
         <TimeRangePicker value={rangeKey} onChange={setRangeKey} />

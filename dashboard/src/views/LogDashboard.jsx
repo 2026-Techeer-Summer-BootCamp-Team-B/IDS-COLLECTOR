@@ -48,11 +48,12 @@ import { RANGE_PRESETS, formatBucketLabel, detectSpike } from "../data/timeSerie
 import { usePollInterval } from "../context/PollIntervalContext";
 import { CHART_COLORS, forTheme, DONUT_PALETTE, donutPalette, chartTooltipProps } from "../data/theme";
 import { useTheme } from "../hooks/useTheme";
+import { usePersistedPreference } from "../hooks/usePersistedPreference";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import SearchDiscoverView from "./SearchDiscoverView";
 import TimeRangePicker from "../components/TimeRangePicker";
 import GoogleGeoMap from "../components/GoogleGeoMap";
-import { RechartsHoverPanel } from "../components/HoverPanel";
+import { ChartHoverPanel, RechartsHoverPanel } from "../components/HoverPanel";
 // three.js는 이 카드에서만 쓰이는데도 LogDashboard.jsx가 Card/KpiCard 등 공용
 // 프리미티브를 export하다보니 다른 뷰(WAS/Falco/K8sAudit/Incidents)들이 전부 이
 // 파일을 import한다 — 정적 import로 넣으면 그 뷰들 번들에도 300~400KB가 얹혀버려서
@@ -186,9 +187,16 @@ export function Card({ title, subtitle, icon: Icon, action, children, className 
 // rows) — active state used to be a neon glow ring, but that read more like
 // "look here" than "this is selected". Switched to a darker fill + inset
 // border, closer to how a pressed button looks.
-export function KpiCard({ label, value, delta, positive = true, onClick, active = false, accent = "mint" }) {
+export function KpiCard({ label, labelSuffix, value, delta, positive = true, onClick, active = false, accent = "mint", labelTone }) {
+  const { theme } = useTheme();
   const Tag = onClick ? "button" : "div";
   const accentBorder = accent === "critical" ? "border-dash-critical/50" : "border-dash-mint/50";
+  // KPI 라벨은 라이트에서 원색을 유지하고, 다크에서는 같은 색을 살짝 눌러
+  // 눈부심 없이 다른 차트의 다크 팔레트와 맞춘다.
+  const labelBaseColor = labelTone === "sky" ? "#38BDF8" : CHART_COLORS.light[labelTone];
+  const labelColor = labelBaseColor
+    ? (theme === "dark" ? forTheme(labelBaseColor, "light") : labelBaseColor)
+    : undefined;
   const displayValue = useCountUp(value);
   return (
     <Tag
@@ -201,7 +209,10 @@ export function KpiCard({ label, value, delta, positive = true, onClick, active 
           : `bg-dash-surface border-transparent ${onClick ? "hover:bg-dash-surfaceAlt/60" : ""}`
       }`}
     >
-      <p className="text-dash-muted text-xs mb-2">{label}</p>
+      <p className="text-dash-muted text-xs mb-2">
+        <span style={labelColor ? { color: labelColor } : undefined}>{label}</span>
+        {labelSuffix && <span className="text-dash-fg">{labelSuffix}</span>}
+      </p>
       <p className="text-dash-fg text-2xl font-semibold tabular-nums">{displayValue}</p>
       {delta && (
         <p className={`text-xs mt-1 ${positive ? "text-dash-mint" : "text-dash-pink"}`}>
@@ -517,7 +528,7 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
   const errorColor = donutPalette(theme)[0];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
   const { pollMs } = usePollInterval();
-  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("log-volume"));
+  const [internalType, setInternalType] = usePersistedPreference("sentinel-ops:chart-type:log-volume", defaultChartTypeFor("log-volume"), ["area", "bar", "donut"]);
   const isControlled = chartTypeProp !== undefined;
   const chartType = isControlled ? chartTypeProp : internalType;
   const { buckets, status, error } = useLogVolume({
@@ -576,7 +587,15 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
                 <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
                 <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} minTickGap={24} />
                 <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip {...chartTooltipProps(C)} cursor={false} />
+                <Tooltip
+                  content={<ChartHoverPanel theme={theme} />}
+                  allowEscapeViewBox={{ x: true, y: true }}
+                  reverseDirection={{ x: false, y: false }}
+                  offset={0}
+                  isAnimationActive={false}
+                  wrapperStyle={{ pointerEvents: "none" }}
+                  cursor={false}
+                />
                 <Bar dataKey="total" fill={totalColor} radius={[3, 3, 0, 0]} />
                 <Bar dataKey="errorish" fill={errorColor} radius={[3, 3, 0, 0]} />
               </BarChart>
@@ -787,7 +806,7 @@ export function RealLevelDistributionChart({
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { pollMs } = usePollInterval();
-  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("level-distribution"));
+  const [internalType, setInternalType] = usePersistedPreference("sentinel-ops:chart-type:log-levels", defaultChartTypeFor("level-distribution"), ["bar", "donut"]);
   const isControlled = chartTypeProp !== undefined;
   const chartType = isControlled ? chartTypeProp : internalType;
   const sevParams = KPI_SEVERITY_PARAMS[kpiFilter] || {};
@@ -914,6 +933,7 @@ export function RealLevelDistributionChart({
                 className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
+                style={theme === "dark" && i === activeIndex ? { backgroundColor: C.surfaceAlt } : undefined}
               >
                 <span
                   className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
@@ -980,7 +1000,15 @@ export function LevelDistributionChart({ events }) {
             textAnchor="end"
           />
           <YAxis stroke={C.muted} tickLine={false} axisLine={false} fontSize={12} />
-          <Tooltip {...chartTooltipProps(C)} cursor={false} />
+          <Tooltip
+            content={<ChartHoverPanel theme={theme} />}
+            allowEscapeViewBox={{ x: true, y: true }}
+            reverseDirection={{ x: false, y: false }}
+            offset={0}
+            isAnimationActive={false}
+            wrapperStyle={{ pointerEvents: "none" }}
+            cursor={false}
+          />
           <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={700} animationEasing="ease-out">
             {data.map((d) => (
               <Cell key={d.key} fill={d.color} />
@@ -1069,8 +1097,11 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
                 data={data}
                 startAngle={180}
                 endAngle={0}
-                innerRadius={55}
-                outerRadius={72}
+                // 기본 중앙값(50%)에서는 반지름 72px의 윗부분이 140px 차트 밖으로
+                // 약간 나간다. 중심을 소폭 내리면 게이지 상단이 잘리지 않는다.
+                cy="55%"
+                innerRadius={50}
+                outerRadius={66}
                 dataKey="value"
                 stroke="none"
                 isAnimationActive
@@ -1125,35 +1156,98 @@ function MinimalBarTooltip({ active, payload, coordinate, viewBox }) {
   );
 }
 
+function LayerAttackHoverPanel({ active, payload, coordinate, viewBox, theme }) {
+  if (!active || !payload?.length || !coordinate) return null;
+
+  // vertical BarChart의 coordinate.y는 선택한 막대 행의 중앙이다. 막대의 반높이를
+  // 빼서 패널의 아래쪽을 해당 막대 윗선에 붙인다. 따라서 WAS → WAF처럼 아래 행으로
+  // 커서를 옮기면 패널도 반드시 같은 방향으로 내려간다.
+  const barHalfHeight = ((viewBox?.height || 0) / LAYER_ORDER.length) * 0.45;
+
+  return (
+    <RechartsHoverPanel
+      active={active}
+      payload={payload}
+      theme={theme}
+      labelFormatter={(_, entries) => entries?.[0]?.payload?.label}
+      formatter={(value) => [`${value}건`, "적중 건수"]}
+      transform={`translate(-50%, calc(-100% - ${8 + barHalfHeight}px))`}
+    />
+  );
+}
+
+function LogLevelHoverPanel({ active, payload, theme }) {
+  if (!active || !payload?.length) return null;
+
+  return (
+    <RechartsHoverPanel
+      active={active}
+      payload={payload}
+      theme={theme}
+      labelFormatter={(_, entries) => entries?.[0]?.payload?.label}
+      formatter={(value) => [`${value}건`, "로그 수"]}
+      transform="translate(-50%, calc(-100% - 16px))"
+    />
+  );
+}
+
 // 2026-07-17(재작업): hover 시 나머지를 회색으로 죽이던 걸 없애고, 카테고리마다
 // hover 여부와 무관하게 항상 자기 색(d.color)을 유지하도록 되돌렸다(참고 이미지
 // 기준 - "hover된 막대만 강조색이고 나머지는 무채색"이던 걸 "전부 항상 고유
 // 색상"으로). 대신 hover된 막대 뒤에 세로 컬럼 하이라이트(회색, Tooltip의
 // cursor)와, Y축 그리드+파란 눈금, 플롯 배경을 추가해서 하이라이트 방식 자체를
 // "막대 색 죽이기"에서 "배경에 컬럼 강조"로 바꿨다.
+export function useBarHoverIndex() {
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const resetTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(resetTimerRef.current), []);
+  return [
+    hoveredIndex,
+    {
+      onMouseMove: (state) => {
+        clearTimeout(resetTimerRef.current);
+        const rawIndex = state?.activeTooltipIndex;
+        const index = rawIndex == null ? NaN : Number(rawIndex);
+        setHoveredIndex(Number.isInteger(index) ? index : null);
+      },
+      // 차트 밖으로 나갈 때 즉시 원색으로 튀지 않게, 도넛의 hover 해제와
+      // 같은 짧은 유예를 둔다. 각 Cell의 fill transition과 함께 자연스럽게 복귀한다.
+      onMouseLeave: () => {
+        clearTimeout(resetTimerRef.current);
+        resetTimerRef.current = setTimeout(() => setHoveredIndex(null), 120);
+      },
+    },
+  ];
+}
+
 function CategoryBarChart({ data, C, height = 160, theme }) {
-  const plotBg = theme === "light" ? "#FFFFFF" : C.surfaceAlt;
   const tickBlue = donutPalette(theme)[3];
+  const [hoveredIndex, hoverHandlers] = useBarHoverIndex();
+  // CSS transition만으로는 Recharts가 SVG fill 속성을 교체하는 타이밍에 따라
+  // 모션이 생략될 수 있다. 도넛과 같은 색상 보간 훅으로 실제 전환 프레임을 만든다.
+  const animatedFills = useAnimatedFills(
+    useMemo(() => data.map((d, i) => (hoveredIndex !== null && i !== hoveredIndex ? C.donutDim : d.color)), [data, hoveredIndex, C.donutDim]),
+    220
+  );
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ bottom: 8 }}>
-        <CartesianGrid stroke={C.surfaceAlt} vertical={false} fill={plotBg} />
+      <BarChart data={data} margin={{ bottom: 8 }} {...hoverHandlers}>
+        <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
         <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
         <YAxis stroke={tickBlue} tick={{ fill: tickBlue }} tickLine={false} axisLine={false} fontSize={11} />
         <Tooltip
-          content={<MinimalBarTooltip />}
+          content={<ChartHoverPanel theme={theme} />}
+          allowEscapeViewBox={{ x: true, y: true }}
+          reverseDirection={{ x: false, y: false }}
+          offset={0}
           isAnimationActive={false}
-          cursor={{ fill: C.muted, opacity: 0.15 }}
-          // 2026-07-17 요청: 세로(Y) 위치가 마우스 Y를 따라 움직여서 거슬린다 -
-          // position에 y만 고정으로 주면(x는 안 줘서 그대로 커서/막대를 따라감)
-          // recharts가 세로는 항상 이 값으로 고정하고 가로만 반응형으로 둔다.
-          // 플롯 상단에 가깝게 고정해서 막대 크기와 무관하게 항상 같은 높이에 뜸.
-          position={{ y: 4 }}
+          wrapperStyle={{ pointerEvents: "none" }}
+          cursor={{ fill: theme === "dark" ? C.surfaceAlt : C.muted, opacity: theme === "dark" ? 1 : 0.15 }}
         />
         <Bar dataKey="count" radius={[6, 6, 0, 0]}>
-          {data.map((d) => (
-            <Cell key={d.key} fill={d.color} />
+          {data.map((d, i) => (
+            <Cell key={d.key} fill={animatedFills[i]} />
           ))}
         </Bar>
       </BarChart>
@@ -1161,34 +1255,31 @@ function CategoryBarChart({ data, C, height = 160, theme }) {
   );
 }
 
-// Log Levels의 세로 막대 전용 시각 패널. 계층별 공격 통계와 동일하게 한 항목씩
-// 부드럽게 강조하지만, 막대 방향과 기존 count 표기는 유지한다.
-function VerticalLevelSpotlightBar({ x, y, width, height, fill, index, activeIndex, growth }) {
-  const active = index === activeIndex;
-  const expand = active ? 5 * easeOutQuad(growth) : 0;
-  return (
-    <g>
-      {active && <rect x={x - 3} y={Math.max(0, y - 7)} width={width + 6} height={height + 7} rx={7} fill={fill} opacity={0.16} />}
-      <rect x={x - expand / 2} y={Math.max(0, y - expand)} width={width + expand} height={height + expand} rx={6} fill={fill} />
-    </g>
-  );
-}
-
 function LogLevelBarPanel({ data, C, height = 160, theme }) {
-  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(data.length);
-  const growth = useGrowPulse(activeIndex);
-  const plotBg = theme === "light" ? "#FFFFFF" : C.surfaceAlt;
   const tickBlue = donutPalette(theme)[3];
+  const [hoveredIndex, hoverHandlers] = useBarHoverIndex();
+  const animatedFills = useAnimatedFills(
+    useMemo(() => data.map((d, i) => (hoveredIndex !== null && i !== hoveredIndex ? C.donutDim : d.color)), [data, hoveredIndex, C.donutDim]),
+    220
+  );
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ bottom: 8 }} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-        <CartesianGrid stroke={C.surfaceAlt} vertical={false} fill={plotBg} />
+      <BarChart data={data} margin={{ bottom: 8 }} {...hoverHandlers}>
+        <CartesianGrid stroke={C.surfaceAlt} vertical={false} />
         <XAxis dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} interval={0} />
         <YAxis stroke={tickBlue} tick={{ fill: tickBlue }} tickLine={false} axisLine={false} fontSize={11} />
-        <Tooltip content={<MinimalBarTooltip />} isAnimationActive={false} cursor={{ fill: C.muted, opacity: 0.15 }} position={{ y: 4 }} />
-        <Bar dataKey="count" isAnimationActive={false} onMouseEnter={(_, index) => focusIndex(index)} onMouseLeave={blurIndex} shape={(props) => <VerticalLevelSpotlightBar {...props} activeIndex={activeIndex} growth={growth} />}>
-          {data.map((d) => <Cell key={d.key} fill={d.color} />)}
+        <Tooltip
+          content={<LogLevelHoverPanel theme={theme} />}
+          allowEscapeViewBox={{ x: true, y: true }}
+          reverseDirection={{ x: false, y: false }}
+          offset={0}
+          isAnimationActive={false}
+          wrapperStyle={{ pointerEvents: "none" }}
+          cursor={{ fill: theme === "dark" ? C.surfaceAlt : C.muted, opacity: theme === "dark" ? 1 : 0.15 }}
+        />
+        <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive={false}>
+          {data.map((d, i) => <Cell key={d.key} fill={animatedFills[i]} />)}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -1210,7 +1301,7 @@ function LogLevelBarPanel({ data, C, height = 160, theme }) {
 // 같이 떨어지므로, 호출부는 highlighting && i !== activeIndex로 색상/확대를
 // 항상 같은 순간에 켜고 끌 수 있다. 자동 순환 스포트라이트 자체(hover 없을 때
 // activeIndex가 계속 도는 것)는 이 변경과 무관하게 그대로 유지됨.
-function useAutoCycleIndex(length, intervalMs = 2200, resumeDelayMs = 1000) {
+export function useAutoCycleIndex(length, intervalMs = 2200, resumeDelayMs = 1000) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [highlighting, setHighlighting] = useState(false);
@@ -1299,7 +1390,7 @@ function easeOutQuad(t) {
 // 같은 200ms를 쓰게 해서 "커지는 모션"과 "색 변화"가 정확히 같은 순간에
 // 시작하고 끝난다(둘 다 activeIndex/highlighting이 바뀌는 같은 이벤트에서
 // 트리거되므로, duration만 맞추면 동기화됨).
-function useAnimatedFills(targetColors, durationMs = 200) {
+export function useAnimatedFills(targetColors, durationMs = 200) {
   const [colors, setColors] = useState(targetColors);
   const colorsRef = useRef(targetColors);
   const prevTargetsRef = useRef(targetColors);
@@ -1339,7 +1430,7 @@ function useAnimatedFills(targetColors, durationMs = 200) {
 // RAF 방식 - recharts의 isAnimationActive는 이미 hover 시 DOM을 새로 그려서
 // 못 쓰는 걸 앞서 확인했으므로(위 useAnimatedFills 주석 참고) 여기서도 같은
 // 이유로 자체 구현한다.
-function useGrowPulse(trigger, durationMs = 200) {
+export function useGrowPulse(trigger, durationMs = 200) {
   const [progress, setProgress] = useState(1);
   const rafRef = useRef(null);
   useEffect(() => {
@@ -1374,7 +1465,7 @@ function useGrowPulse(trigger, durationMs = 200) {
 // 마우스가 그 위에 있는 동안 더 이상 leave 이벤트가 안 잡히고(핸들러 자체가
 // 없으니까) blurIndex()가 영영 안 불려서 hover가 그 조각에 낀 채 멈췄다.
 // props에 원래 들어있는 핸들러를 <g>에 그대로 물려줘서 고친다.
-function renderGlowActiveShape(props, growth = 1) {
+export function renderGlowActiveShape(props, growth = 1) {
   const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, onMouseEnter, onMouseLeave } = props;
   const eased = easeOutQuad(growth);
   return (
@@ -1653,7 +1744,7 @@ function ActivityLayerDiagram({ layers, C }) {
 function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType: chartTypeProp, onChartTypeChangeExternal }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-source"));
+  const [internalType, setInternalType] = usePersistedPreference("sentinel-ops:chart-type:detection-source", defaultChartTypeFor("donut-source"), ["donut", "bar"]);
   const isControlled = chartTypeProp !== undefined;
   const chartType = isControlled ? chartTypeProp : internalType;
   const sevParams = KPI_SEVERITY_PARAMS[kpiFilter] || {};
@@ -1792,6 +1883,7 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
                 className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
+                style={theme === "dark" && i === activeIndex ? { backgroundColor: C.surfaceAlt } : undefined}
               >
                 <span
                   className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
@@ -1832,7 +1924,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp, onChartTypeChan
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { pollMs } = usePollInterval();
-  const [internalType, setInternalType] = useState(() => defaultChartTypeFor("donut-severity"));
+  const [internalType, setInternalType] = usePersistedPreference("sentinel-ops:chart-type:overview-severity", defaultChartTypeFor("donut-severity"), ["donut", "bar"]);
   const isControlled = chartTypeProp !== undefined;
   const chartType = isControlled ? chartTypeProp : internalType;
   const { levels, total, status, error } = useLogLevels({ hours, pollMs });
@@ -1966,6 +2058,7 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp, onChartTypeChan
                 className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
                   i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
                 }`}
+                style={theme === "dark" && i === activeIndex ? { backgroundColor: C.surfaceAlt } : undefined}
               >
                 <span
                   className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
@@ -2014,22 +2107,12 @@ function SeverityDonutCompact({ hours, chartType: chartTypeProp, onChartTypeChan
 // (DashboardContent)가 한 번만 fetch해 두 위젯에 같이 내려준다.
 const LAYER_ORDER = ["was", "waf", "falco", "k8s_audit"];
 
-// Log Levels의 자동 스포트라이트를 가로 막대에 맞춘 모양이다. 수치나 막대의
-// 방향은 건드리지 않고, 현재 선택된 막대 끝만 가볍게 늘어나며 강조가 이동한다.
-function HorizontalLayerSpotlightBar({ x, y, width, height, fill, index, activeIndex, growth }) {
-  const active = index === activeIndex;
-  const expand = active ? 5 * easeOutQuad(growth) : 0;
-  return (
-    <g>
-      {active && <rect x={x} y={y - 3} width={Math.max(0, width + 7)} height={height + 6} rx={7} fill={fill} opacity={0.16} />}
-      <rect x={x} y={y - expand / 2} width={Math.max(0, width + expand)} height={height + expand} rx={6} fill={fill} />
-    </g>
-  );
-}
-
-function LayerAttackStatsCompact({ scenarios, status, error, controlled = false }) {
+function LayerAttackStatsCompact({ scenarios, status, error, controlled = false, chartType: chartTypeProp, onChartTypeChangeExternal }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
+  const [internalType, setInternalType] = usePersistedPreference("sentinel-ops:chart-type:layer-attacks", "bar", ["bar", "donut"]);
+  const isControlled = chartTypeProp !== undefined;
+  const chartType = isControlled ? chartTypeProp : internalType;
 
   const layerTotals = useMemo(() => {
     const byModule = {};
@@ -2037,40 +2120,159 @@ function LayerAttackStatsCompact({ scenarios, status, error, controlled = false 
       const module = s.required_modules?.[0] || "unknown";
       byModule[module] = (byModule[module] || 0) + (s.hit_count || 0);
     });
-    return LAYER_ORDER.map((m) => ({ module: m, ...getModuleMeta(m), count: byModule[m] || 0 }));
-  }, [scenarios]);
+    return LAYER_ORDER.map((m) => {
+      const meta = getModuleMeta(m);
+      // 라이트에서는 모듈 고유색을 그대로 보이고, 네온 대비가 강한 다크에서만
+      // 심각도 도넛과 같은 정도로 한 단계 톤을 낮춘다.
+      const color = theme === "dark" ? forTheme(meta.color, "light") : meta.color;
+      return { module: m, ...meta, color, count: byModule[m] || 0 };
+    });
+  }, [scenarios, theme]);
   const totalHits = layerTotals.reduce((sum, l) => sum + l.count, 0);
-  const [activeIndex, setPaused, focusIndex, blurIndex] = useAutoCycleIndex(layerTotals.length);
-  const targetFills = useMemo(() => layerTotals.map((layer) => layer.color), [layerTotals]);
+  const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(
+    chartType === "donut" ? layerTotals.length : 0
+  );
+  const targetFills = useMemo(
+    () => layerTotals.map((l, i) => (!highlighting || i === activeIndex ? l.color : C.donutDim)),
+    [layerTotals, highlighting, activeIndex, C.donutDim]
+  );
   const animatedFills = useAnimatedFills(targetFills);
   const growth = useGrowPulse(activeIndex);
+  const [hoveredBarIndex, barHoverHandlers] = useBarHoverIndex();
+  const animatedBarFills = useAnimatedFills(
+    useMemo(
+      () => layerTotals.map((l, i) => (hoveredBarIndex !== null && i !== hoveredBarIndex ? C.donutDim : l.color)),
+      [layerTotals, hoveredBarIndex, C.donutDim]
+    ),
+    220
+  );
 
   return (
     <Card
       title="계층별 공격 통계"
       icon={Layers}
       subtitle={status === "ready" ? `전체 기간 · 총 ${totalHits}건` : "불러오는 중..."}
+      action={
+        (!isControlled || onChartTypeChangeExternal) && (
+          <ChartTypeToggle
+            options={chartTypeOptionsFor("donut-k8s-namespace")}
+            value={chartType}
+            onChange={onChartTypeChangeExternal ?? setInternalType}
+          />
+        )
+      }
       className={controlled ? "h-full flex flex-col" : ""}
     >
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
-      {status === "ready" && (
+      {status === "ready" && chartType === "bar" && (
         <div className={controlled ? "flex-1 min-h-0" : ""}>
-        <ResponsiveContainer width="100%" height={controlled ? "100%" : 150}>
-          <BarChart data={layerTotals} layout="vertical" margin={{ left: 4, right: 24, top: 4, bottom: 4 }} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-            <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
-            <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
-            <YAxis type="category" dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} width={80} />
-            <Tooltip
-              content={<RechartsHoverPanel theme={theme} formatter={(value) => [`${value}건`, "적중 건수"]} />}
-              cursor={{ fill: C.surfaceAlt, opacity: 0.5 }}
-            />
-            <Bar dataKey="count" isAnimationActive={false} onMouseEnter={(_, index) => focusIndex(index)} onMouseLeave={blurIndex} shape={(props) => <HorizontalLayerSpotlightBar {...props} activeIndex={activeIndex} growth={growth} />}>
-              {layerTotals.map((l, index) => (
-                <Cell key={l.module} fill={animatedFills[index]} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+          <ResponsiveContainer width="100%" height={controlled ? "100%" : 150}>
+            <BarChart data={layerTotals} layout="vertical" margin={{ left: 4, right: 24, top: 4, bottom: 4 }} {...barHoverHandlers}>
+              <CartesianGrid stroke={C.surfaceAlt} horizontal={false} />
+              <XAxis type="number" stroke={C.muted} tickLine={false} axisLine={false} fontSize={10} allowDecimals={false} />
+              <YAxis type="category" dataKey="label" stroke={C.muted} tickLine={false} axisLine={false} fontSize={11} width={80} />
+              <Tooltip
+                content={<LayerAttackHoverPanel theme={theme} />}
+                allowEscapeViewBox={{ x: true, y: true }}
+                reverseDirection={{ x: false, y: false }}
+                offset={0}
+                isAnimationActive={false}
+                wrapperStyle={{ pointerEvents: "none" }}
+                cursor={{ fill: C.surfaceAlt, opacity: theme === "dark" ? 1 : 0.5 }}
+              />
+              <Bar dataKey="count" radius={[0, 6, 6, 0]} isAnimationActive={false}>
+                {layerTotals.map((l, i) => (
+                  <Cell key={l.module} fill={animatedBarFills[i]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {status === "ready" && chartType === "donut" && (
+        <div className={controlled ? "flex items-center gap-4 flex-1 min-h-0" : "flex items-center gap-4"}>
+          {controlled ? (
+            <div className="h-full aspect-square shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+                  <Pie
+                    data={layerTotals}
+                    dataKey="count"
+                    nameKey="label"
+                    innerRadius="49%"
+                    outerRadius="79%"
+                    startAngle={90}
+                    endAngle={-270}
+                    stroke="none"
+                    isAnimationActive={false}
+                    activeIndex={activeIndex}
+                    activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                    onMouseEnter={(_, i) => focusIndex(i)}
+                    onMouseLeave={blurIndex}
+                  >
+                    {layerTotals.map((l, i) => (
+                      <Cell key={l.module} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <PieChart width={132} height={132} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+              <Pie
+                data={layerTotals}
+                dataKey="count"
+                nameKey="label"
+                innerRadius={32}
+                outerRadius={52}
+                startAngle={90}
+                endAngle={-270}
+                stroke="none"
+                isAnimationActive={false}
+                activeIndex={activeIndex}
+                activeShape={(shapeProps) => renderGlowActiveShape(shapeProps, growth)}
+                onMouseEnter={(_, i) => focusIndex(i)}
+                onMouseLeave={blurIndex}
+              >
+                {layerTotals.map((l, i) => (
+                  <Cell key={l.module} fill={animatedFills[i]} stroke={theme === "light" ? "#FFFFFF" : C.surfaceAlt} strokeWidth={0.7} />
+                ))}
+              </Pie>
+            </PieChart>
+          )}
+          <div className="flex-1 text-sm">
+            {layerTotals.map((l, i) => (
+              <div
+                key={l.module}
+                onMouseEnter={() => focusIndex(i)}
+                onMouseLeave={blurIndex}
+                className={`flex items-center justify-between gap-2 rounded-md px-1 -mx-1 py-0.5 transition-colors duration-200 ease-in-out ${
+                  i === activeIndex ? "bg-dash-surfaceAlt/60" : ""
+                }`}
+                style={theme === "dark" && i === activeIndex ? { backgroundColor: C.surfaceAlt } : undefined}
+              >
+                <span
+                  className={`flex items-center gap-1.5 truncate transition-colors duration-200 ease-in-out ${
+                    !highlighting
+                      ? i === activeIndex
+                        ? "text-dash-fg"
+                        : "text-dash-muted"
+                      : i === activeIndex
+                      ? "text-dash-fg font-bold"
+                      : ""
+                  }`}
+                  style={highlighting && i !== activeIndex ? { color: C.donutDim } : undefined}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full inline-block shrink-0 transition-colors duration-200 ease-in-out"
+                    style={{ backgroundColor: highlighting && i !== activeIndex ? C.donutDim : l.color }}
+                  />
+                  {l.label}
+                </span>
+                <span className="text-dash-fg">{l.count}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </Card>
@@ -2094,7 +2296,7 @@ function GeoSummaryCard() {
   // 있게 해달라" - Infrastructure 패널과 같은 2D(Google Maps)/3D(지구본) 전환을
   // 여기도 그대로 적용. 기본은 지금까지 써왔던 3D(지구본)를 유지해서 랜딩 화면의
   // "화려한" 첫인상은 그대로 두고, 자세히 보고 싶을 때만 2D로 바꾸게 했다.
-  const [mapMode, setMapMode] = useState("2d");
+  const [mapMode, setMapMode] = usePersistedPreference("sentinel-ops:map-mode:overview-geo", "2d", ["2d", "3d"]);
 
   return (
     <Card
@@ -3165,35 +3367,41 @@ export function DashboardContent() {
       case "kpi-total":
         return (
           <KpiCard
-            label={`Total Logs (${preset.label})`}
+            label="Total Logs"
+            labelSuffix={` (${preset.label})`}
             value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
             onClick={interactive ? () => setKpiFilter("ALL") : undefined}
             active={interactive ? kpiFilter === "ALL" : undefined}
+            labelTone="sky"
           />
         );
       case "kpi-errors":
         return (
           <KpiCard
-            label="Errors (Major~Critical)"
+            label="Errors"
+            labelSuffix=" (Major~Critical)"
             value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
             onClick={interactive ? () => setKpiFilter("ERROR") : undefined}
             active={interactive ? kpiFilter === "ERROR" : undefined}
             accent="critical"
+            labelTone="critical"
           />
         );
       case "kpi-warnings":
         return (
           <KpiCard
-            label="Warnings (Minor)"
+            label="Warnings"
+            labelSuffix=" (Minor)"
             value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
             delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
             positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
             onClick={interactive ? () => setKpiFilter("WARNING") : undefined}
             active={interactive ? kpiFilter === "WARNING" : undefined}
+            labelTone="high"
           />
         );
       case "kpi-sources":
@@ -3230,7 +3438,16 @@ export function DashboardContent() {
           <SeverityDonutCompact hours={hours} chartType={chartType || "donut"} onChartTypeChangeExternal={onChartTypeChange} />
         );
       case "donut-k8s-namespace":
-        return <LayerAttackStatsCompact scenarios={scenarios} status={scenariosStatus} error={scenariosError} controlled />;
+        return (
+          <LayerAttackStatsCompact
+            scenarios={scenarios}
+            status={scenariosStatus}
+            error={scenariosError}
+            controlled
+            chartType={chartType || "bar"}
+            onChartTypeChangeExternal={onChartTypeChange}
+          />
+        );
       case "latency-stats":
         return <LatencyStatsPanel events={wasEventsForLatency} />;
       case "module-volume":
@@ -3264,33 +3481,39 @@ export function DashboardContent() {
   // 커스텀 대시보드의 chartType 변경과는 완전히 분리된 별도 변수들.
   const kpiTotalWidget = (
     <KpiCard
-      label={`Total Logs (${preset.label})`}
+      label="Total Logs"
+      labelSuffix={` (${preset.label})`}
       value={kpiStatus === "ready" ? `${(kpi.current.total ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.total != null ? `${Math.abs(kpi.delta_pct.total)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.total ?? 0) >= 0 : true}
       onClick={() => setKpiFilter("ALL")}
       active={kpiFilter === "ALL"}
+      labelTone="sky"
     />
   );
   const kpiErrorsWidget = (
     <KpiCard
-      label="Errors (Major~Critical)"
+      label="Errors"
+      labelSuffix=" (Major~Critical)"
       value={kpiStatus === "ready" ? `${(kpi.current.errors ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.errors != null ? `${Math.abs(kpi.delta_pct.errors)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.errors ?? 0) <= 0 : false}
       onClick={() => setKpiFilter("ERROR")}
       active={kpiFilter === "ERROR"}
       accent="critical"
+      labelTone="critical"
     />
   );
   const kpiWarningsWidget = (
     <KpiCard
-      label="Warnings (Minor)"
+      label="Warnings"
+      labelSuffix=" (Minor)"
       value={kpiStatus === "ready" ? `${(kpi.current.warnings ?? 0).toLocaleString()}건` : "-"}
       delta={kpiStatus === "ready" && kpi.delta_pct.warnings != null ? `${Math.abs(kpi.delta_pct.warnings)}%` : undefined}
       positive={kpiStatus === "ready" ? (kpi.delta_pct.warnings ?? 0) <= 0 : true}
       onClick={() => setKpiFilter("WARNING")}
       active={kpiFilter === "WARNING"}
+      labelTone="high"
     />
   );
   const kpiSourcesWidget = (

@@ -343,3 +343,30 @@ async def trend_report_notify(body: TrendReportNotifyIn, request: Request):
         "notify_failed": notify_result["failed"],
         "report_notification": report_notification_result,
     }
+
+
+class TrendReportGenerateIn(BaseModel):
+    days: int = 7
+
+
+@app.post("/reports/trend/generate")
+async def trend_report_generate(body: TrendReportGenerateIn, request: Request):
+    """대시보드 "리포트 생성" 버튼 전용 엔드포인트 - generate_trend_report()만
+    호출하고 POST /reports/trend/notify와 달리 webhook(notify_text)/OAuth 연동
+    알림(send_report_notification)은 보내지 않는다. 관리자가 그냥 최신 리포트를
+    지금 바로 보고 싶을 때 쓰는 용도라 알림 채널을 건드릴 이유가 없다."""
+    report = await generate_trend_report(body.days)
+    await record_action(
+        "AI_TREND_REPORT_GENERATED",
+        None,
+        _client_ip(request),
+        user_id=current_user_id(request),
+    )
+    return {
+        "days": body.days,
+        "configured": report["configured"],
+        "cached": report["cached"],
+        "message": report["message"],
+        "stats": report["stats"],
+        "generated_at": report.get("generated_at"),
+    }

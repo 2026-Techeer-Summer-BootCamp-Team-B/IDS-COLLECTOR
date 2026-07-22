@@ -48,22 +48,29 @@ const DARK_MAP_STYLE = [
   { elementType: "geometry", stylers: [{ color: "#111827" }] },
   { elementType: "labels.text.fill", stylers: [{ color: "#BAC6D8" }] },
   { elementType: "labels.text.stroke", stylers: [{ color: "#09111E" }, { weight: 2 }] },
-  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#62748D" }, { weight: 1.2 }] },
+  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#62748D" }] },
   { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#2B3A52" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
   { featureType: "road", stylers: [{ visibility: "off" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#0A1424" }] },
 ];
+// 2026-07-22 가독성 개선: 기존 값들이 파스텔 라벤더 계열끼리 뭉쳐 있어 WCAG
+// 대비비가 라벨 텍스트 2.63:1, 국경선 1.31:1, 육지/바다 1.15:1로 실측됐다(텍스트
+// 최소 기준 4.5:1에도 못 미침). 라벨은 기존 dash-muted 토큰(#5B6180, 4.97:1)으로
+// 올렸다. 국경선은 처음에 #7B81AD(3.08:1) + weight 지정으로 시도했으나 인접국
+// 경계선이 겹치는 구간에서 강처럼 두껍고 진해 보인다는 피드백으로, weight는
+// 기본값으로 되돌리고 색만 #8D92B8(2.48:1, 원래보다는 뚜렷하되 튀지 않는 선)로
+// 낮춰 절충했다. 바다는 육지와의 구분을 위해 톤을 살짝 더 낮췄다.
 const LIGHT_MAP_STYLE = [
-  { elementType: "labels.text.fill", stylers: [{ color: "#8a8fa3" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#F4F5FA" }] },
-  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#c9cce0" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#5B6180" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#F4F5FA" }, { weight: 2 }] },
+  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#8D92B8" }] },
   { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#E6E8F5" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
   { featureType: "road", stylers: [{ visibility: "off" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#D5D9EE" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#B7BEE3" }] },
 ];
 
 function hitPadForZoom(zoom) {

@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Target } from "lucide-react";
 import { useAttackCoverage } from "../hooks/useAttackCoverage";
 import { useTechniqueIncidents } from "../hooks/useTechniqueIncidents";
 import { useIncidentTimeline } from "../hooks/useIncidentTimeline";
@@ -160,7 +161,10 @@ export default function AttackMatrixView({ onNavigateToIncident } = {}) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-dash-fg text-base font-semibold mb-1">MITRE ATT&amp;CK 커버리지</h2>
+          <h2 className="text-dash-fg text-base font-semibold mb-1 flex items-center gap-2">
+            <Target className="w-4 h-4 shrink-0" strokeWidth={2} />
+            MITRE ATT&amp;CK 커버리지
+          </h2>
           <p className="text-dash-muted text-xs">실제 인시던트로 확인된 기법별 탐지 건수를 표시합니다</p>
         </div>
         <div className="text-right">

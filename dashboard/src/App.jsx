@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { LayoutDashboard, AlertTriangle, Target, Server, ShieldCheck, Globe, Shield, Eye, Boxes, ArrowUp, Radar, Bell, Ban } from "lucide-react";
+import { LayoutDashboard, AlertTriangle, Target, Server, ShieldCheck, Globe, Shield, Eye, Boxes, ArrowUp, Radar, Bell, Ban, Wifi, User, LogOut, Loader2, Construction } from "lucide-react";
 import { DashboardContent } from "./views/LogDashboard";
 import IncidentsView from "./views/IncidentsView";
 import AttackMatrixView from "./views/AttackMatrixView";
@@ -76,7 +76,7 @@ const LAYER_NAV_ITEMS = [
 // 붙박이로 고정. overflow-x-hidden은 접힘 트랜지션(w-60 -> w-0) 중 내용이 삐져나가는
 // 것만 잘라내고, 세로는 내부 wrapper의 overflow-y-auto가 맡아서 메뉴가 화면보다
 // 길어져도 사이드바만 독립적으로 스크롤되고 본문 스크롤과는 안 섞인다.
-function Sidebar({ active, onSelect, open, incidentBadge }) {
+function Sidebar({ active, onSelect, open, incidentBadge, layerNavEndRef }) {
   return (
     <aside
       className={`sticky top-0 h-screen shrink-0 flex flex-col bg-dash-bg border-r border-dash-surfaceAlt overflow-x-hidden transition-all duration-200 ease-in-out ${
@@ -124,6 +124,7 @@ function Sidebar({ active, onSelect, open, incidentBadge }) {
           {LAYER_NAV_ITEMS.map((item) => (
             <button
               key={item.key}
+              ref={item.key === "k8s-audit" ? layerNavEndRef : undefined}
               onClick={() => onSelect(item.key)}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm border-l-2 transition-colors ${
                 active === item.key
@@ -269,11 +270,15 @@ function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
         </span>
         {username && (
           <span className="flex items-center gap-1.5 pl-3 border-l border-dash-surfaceAlt">
-            <span className="text-dash-fg">{username}</span>
+            <span className="flex items-center gap-1 text-dash-fg">
+              <User className="w-3.5 h-3.5" strokeWidth={2} />
+              {username}
+            </span>
             <button
               onClick={logout}
-              className="text-dash-muted hover:text-dash-critical px-1.5 py-1 rounded-md hover:bg-dash-surfaceAlt"
+              className="flex items-center gap-1 text-dash-muted hover:text-dash-critical px-1.5 py-1 rounded-md hover:bg-dash-surfaceAlt"
             >
+              <LogOut className="w-3.5 h-3.5" strokeWidth={2} />
               로그아웃
             </button>
           </span>
@@ -287,7 +292,10 @@ function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
 function ConnectionBar() {
   return (
     <div className="flex items-center justify-end px-6 py-2 border-b border-dash-surfaceAlt text-xs text-dash-muted">
-      <span>WAS · WAF · Falco · K8s-Audit 연결됨</span>
+      <span className="flex items-center gap-1.5">
+        <Wifi className="w-3.5 h-3.5" strokeWidth={2} />
+        WAS · WAF · Falco · K8s-Audit 연결됨
+      </span>
     </div>
   );
 }
@@ -295,6 +303,7 @@ function ConnectionBar() {
 function Placeholder({ label }) {
   return (
     <div className="bg-dash-surface rounded-2xl p-10 text-center">
+      <Construction className="w-6 h-6 mx-auto mb-2 text-dash-muted" strokeWidth={2} />
       <p className="text-dash-fg text-sm font-medium mb-1">{label}</p>
       <p className="text-dash-muted text-xs">아직 목업이 없어서 자리만 잡아둔 화면이에요 — 화면 주면 채워줄게.</p>
     </div>
@@ -307,6 +316,9 @@ function AppShell() {
   const [active, setActive] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const mainRef = useRef(null);
+  // CRITICAL 알림은 이 메뉴 아래의 남는 세로 공간만 사용한다. 화면 높이가
+  // 작은 경우에도 계층별 로그 메뉴(Falco/K8s API)를 덮지 않게 하는 기준선이다.
+  const layerNavEndRef = useRef(null);
   // 2026-07-16: ATT&CK 매트릭스에서 "진행중" 인시던트의 "조치하러 가기" 버튼을
   // 누르면 Incidents 탭으로 전환하면서 그 인시던트를 바로 선택해서 보여준다.
   // pendingIncidentId가 바뀔 때마다 IncidentsView에 새로 전달돼서(참조가 매번
@@ -345,6 +357,7 @@ function AppShell() {
         onSelect={setActive}
         open={sidebarOpen}
         incidentBadge={incidentStats.activeIncidents}
+        layerNavEndRef={layerNavEndRef}
       />
       <div className="flex-1 flex flex-col min-h-screen min-w-0">
         <TopBar
@@ -374,6 +387,8 @@ function AppShell() {
         events={criticalEvents}
         onInvestigate={() => setActive("incidents")}
         onGoToIncident={goToIncident}
+        safeTopRef={layerNavEndRef}
+        sidebarOpen={sidebarOpen}
       />
     </div>
   );
@@ -388,7 +403,10 @@ function Gate() {
   if (status === "loading") {
     return (
       <div className="min-h-screen bg-dash-bg flex items-center justify-center">
-        <p className="text-dash-muted text-sm">세션 확인 중...</p>
+        <p className="text-dash-muted text-sm flex items-center gap-1.5">
+          <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} />
+          세션 확인 중...
+        </p>
       </div>
     );
   }
