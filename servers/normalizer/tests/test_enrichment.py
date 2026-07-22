@@ -28,6 +28,20 @@ class TestActorIdentityForPod:
         assert _actor_identity_for_pod("juice-shop-2-df8c5b485-9lt5c") == "sa-B"
         assert _actor_identity_for_pod("juice-shop-75f5f76c8d-nwvcf") == "sa-A"
 
+    def test_backend_pod_matches(self):
+        """2026-07-22 회귀 - backend pod가 매핑에서 빠져 있으면 S70/S87처럼 Falco
+        stage1이 backend에서 발화하는 시퀀스가 user_or_sa로 k8s_audit과 영원히 join이
+        안 된다(SECURITY_TOOLS_TESTING.md 8-0/9 참고)."""
+        assert _actor_identity_for_pod("backend") == "system:serviceaccount:default:default"
+        assert (
+            _actor_identity_for_pod("backend-7d8f9c6b5-x2k9p")
+            == "system:serviceaccount:default:default"
+        )
+        assert (
+            _actor_identity_for_pod("backend-2-6c9d8f7b4-p8m3q")
+            == "system:serviceaccount:default:default"
+        )
+
     def test_unrelated_pod_returns_none(self):
         assert _actor_identity_for_pod("some-other-workload-abc123") is None
 
