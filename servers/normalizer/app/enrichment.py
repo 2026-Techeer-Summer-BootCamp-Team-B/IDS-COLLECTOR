@@ -22,15 +22,30 @@ from ids_shared.schemas import NormalizedEvent
 # target.name(WAS/WAF) 또는 pod 이름 접두사(Falco)로 "이 이벤트가 벌어진 대상 pod에
 # 바인딩된 K8s 신원"을 채워 넣는다(2026-07-19, actor_identity 필드 - schemas.py 주석
 # 참고). kubectl get pod -o jsonpath='{.spec.serviceAccountName}'로 실측 확인
-# (juice-shop/juice-shop-2 둘 다 serviceAccountName을 따로 안 줘서 default 네임스페이스의
-# default SA를 그대로 씀) - 여러 타깃을 붙이게 되면 여기에 그 타깃의 실제 SA도
-# 추가할 것. Falco 쪽은 target.name이 없어서(클러스터 단위 이벤트) pod 이름 접두사로
-# 대신 매칭한다 - 정확한 pod 이름 자체를 하드코딩하지 않는 이유는 위
+# (juice-shop/juice-shop-2/backend/backend-2 전부 serviceAccountName을 따로 안 줘서
+# default 네임스페이스의 default SA를 그대로 씀) - 여러 타깃을 붙이게 되면 여기에 그
+# 타깃의 실제 SA도 추가할 것. Falco 쪽은 target.name이 없어서(클러스터 단위 이벤트)
+# pod 이름 접두사로 대신 매칭한다 - 정확한 pod 이름 자체를 하드코딩하지 않는 이유는 위
 # _FALLBACK_RESOURCE_NAME 주석과 같다(ReplicaSet 해시 접미사가 재배포마다 바뀜) -
 # Deployment 이름 접두사는 재배포에도 안정적이다.
+#
+# backend/backend-2 추가(2026-07-22, 실측으로 드러난 버그) - S70/S87처럼 Falco
+# stage1이 juice-shop이 아니라 backend pod에서 발화하는 시나리오(공격자가 backend
+# 컨테이너에 exec로 들어가 정찰/실행하는 케이스)는 이 dict에 backend가 빠져 있으면
+# _actor_identity_for_pod가 매핑 없음으로 None을 반환하고, _join_key가
+# event.user_name(Falco가 넘겨준 컨테이너 OS 유저, 예: root)으로 폴백해버린다 -
+# k8s_audit의 실제 인증된 user.name(공격자가 훔친 SA 토큰으로 API를 호출했다면
+# system:serviceaccount:default:default)과 절대 안 맞으므로, 공격 체인을 실제로 얼마나
+# 정확하게 재현하든 상관없이(SECURITY_TOOLS_TESTING.md 8-0/9의 실측 시도가 매번 이
+# 지점에서 막힘) join이 영원히 실패했다. backend pod도 juice-shop과 마찬가지로
+# serviceAccountName을 안 줘서 default 네임스페이스의 default SA를 그대로 쓰므로
+# (Techeer-12th-b/backend/backend-deployment.yaml, backend-2-deployment.yaml 실측
+# 확인) 매핑값은 juice-shop과 동일하다.
 _TARGET_ACTOR_IDENTITY: Dict[str, str] = {
     "juice-shop": "system:serviceaccount:default:default",
     "juice-shop-2": "system:serviceaccount:default:default",
+    "backend": "system:serviceaccount:default:default",
+    "backend-2": "system:serviceaccount:default:default",
 }
 # "juice-shop-2-xxx"가 "juice-shop-"에도 접두사로 걸려버리는 걸 막기 위해 긴 이름부터
 # 검사한다(정확한 이름 자체도 pod-template-hash 없이 그대로 올 수 있어 우선 비교).
