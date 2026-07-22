@@ -2848,48 +2848,22 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   const handleLiveDragStop = () => setLiveBottomRow(0);
   const canvasRef = useRef(null);
 
-  // 2026-07-19 버그 수정: 팔레트 위젯을 이미 놓인 위젯 위로 끌고 오면 초록
-  // 박스가 그 위젯과 겹쳐 보이는 문제 - 최종 배치(item.x/item.y)는 팀원
-  // main 버전 그대로 라이브러리를 믿고 쓰되(그 부분은 안 건드림), 겹친
-  // 위젯이 "화면에서" 아래로 비켜나 보이도록 어떤 위젯 위에 커서가 있는지만
-  // 그리드 단위로 가볍게 계산해서 CSS transform으로 밀어준다 - 최종 저장
-  // 로직과는 무관한 순수 시각 효과. 호버한 위젯 하나만 밀면 그 아래 있던
-  // 다른 위젯과 새로 겹쳐버리는 문제가 있어서("밀려난 위젯이 자기 아래
-  // 위젯과 겹침"), 호버한 위젯 "그리고 그 아래로 이어지는 모든 위젯"을 같은
-  // 양만큼 다 같이 민다(handleDrop의 캐스케이드 push와 같은 조건).
-  const [shiftedUids, setShiftedUids] = useState(new Set());
-  const handleDropDragOver = (e) => {
-    const entry = draggingType ? catalogEntry(draggingType) : null;
-    const gridEl = canvasRef.current?.querySelector(".react-grid-layout");
-    if (!entry || !gridEl) {
-      setShiftedUids(new Set());
-      return;
-    }
-    const rect = gridEl.getBoundingClientRect();
-    const colWidth = (rect.width - 16 * 11 - 16 * 2) / 12; // cols=12, margin=16, containerPadding=16(margin과 동일값 기본 사용)
-    const rawX = Math.round((e.clientX - rect.left - 16) / (colWidth + 16));
-    const rawY = Math.round((e.clientY - rect.top - 16) / (20 + 16));
-    const hovered = widgets.find(
-      (w) => rawX < w.x + w.w && rawX + entry.w > w.x && rawY >= w.y && rawY < w.y + w.h
-    );
-    if (!hovered) {
-      setShiftedUids(new Set());
-      return;
-    }
-    const targetX = Math.max(0, Math.min(12 - entry.w, hovered.x));
-    const insertY = rawY < hovered.y + hovered.h / 2 ? hovered.y : hovered.y + hovered.h;
-    const affected = widgets.filter(
-      (w) => w.x < targetX + entry.w && w.x + w.w > targetX && w.y >= insertY
-    );
-    setShiftedUids(new Set(affected.map((w) => w.uid)));
-  };
-  const clearHover = () => setShiftedUids(new Set());
+  // 2026-07-19에 "팔레트 위젯을 이미 놓인 위젯 위로 끌고 오면 초록 박스가 그
+  // 위젯과 겹쳐 보이는 문제"를 고치려고 여기 CSS로 기존 위젯을 미리 밀어
+  // 보여주는 프리뷰(shiftedUids)를 추가했었는데, 2026-07-22 실측(녹화 영상 +
+  // 콘솔 로그)으로 확인해보니 react-grid-layout 자체가 호버 중에 이미 어느
+  // 정도 내부적으로 위치를 밀어주고 있어서, 그 위에 우리 CSS가 또 밀어
+  // 이중으로 겹쳐 "1칸이 아니라 2칸(그 이상) 밀리는" 버그의 실제 원인이었다.
+  // (onLayoutChange를 draggingType 동안 무시하게 막아봐도 안 고쳐졌다 - RGL이
+  // 콜백과 무관하게 내부적으로 이미 밀고 있다는 뜻. shiftedUids CSS를 완전히
+  // 꺼보니 "밀림" 버그 자체가 사라지고, 원래 있던 사소한 문제(초록 고스트가
+  // 대상 위젯의 중앙을 넘어야 비켜준다 - RGL 자체의 표준 동작)만 남았다.)
+  // 그래서 이 프리뷰 자체를 제거하고 RGL 자체 동작에 맡긴다.
 
   // 팀원 main 버전 그대로: react-grid-layout이 넘겨주는 item.x/item.y를 그대로
   // 믿고 쓴다 - 우리가 직접 좌표를 계산해서 끼어들면(computeDropTarget 등)
   // 오히려 라이브러리 자체 상태와 어긋나 이상하게 보이는 부작용이 있었다.
   const handleDrop = (_newLayout, item, e) => {
-    clearHover();
     const type = e.dataTransfer.getData("text/plain");
     const entry = catalogEntry(type);
     if (!entry) return;
@@ -2908,6 +2882,14 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   };
 
   const handleLayoutChange = (newLayout) => {
+    // 2026-07-22 실측 확인: 팔레트 드래그를 캔버스 위 기존 위젯 위로 가져가면,
+    // 드롭하기도 전에(draggingType이 세팅된 채로) react-grid-layout이
+    // onLayoutChange를 한 번 쏜다 - droppingItem 미리보기를 위해 내부적으로
+    // 실제 layout도 같이 재계산하는 것으로 보인다. 이걸 그대로 커밋하면
+    // "미리보기"여야 할 밀림이 widgets state에 진짜로 반영돼버리므로, 팔레트
+    // 드래그 중엔 무시하고 실제 커밋은 handleDrop(새 위젯 추가)과 기존 위젯
+    // 재배치(이때는 draggingType이 애초에 null)에서만 일어나게 한다.
+    if (draggingType) return;
     setWidgets((prev) => applyLayoutToWidgets(prev, newLayout));
   };
 
@@ -2967,7 +2949,6 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
             }}
             onDragEnd={() => {
               setDraggingType(null);
-              clearHover();
             }}
             className="cursor-grab active:cursor-grabbing flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none"
           >
@@ -3035,15 +3016,14 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
             // 순간에도 compactType이 꺼진 상태로 react-grid-layout이 item.x/
             // item.y를 계산해버려, 충돌 회피 없이 기존 위젯과 겹친 채로 그냥
             // 설치되는 훨씬 심각한 문제를 만들었다(실측 확인) - compactType/
-            // preventCollision은 항상 원래 값(팀원 main 그대로)으로 고정해서
-            // 드롭 계산 자체는 항상 정상 동작하게 하고, 겹침 시 CSS로 미는
-            // 시각 효과(아래 shiftedUids)에서 홀드 중 위젯이 1칸이 아니라
-            // 가끔 2칸 밀리는 부작용이 남더라도, 그건 설치 자체가 깨지는 것보다
-            // 훨씬 가벼운 문제라 감수한다.
+            // preventCollision은 항상 원래 값(팀원 main 그대로)으로 고정한다.
+            // 겹침 시 기존 위젯이 비켜나는 시각 효과는 react-grid-layout 자체의
+            // 기본 동작에 맡긴다(2026-07-22 - 직접 CSS로 미는 프리뷰를 얹었다가
+            // RGL 자체 동작과 이중으로 겹쳐 "1칸이 아니라 2칸 밀리는" 버그가
+            // 생겨서 제거함, 위 handleDrop 위 주석 참고).
             compactType="vertical"
             isDroppable
             onDrop={handleDrop}
-            onDropDragOver={handleDropDragOver}
             droppingItem={{
               i: "__dropping__",
               w: dropEntry?.w ?? 4,
@@ -3064,26 +3044,17 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
           >
             {widgets.map((w) => (
               <div key={w.uid}>
-                <div
-                  className="h-full w-full"
-                  style={
-                    shiftedUids.has(w.uid)
-                      ? { transform: `translateY(${(dropEntry?.h ?? 6) * 36}px)`, transition: "transform 150ms ease-out" }
-                      : undefined
-                  }
+                <WidgetFrame
+                  widgetType={w.type}
+                  title={catalogEntry(w.type)?.label}
+                  chartType={w.chartType}
+                  onChartTypeChange={(type) => setWidgetChartType(w.uid, type)}
+                  height={w.h}
+                  onHeightChange={(delta) => setWidgetHeight(w.uid, delta)}
+                  onRemove={() => removeWidget(w.uid)}
                 >
-                  <WidgetFrame
-                    widgetType={w.type}
-                    title={catalogEntry(w.type)?.label}
-                    chartType={w.chartType}
-                    onChartTypeChange={(type) => setWidgetChartType(w.uid, type)}
-                    height={w.h}
-                    onHeightChange={(delta) => setWidgetHeight(w.uid, delta)}
-                    onRemove={() => removeWidget(w.uid)}
-                  >
-                    {renderWidgetContent(w.type, w.chartType)}
-                  </WidgetFrame>
-                </div>
+                  {renderWidgetContent(w.type, w.chartType)}
+                </WidgetFrame>
               </div>
             ))}
           </ResponsiveGridLayout>
