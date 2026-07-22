@@ -1,29 +1,25 @@
 # 로컬 테스트 실행용. requirements.txt를 그대로 -r로 끌어오지 않는 이유는
-# correlation-engine과 동일 - 그 파일의 `./shared` 줄은 Docker 빌드 컨텍스트(servers/)
-# 전제 상대경로라 여기(servers/normalizer/)에서 그대로 실행하면 존재하지 않는 경로를
-# 가리킨다. normalize_*()/get_severity()는 app.config(pydantic_settings)와
-# ids_shared만 있으면 된다.
-# geoip2/redis가 필요한 이유 - tests/test_enrichment.py가 app.enrichment를 import하는데
-# app/enrichment.py -> app/geoip.py가 모듈 최상단에서 `import geoip2.database`/
-# `import redis.asyncio`를 하고 있어서(app/geoip.py 확인), 이 두 패키지가 없으면
-# GeoIP 조회 자체를 테스트하지 않아도 테스트 수집 단계부터 ModuleNotFoundError로
-# 죽는다(2026-07-20, CI 실측 확인 후 추가 - 그 전까진 이 파일이 빠뜨리고 있었다).
-# GeoLite2-City.mmdb(53MB, MaxMind 라이선스상 git에 커밋 안 함)가 CI에 없어도 되는
-# 이유는 app/geoip.py의 Reader가 이제 첫 실제 조회 시점까지 지연 생성되기
-# 때문(app/geoip.py의 _get_reader() 참고) - 패키지 설치만으로 충분하다.
-# aiokafka가 필요한 이유 - tests/test_main.py가 app.main을 import하는데
-# app/main.py가 모듈 최상단에서 `from aiokafka import AIOKafkaConsumer`를 하고
-# 있어서(app/main.py 확인), 이 패키지가 없으면 aiokafka를 실제로 쓰는 테스트가
-# 하나도 없어도 테스트 수집 단계부터 ModuleNotFoundError로 죽는다(2026-07-21,
-# CI 실측 확인 후 추가 - 그 전까진 이 파일이 빠뜨리고 있었다).
+# correlation-engine/platform-api와 동일 - 그 파일의 `./shared` 줄은 Docker 빌드
+# 컨텍스트(servers/) 전제 상대경로라 여기(servers/normalizer/)에서 그대로 실행하면
+# 존재하지 않는 경로를 가리킨다.
+#
+# requirements.txt를 골라서 줄이지 않고 그대로 미러링하는 이유 (2026-07-22 변경) -
+# 예전엔 "테스트에 실제로 필요한 것만" 골라 담았는데, app/main.py나 app/geoip.py에
+# 새 top-level import가 추가될 때마다(aiokafka, geoip2/redis, fastapi 순으로 세 번
+# 연속 - CI 실측) 이 파일이 매번 한 박자 늦게 빠뜨려서 테스트 수집 단계부터
+# ModuleNotFoundError로 CI가 깨졌다. correlation-engine/platform-api는 처음부터
+# requirements.txt를 통째로 미러링해서 이 문제가 한 번도 발생한 적이 없어서, 같은
+# 방식으로 통일한다 - 새 런타임 의존성이 추가돼도 이 파일이 따로 안 빠뜨린다.
 #
 # 실행: pip install -r requirements-dev.txt && pytest
+fastapi==0.139.0
+uvicorn[standard]==0.50.0
 pydantic==2.13.4
 pydantic-settings==2.14.2
+aiokafka==0.12.0
+redis==5.2.1
 pyyaml==6.0.2
 geoip2==5.2.0
-redis==5.2.1
-aiokafka==0.12.0
 -e ../shared
 
 pytest==8.3.4
