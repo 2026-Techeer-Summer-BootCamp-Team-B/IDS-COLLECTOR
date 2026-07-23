@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from app.ai_report import generate_trend_report
 from app.db import pool
 from app.notifications import _post_webhook
+from app.report_notification_service import send_report_notification
 
 _KST = ZoneInfo("Asia/Seoul")
 _POLL_SECONDS = 30
@@ -149,6 +150,25 @@ async def _run_due_reports() -> None:
                     row["id"],
                     slot_key,
                 )
+
+    # 사용자별 Slack/Discord OAuth 연동(report_notification_connections, P8)도 같은
+    # 슬롯에서 같이 발송한다 - 이 테이블엔 자체 스케줄이 없어(schedule 컬럼이
+    # alert_configs에만 있음) webhook 슬롯이 확정될 때 얹혀 간다. claimed_rows가
+    # 비어있지 않다는 건 "이 인스턴스가 이 슬롯을 처리하는 주체"라는 뜻이라 - 그
+    # 신호를 그대로 재사용해서 여러 인스턴스가 동시에 떠 있어도 OAuth 발송이
+    # 중복되지 않는다(2026-07-23, 이 연동이 report_notification_history에 기록될
+    # 방법이 없던 걸 발견 - POST /reports/trend/notify를 부르는 곳이 실제로는
+    # 프론트에도 스케줄러에도 없어서 죽어있던 경로였음. alert_configs 웹훅 스케줄과
+    # 별개로 완결된 두 번째 발송 경로가 있었던 것 자체가 중복이라 여기서 합침).
+    try:
+        oauth_result = await send_report_notification(report, 7)
+        if oauth_result["attempted"]:
+            print(
+                f"[platform-api] OAuth 연동 리포트 발송: "
+                f"{oauth_result['succeeded']}/{oauth_result['attempted']} 성공"
+            )
+    except Exception as exc:  # noqa: BLE001 - OAuth 발송 실패가 webhook 발송 완료를 되돌리면 안 됨
+        print(f"[platform-api] OAuth 연동 리포트 발송 실패: {exc}")
 
 
 async def poll_loop() -> None:
