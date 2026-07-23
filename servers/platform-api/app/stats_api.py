@@ -1,6 +1,5 @@
 """Stats API (/stats). 계층별(was/waf/falco/k8s_audit) 통계 집계 - attack-logs-*
 인덱스에 대한 terms aggregation (플랫폼 이관)."""
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -222,102 +221,11 @@ async def get_kpi(hours: float = 24) -> Dict[str, Any]:
     }
 
 
-@router.get("/volume")
-async def get_volume(
-    hours: float = 24,
-    buckets: int = 25,
-    module: Optional[str] = None,
-    min_severity: Optional[int] = None,
-    severity: Optional[int] = None,
-) -> Dict[str, Any]:
-    """Log Volume 차트 - date_histogram으로 시간대별 total/errors(severity>=3)
-    카운트. 프론트가 timeSeries.js의 formatBucketLabel로 라벨을 입힌다(버킷 폭
-    계산은 여기서, 라벨 포맷은 프론트에서 - RANGE_PRESETS와 동일한 표기 유지).
-    module이 주어지면 WAS/Falco/K8s Audit 상세 뷰가 event.module로 필터링해서
-    같은 차트를 재사용한다. min_severity/severity는 Overview KPI 카드
-    (Errors/Warnings) 클릭 필터 - 2026-07-17, "KPI 눌러도 차트가 안 바뀐다" 피드백으로
-    추가(_severity_filters 참고).
-
-    hours는 int가 아니라 float이어야 한다 - 프론트 RANGE_PRESETS의 1분/5분/15분/30분
-    같은 1시간 미만 구간은 lookbackMs/3600000이 정수가 아니라서(예: 1분=0.0167)
-    int로 받으면 422(Input should be a valid integer)로 거부당한다(2026-07-14,
-    "Last 1 minute" 선택 시 Log Volume이 안 뜨던 원인 - 실측 확인)."""
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(hours=hours)
-    interval_seconds = max(int(hours * 3600 / max(buckets, 1)), 60)
-
-    filters = [{"term": {"event.module": module}}] if module else []
-    filters += _severity_filters(min_severity, severity)
-    query = _time_range_query(start.isoformat(), now.isoformat())
-    if filters:
-        query = {"bool": {"filter": filters, "must": [query]}}
-
-    result = await opensearch_client.search(
-        index=settings.attack_log_index_pattern,
-        body={
-            "size": 0,
-            "query": query,
-            "aggs": {
-                "over_time": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": f"{interval_seconds}s",
-                        "min_doc_count": 0,
-                        "extended_bounds": {"min": int(start.timestamp() * 1000), "max": int(now.timestamp() * 1000)},
-                    },
-                    "aggs": {"errors": {"filter": {"range": {"event.severity": {"gte": 3}}}}},
-                }
-            },
-        },
-    )
-
-    return {
-        "bucket_ms": interval_seconds * 1000,
-        "buckets": [
-            {"ts": b["key"], "total": b["doc_count"], "errors": b["errors"]["doc_count"]}
-            for b in result["aggregations"]["over_time"]["buckets"]
-        ],
-    }
-
-
-@router.get("/levels")
-async def get_levels(
-    hours: float = 24,
-    module: Optional[str] = None,
-    min_severity: Optional[int] = None,
-    severity: Optional[int] = None,
-) -> Dict[str, Any]:
-    """Log Levels 차트 - event.severity(1~4) 분포. WAF가 비활성화된 뒤로는
-    1~4 정수 스케일이 전부라, 예전 9단계 mock과 달리 그대로 4개 막대로 나간다.
-    module이 주어지면 해당 event.module로만 필터링한다. min_severity/severity는
-    Overview KPI 카드 클릭 필터(_severity_filters 참고, 2026-07-17 추가) - Errors를
-    누르면 Major~Critical만, Warnings를 누르면 Minor만 남기고 나머지 막대는 0건으로
-    보여서 "지금 무슨 조건으로 좁혀봤는지"가 막대 자체로도 드러난다.
-
-    hours는 float (2026-07-14, /stats/kpi·/stats/volume과 동일 이유)."""
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(hours=hours)
-
-    filters = [{"term": {"event.module": module}}] if module else []
-    filters += _severity_filters(min_severity, severity)
-    query = _time_range_query(start.isoformat(), now.isoformat())
-    if filters:
-        query = {"bool": {"filter": filters, "must": [query]}}
-
-    result = await opensearch_client.search(
-        index=settings.attack_log_index_pattern,
-        body={
-            "size": 0,
-            "track_total_hits": True,
-            "query": query,
-            "aggs": {"by_severity": {"terms": {"field": "event.severity", "size": 4}}},
-        },
-    )
-
-    return {
-        "total": result["hits"]["total"]["value"],
-        "levels": [
-            {"severity": b["key"], "count": b["doc_count"]}
-            for b in result["aggregations"]["by_severity"]["buckets"]
-        ],
-    }
+# GET /volume, GET /levels는 여기 없다 - app/analytics_api.py(ClickHouse) 참고.
+# 한때 이 파일에 OpenSearch date_histogram/terms agg 기반으로 있었는데
+# (2026-07-24 "심각도 분포/Log Volume이 너무 느리다" 피드백으로 실측 확인),
+# attack-logs-* 와일드카드 인덱스를 시간 상한 없이(대시보드 90일 프리셋까지)
+# 폴링마다(2~5초 주기) 매번 재집계하고 있었다 - /stats/top-ips와 같은 이유로
+# ClickHouse가 맞는 저장소(시계열 컬럼형 집계용 MergeTree, PARTITION BY
+# toDate(timestamp))라 그쪽을 정본으로 옮겼다(응답 계약은 그대로 유지 -
+# dashboard/src/hooks/useLogVolume.js·useLogLevels.js 변경 불필요).
