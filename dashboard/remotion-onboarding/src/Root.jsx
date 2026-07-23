@@ -8,6 +8,13 @@ import {
   HEIGHT as TOUR_HEIGHT,
   TOTAL_FRAMES as TOUR_TOTAL_FRAMES,
 } from "./DualMonitorTour";
+import {
+  DualMonitorTourBrand,
+  BRAND_FPS,
+  BRAND_WIDTH,
+  BRAND_HEIGHT,
+  BRAND_TOTAL_FRAMES,
+} from "./DualMonitorTourBrand";
 
 export const RemotionRoot = () => {
   return (
@@ -30,6 +37,16 @@ export const RemotionRoot = () => {
         fps={TOUR_FPS}
         width={TOUR_WIDTH}
         height={TOUR_HEIGHT}
+      />
+      {/* DualMonitorTour의 변형 - 구간별 캡션 없이 상단에 "SENTINEL-OPS"만
+          고정으로 띄운 채 모니터 화면만 계속 바뀌는 버전. */}
+      <Composition
+        id="DualMonitorTourBrand"
+        component={DualMonitorTourBrand}
+        durationInFrames={BRAND_TOTAL_FRAMES}
+        fps={BRAND_FPS}
+        width={BRAND_WIDTH}
+        height={BRAND_HEIGHT}
       />
     </>
   );

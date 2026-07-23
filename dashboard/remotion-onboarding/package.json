@@ -6,7 +6,8 @@
   "scripts": {
     "preview": "remotion studio src/index.js",
     "render": "remotion render src/index.js OnboardingDemo out/onboarding-demo.mp4",
-    "render:tour": "remotion render src/index.js DualMonitorTour out/dual-monitor-tour.mp4"
+    "render:tour": "remotion render src/index.js DualMonitorTour out/dual-monitor-tour.mp4",
+    "render:tour-brand": "remotion render src/index.js DualMonitorTourBrand out/dual-monitor-tour-brand.mp4"
   },
   "dependencies": {
     "react": "^18.3.1",

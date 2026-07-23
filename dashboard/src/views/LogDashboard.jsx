@@ -63,6 +63,7 @@ const Globe3D = lazy(() => import("../components/Globe3D"));
 import { useGeoStats } from "../hooks/useGeoStats";
 import { useScenarios } from "../hooks/useScenarios";
 import GridLayout, { WidthProvider } from "react-grid-layout/legacy";
+import { GridLayout as RGLGridLayoutV2, useContainerWidth } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import {
   useOverviewLayout,
@@ -187,6 +188,23 @@ export function Card({ title, subtitle, icon: Icon, action, children, className 
 // rows) — active state used to be a neon glow ring, but that read more like
 // "look here" than "this is selected". Switched to a darker fill + inset
 // border, closer to how a pressed button looks.
+// 2026-07-23: "위젯 박스 크기에 맞춰 안의 글씨 크기도 커지고 작아지게" 요청.
+// 2026-07-18에 이미 한 번 비슷한 시도(useAutoFitBox, transform:scale로 콘텐츠
+// 전체를 박스에 맞춤)가 있었는데, JS로 "스케일 안 된 원래 크기"를 먼저
+// getBoundingClientRect로 측정해두고 그 기준으로 scale 배율을 계산하는
+// 방식이라 그 측정 시점이 react-grid-layout의 폭 계산과 경쟁 상태(race
+// condition)에 걸려 기준선 자체가 틀어지는 버그가 났었다(WidgetFrame 주석,
+// OverviewLayoutContext.jsx 주석 참고) - 결국 포기하고 overflow로 되돌림.
+//
+// 이번엔 같은 함정을 피하려고 접근을 바꿨다: JS 측정/transform:scale이 아니라
+// CSS 컨테이너 쿼리(container-type + cqw 단위)를 쓴다. 브라우저가 매 프레임
+// 레이아웃 이후 알아서 계산해주므로 "언제 측정하냐"는 경쟁 상태 자체가 없다.
+// 대신 폭(inline-size)만 기준으로 삼는다 - KPI 카드는 리사이즈가 대부분
+// 가로로 일어나고, 세로(cqh)까지 같이 넣으면 위젯 높이(-/+ 버튼)가 아주
+// 작을 때 숫자가 카드 밖으로 넘칠 수 있어 폭 기준 + clamp 상한으로 안전하게
+// 묶는다. 지금은 KpiCard(가장 눈에 띄는 큰 숫자)에만 적용 - Recharts 축/범례
+// 라벨처럼 각 차트 컴포넌트마다 fontSize prop이 따로 박혀 있는 경우까지
+// 전부 반응형으로 바꾸는 건 훨씬 큰 별도 작업이라 이번 범위에는 포함하지 않았다.
 export function KpiCard({ label, labelSuffix, value, delta, positive = true, onClick, active = false, accent = "mint", labelTone }) {
   const { theme } = useTheme();
   const Tag = onClick ? "button" : "div";
@@ -201,6 +219,7 @@ export function KpiCard({ label, labelSuffix, value, delta, positive = true, onC
   return (
     <Tag
       onClick={onClick}
+      style={{ containerType: "inline-size", containerName: "kpi-card" }}
       className={`rounded-2xl p-5 flex-1 w-full h-full min-w-[160px] text-left transition-colors border ${
         onClick ? "cursor-pointer" : ""
       } ${
@@ -209,13 +228,21 @@ export function KpiCard({ label, labelSuffix, value, delta, positive = true, onC
           : `bg-dash-surface border-transparent ${onClick ? "hover:bg-dash-surfaceAlt/60" : ""}`
       }`}
     >
-      <p className="text-dash-muted text-xs mb-2">
+      <p className="text-dash-muted mb-2" style={{ fontSize: "clamp(0.65rem, 5.5cqw, 0.85rem)" }}>
         <span style={labelColor ? { color: labelColor } : undefined}>{label}</span>
         {labelSuffix && <span className="text-dash-fg">{labelSuffix}</span>}
       </p>
-      <p className="text-dash-fg text-2xl font-semibold tabular-nums">{displayValue}</p>
+      <p
+        className="text-dash-fg font-semibold tabular-nums"
+        style={{ fontSize: "clamp(1.1rem, 13cqw, 2.25rem)", lineHeight: 1.15 }}
+      >
+        {displayValue}
+      </p>
       {delta && (
-        <p className={`text-xs mt-1 ${positive ? "text-dash-mint" : "text-dash-pink"}`}>
+        <p
+          className={`mt-1 ${positive ? "text-dash-mint" : "text-dash-pink"}`}
+          style={{ fontSize: "clamp(0.6rem, 5cqw, 0.8rem)" }}
+        >
           {positive ? "▲" : "▼"} {delta} vs 이전 구간
         </p>
       )}
@@ -2862,22 +2889,52 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   const [liveBottomRow, setLiveBottomRow] = useState(0);
   const handleLiveDrag = (_layout, _oldItem, newItem) => setLiveBottomRow(newItem.y + newItem.h);
   const handleLiveDragStop = () => setLiveBottomRow(0);
-  const canvasRef = useRef(null);
 
   // 2026-07-19~22: 팔레트에서 캔버스로 "드래그해서" 놓는 방식(HTML5 네이티브
-  // 드래그 + RGL의 isDroppable/droppingItem 브릿지)을 여러 각도로 고쳐봤다 -
-  // 겹친 위젯을 CSS로 미리 밀어 보여주는 프리뷰를 얹었다가 RGL 자체 호버 처리와
-  // 이중으로 겹쳐 "2칸 밀림" 버그가 났고(제거함), 그 프리뷰를 없애도 실제
-  // 드롭 위치 자체가 RGL 내부 상태 갱신 타이밍과 어긋나 "항상 한 칸 뒤로
-  // 밀려서 놓이는" 문제가 남았다(react-grid-layout 소스까지 확인 - handleDrop이
-  // 읽는 위치가 내부 layoutRef에 최신 dragover 위치가 반영되는 시점과 어긋남).
-  // 이 타이밍 문제를 근본적으로 없애려면 라이브러리의 훅 기반 API(useGridLayout)
-  // 로 갈아타야 하는데 대시보드 빌더 렌더링을 통째로 다시 짜야 할 만큼 큰
-  // 작업이라, 대신 "드래그해서 놓기" 자체를 없애고 "클릭하면 캔버스 맨 아래에
-  // 바로 추가"로 바꿨다 - 위치를 조정하고 싶으면 이미 안정적으로 동작이
-  // 확인된 기존 위젯 드래그(아래 draggableHandle, handleLiveDrag/onDragStop)로
-  // 옮기면 된다. 외부 드래그 브릿지(isDroppable/droppingItem/onDrop) 자체가
-  // 필요 없어졌다.
+  // 드래그 + 구v1 RGL의 isDroppable/droppingItem 브릿지)을 여러 각도로
+  // 고쳐봤다가("2칸 밀림", "항상 한 칸 뒤로 밀려서 놓이는" 타이밍 버그 - 옛
+  // handleDrop이 내부 layoutRef의 최신 dragover 위치를 못 따라감) 결국
+  // "드래그해서 놓기"를 포기하고 "클릭하면 캔버스 맨 아래에 추가"로 바꿨었다.
+  //
+  // 2026-07-23: react-grid-layout이 v2(신규 훅 기반 API, package.json
+  // "^2.2.3")로 올라오면서 그 버그의 원인 자체가 없어졌다 - 새 GridLayout은
+  // 매 dragover 네이티브 이벤트마다 e.clientX/Y를 그 시점의 gridRect 기준으로
+  // 다시 계산해서 레이아웃에 바로 반영하고(react-grid-layout/dist/chunk-*.mjs
+  // handleDragOver), 실제 drop 때는 "가장 최근 dragover가 계산해둔 위치"를
+  // 그대로 읽기만 한다(handleDrop) - 별도 ref가 최신 위치를 놓치는 경로 자체가
+  // 없다. 그래서 옛 legacy shim(react-grid-layout/legacy, ResponsiveGridLayout)
+  // 대신 새 최상위 API(RGLGridLayoutV2 = import {GridLayout} from
+  // "react-grid-layout", useContainerWidth)로 갈아타 "팔레트→캔버스 드래그"를
+  // 다시 구현한다. draggedType이 현재 팔레트에서 드래그 중인 위젯 타입,
+  // dropConfig.defaultItem이 그 타입의 카탈로그 크기, onDrop이 최종 위치를
+  // 받아 widgets에 커밋한다. 클릭 추가(handleAddWidget)는 그대로 남겨
+  // 대체 수단으로 유지한다 - 위치를 세밀하게 잡고 싶으면 드래그, 빠르게
+  // 맨 아래에 쌓고 싶으면 클릭.
+  const [draggedType, setDraggedType] = useState(null);
+  const { width: gridWidth, containerRef: gridWidthRef, mounted: gridMounted } = useContainerWidth({
+    initialWidth: 1024,
+  });
+  const draggedEntry = draggedType ? catalogEntry(draggedType) : null;
+
+  const handleExternalDrop = (newLayout, item) => {
+    setDraggedType(null);
+    if (!item || !draggedType) return;
+    const entry = catalogEntry(draggedType);
+    if (!entry) return;
+    setWidgets((prev) => [
+      ...prev,
+      {
+        uid: makeWidgetUid(),
+        type: draggedType,
+        x: item.x,
+        y: item.y,
+        w: item.w ?? entry.w,
+        h: item.h ?? entry.h,
+        chartType: defaultChartTypeFor(draggedType),
+      },
+    ]);
+  };
+
   const handleAddWidget = (type) => {
     const entry = catalogEntry(type);
     if (!entry) return;
@@ -2941,7 +2998,7 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   return (
     <div className="flex flex-col lg:flex-row gap-4 items-start">
       <div className="w-full lg:w-56 shrink-0 bg-dash-surface rounded-2xl border border-dash-mint/15 p-3 space-y-1.5">
-        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-1">위젯 목록 (클릭해서 캔버스 맨 아래에 추가)</p>
+        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-1">위젯 목록 (드래그해서 원하는 위치에, 또는 클릭해서 맨 아래에 추가)</p>
         {availableCatalog.length === 0 && (
           <p className="text-dash-faint text-[11px] px-1 py-2">모든 위젯을 이미 추가했습니다.</p>
         )}
@@ -2949,8 +3006,16 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
           <button
             key={w.type}
             type="button"
+            draggable
+            onDragStart={(e) => {
+              setDraggedType(w.type);
+              e.dataTransfer.effectAllowed = "move";
+              // Firefox는 dataTransfer.setData가 없으면 드래그 자체를 시작 안 함.
+              e.dataTransfer.setData("text/plain", w.type);
+            }}
+            onDragEnd={() => setDraggedType(null)}
             onClick={() => handleAddWidget(w.type)}
-            className="w-full cursor-pointer flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none text-left"
+            className="w-full cursor-grab active:cursor-grabbing flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none text-left"
           >
             <WidgetPreviewIcon kind={w.icon} />
             <span className="truncate">{w.label}</span>
@@ -2987,29 +3052,44 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
           </button>
         </div>
 
-        <div className="relative" ref={canvasRef}>
+        <div className="relative" ref={gridWidthRef}>
           {widgets.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center text-dash-faint text-xs pointer-events-none border border-dashed border-dash-mint/25 rounded-2xl px-6 text-center">
-              왼쪽 목록에서 위젯을 클릭해서 추가하세요.
+              왼쪽 목록에서 위젯을 이 위로 드래그하거나 클릭해서 추가하세요.
             </div>
           )}
-          <ResponsiveGridLayout
+          {gridMounted && (
+          <RGLGridLayoutV2
             className="layout"
+            width={gridWidth}
             layout={gridLayout}
             onLayoutChange={handleLayoutChange}
             onDrag={handleLiveDrag}
             onDragStop={handleLiveDragStop}
             onResize={handleLiveDrag}
             onResizeStop={handleLiveDragStop}
-            cols={12}
-            rowHeight={20}
-            margin={[16, 16]}
-            draggableHandle=".widget-drag-handle"
-            // compactType="vertical"(팀원 버전으로 되돌림, 2026-07-18) - 위젯을
+            gridConfig={{ cols: 12, rowHeight: 20, margin: [16, 16] }}
+            dragConfig={{ handle: ".widget-drag-handle" }}
+            // compactor=verticalCompactor(팀원 버전으로 되돌림, 2026-07-18) - 위젯을
             // 지우거나 옮기면 그 아래 위젯들이 자동으로 위 빈자리를 채운다.
-            // null로 자유 배치를 시도했었는데("위치 그대로 유지") 지운 자리가
-            // 안 채워져서 오히려 더 불편하다는 피드백으로 되돌림.
-            compactType="vertical"
+            // noCompactor로 자유 배치를 시도했었는데("위치 그대로 유지") 지운 자리가
+            // 안 채워져서 오히려 더 불편하다는 피드백으로 되돌림. (기본값이라 prop
+            // 생략 - 명시적으로 verticalCompactor를 쓰고 싶으면 core에서 import)
+            // 2026-07-23: 팔레트→캔버스 네이티브 드래그 추가 - dropConfig.enabled는
+            // 지금 팔레트에서 뭔가를 드래그하는 동안만 true(draggedType 존재)로
+            // 켠다. droppingItem.i를 고정 placeholder id로 주고, 실제 위젯 타입은
+            // React 상태(draggedType)로 별도 추적해서 onDrop에서 그 타입의
+            // catalogEntry와 방금 계산된 위치(item.x/y)를 합쳐 widgets에 커밋한다.
+            dropConfig={{
+              enabled: !!draggedType,
+              defaultItem: { w: draggedEntry?.w ?? 4, h: draggedEntry?.h ?? 6 },
+            }}
+            droppingItem={{
+              i: "__palette_drop__",
+              w: draggedEntry?.w ?? 4,
+              h: draggedEntry?.h ?? 6,
+            }}
+            onDrop={handleExternalDrop}
             // 2026-07-19 요청: 위젯이 화면 절반쯤 채워지면 그 아래로 새 위젯을
             // 놓을 여유 공간이 안 보여서(react-grid-layout의 autoSize가 기본값
             // true라 컨테이너가 콘텐츠 높이에 딱 맞게 줄어듦) 어디에 드롭해야
@@ -3036,7 +3116,8 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
                 </WidgetFrame>
               </div>
             ))}
-          </ResponsiveGridLayout>
+          </RGLGridLayoutV2>
+          )}
         </div>
       </div>
     </div>
