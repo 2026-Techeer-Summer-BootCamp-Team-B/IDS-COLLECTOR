@@ -124,11 +124,20 @@ app = FastAPI(title="IDS Platform API")
 # 프론트엔드가 다른 origin(별도 레포/도메인)에서 호출하므로 CORS를 열어둔다.
 # 쿠키 기반 인증이 아니라 로그인 응답의 토큰을 프론트가 직접 들고 다니는 방식이라
 # allow_credentials 없이 "*" 허용이어도 안전.
+#
+# expose_headers에 X-Next-Cursor(app/pagination.py)를 안 넣으면 브라우저가 이걸
+# "simple response header"로 안 쳐서(커스텀 헤더는 기본적으로 JS에서 안 보임)
+# fetch의 res.headers.get("X-Next-Cursor")가 서버가 실제로 응답에 실어 보내도
+# 항상 null로 읽힌다 - 커서 페이지네이션을 쓰는 모든 화면(/incidents, /logs,
+# /audit-logs, /events/recent, attck coverage)이 첫 페이지 이상은 못 받아오고
+# 조용히 거기서 멈춘다(2026-07-23, IncidentsView Total이 500 초과분부터 안
+# 늘어나던 버그의 실제 원인 - 프론트 훅 쪽 페이지네이션 로직 자체는 정상이었음).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Next-Cursor"],
 )
 
 # 게이트웨이 시크릿 강제(감사 S13, 2026-07-16) - 모듈 docstring 및

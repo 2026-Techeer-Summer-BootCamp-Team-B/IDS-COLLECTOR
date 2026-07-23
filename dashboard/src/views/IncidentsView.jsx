@@ -559,7 +559,7 @@ function StorylineEntry({ entry, isLast }) {
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
 export default function IncidentsView({ pushToast, pendingIncident }) {
-  const { incidents, status, error, reload } = useIncidents({ limit: 200 });
+  const { incidents, status, error, reload } = useIncidents({ limit: 500 });
   const { scenarios } = useScenarios();
   // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
   // 여기서는 "이미 차단됐는지" 판단(alreadyBanned)에만 bannedIps를 쓴다.

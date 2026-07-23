@@ -28,6 +28,7 @@ function renderView(props) {
 vi.mock("../lib/authApi", () => {
   return {
     apiGet: vi.fn(),
+    apiGetAllPages: vi.fn(),
     apiPost: vi.fn().mockResolvedValue({}),
     apiPatch: vi.fn().mockResolvedValue({}),
     apiDelete: vi.fn().mockResolvedValue({}),
@@ -35,7 +36,7 @@ vi.mock("../lib/authApi", () => {
   };
 });
 
-import { apiGet } from "../lib/authApi";
+import { apiGet, apiGetAllPages } from "../lib/authApi";
 
 function incident(overrides) {
   return {
@@ -59,8 +60,11 @@ function incident(overrides) {
 // 그 event_id를 넣어줘야 매칭된다(2026-07-16, correlation_key만으론 여러 인시던트가
 // 같은 값(user.name="system:admin" 등)을 공유해서 부정확했던 걸 고친 부분).
 function mockApiGet(incidentsProvider, eventsByIncidentId = {}) {
+  apiGetAllPages.mockImplementation((path) => {
+    if (path === "/incidents") return Promise.resolve(incidentsProvider());
+    return Promise.resolve([]);
+  });
   apiGet.mockImplementation((url) => {
-    if (url.startsWith("/incidents?limit=")) return Promise.resolve(incidentsProvider());
     const eventsMatch = url.match(/^\/incidents\/([^/]+)\/events$/);
     if (eventsMatch) return Promise.resolve(eventsByIncidentId[eventsMatch[1]] || []);
     if (/^\/incidents\/[^/]+\/timeline$/.test(url)) return Promise.resolve([]);

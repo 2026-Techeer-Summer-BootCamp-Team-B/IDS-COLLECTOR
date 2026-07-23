@@ -100,6 +100,28 @@ export async function apiGetPaged(path) {
   return { data: body ?? [], nextCursor: res.headers.get("X-Next-Cursor") };
 }
 
+// X-Next-Cursor가 있는 동안 계속 다음 페이지를 이어 받아 전체 목록을 배열 하나로
+// 합쳐서 돌려준다 - 목록 전체를 클라이언트에서 집계(총 개수/상태별 카운트/그룹핑
+// 등)해야 하는 화면(useIncidents.js, useIncidentStats.js)용. limit은 이제 "한
+// 페이지 크기"일 뿐인데(2026-07-15 페이지네이션 도입) 그걸 모르고 단일 페이지
+// 응답을 "전체 목록"처럼 쓰면 그 이상 있는 데이터가 조용히 잘린다(2026-07-23,
+// Total이 실제보다 낮게 찍히던 원인). 목록이 아주 커서(수천 건) 전부 불러오는 게
+// 부담스러운 화면은 이 함수 대신 apiGetPaged를 페이지 단위로 써서 무한 스크롤을
+// 구현한다(useTechniqueIncidents.js 참고).
+export async function apiGetAllPages(path, params = {}) {
+  let all = [];
+  let cursor = null;
+  do {
+    const qs = new URLSearchParams(params);
+    if (cursor) qs.set("cursor", cursor);
+    const query = qs.toString();
+    const { data, nextCursor } = await apiGetPaged(`${path}${query ? `?${query}` : ""}`);
+    all = all.concat(data);
+    cursor = nextCursor;
+  } while (cursor);
+  return all;
+}
+
 // ---- /auth/* (servers/platform-api/app/auth.py) ----
 
 // {username, password} -> {token}. 백엔드가 users 테이블(role: admin/viewer)로

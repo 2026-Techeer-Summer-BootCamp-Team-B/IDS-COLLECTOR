@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, ApiError } from "../lib/authApi";
+import { apiGetAllPages, ApiError } from "../lib/authApi";
 
 // GET /incidents (servers/platform-api/app/incidents_api.py) — IncidentsView의
 // 실데이터 소스, data/incidents.js의 mock incidents 배열을 대체. status 필터는
-// 안 걸고(limit만 넉넉히) 한 번에 받아와 클라이언트에서 상태별로 좁힌다 — 목록
-// 하나로 KPI 카운트/도넛/카드 리스트를 전부 파생시키는 게 서버 요청 여러 번보다
-// 간단하고, 이 프로젝트 규모(500 cap)에서는 부담도 없다.
-export function useIncidents({ limit = 200 } = {}) {
+// 안 걸고 커서로 전 페이지를 이어 받아(apiGetAllPages) 한 번에 다 받아와 클라이언트에서
+// 상태별로 좁힌다 — 목록 하나로 KPI 카운트/도넛/카드 리스트를 전부 파생시키는 게
+// 서버 요청 여러 번보다 간단하다. limit은 이제 "한 페이지 크기"일 뿐이라(2026-07-15
+// 페이지네이션 도입) 예전처럼 단일 페이지만 받아오면 그 이상 있는 인시던트가 조용히
+// 잘려서 Total 등이 실제보다 낮게 찍힌다(2026-07-23, 200건 상한 버그로 실측 확인) -
+// 커서가 남아있는 한 계속 이어 받아 전체를 채운다.
+export function useIncidents({ limit = 500 } = {}) {
   const [incidents, setIncidents] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
@@ -20,10 +23,10 @@ export function useIncidents({ limit = 200 } = {}) {
     // 최초 로드일 때만 loading 문구를 보여준다.
     setStatus((s) => (s === "ready" ? "ready" : "loading"));
 
-    apiGet(`/incidents?limit=${limit}`)
-      .then((res) => {
+    apiGetAllPages("/incidents", { limit: String(limit) })
+      .then((all) => {
         if (cancelled) return;
-        setIncidents(res ?? []);
+        setIncidents(all);
         setStatus("ready");
         setError(null);
       })
