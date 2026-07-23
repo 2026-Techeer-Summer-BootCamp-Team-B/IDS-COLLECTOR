@@ -234,7 +234,7 @@ export function KpiCard({ label, labelSuffix, value, delta, positive = true, onC
       </p>
       <p
         className="text-dash-fg font-semibold tabular-nums"
-        style={{ fontSize: "clamp(1.1rem, 13cqw, 2.25rem)", lineHeight: 1.15 }}
+        style={{ fontSize: "clamp(1rem, 6cqw, 1.875rem)", lineHeight: 1.15 }}
       >
         {displayValue}
       </p>
