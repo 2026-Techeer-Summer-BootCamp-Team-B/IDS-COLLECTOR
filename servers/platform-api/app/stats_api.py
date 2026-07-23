@@ -1,10 +1,20 @@
-"""Stats API (/stats). 계층별(was/waf/falco/k8s_audit) 통계 집계 - attack-logs-*
-인덱스에 대한 terms aggregation (플랫폼 이관)."""
+"""Stats API (/stats). module/severity 관련 통계는 대부분 ClickHouse로 이관됐고
+(app/analytics_api.py 참고), 이 파일엔 진짜 OpenSearch가 맞는 것만 남는다:
+- /source-health: 모듈별 "마지막으로 언제 들어왔나" 단발 lookup(범위 스캔 없음)
+- /kpi: Total/Errors/Warnings/Active Sources는 ClickHouse(app/analytics_api.py의
+  get_kpi_windows)로 계산하고, Blocked(waf.blocked=true)만 이 파일에 남아
+  가벼운 filter agg 하나로 OpenSearch에 묻는다 - security_events_analytics
+  테이블에 waf.blocked 컬럼이 없어서(화이트리스트된 컬럼만 저장) 이 값만은
+  ClickHouse로 옮길 수 없다(2026-07-24, "Overview KPI가 너무 느리다" 피드백으로
+  실측 확인 - 예전엔 이 하나의 엔드포인트가 현재+이전 구간 두 번, 매번 severity
+  terms + module cardinality + blocked filter까지 agg 3개를 attack-logs-*
+  와일드카드 전체에 대해 2초 폴링마다 돌리고 있었다)."""
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
 
+from app.analytics_api import get_kpi_windows as _clickhouse_kpi_windows
 from app.config import settings
 from app.opensearch_client import client as opensearch_client
 
@@ -30,17 +40,6 @@ def _health_status(silent_seconds: Optional[float]) -> str:
     return "healthy"
 
 
-def _time_filters(start: Optional[str], end: Optional[str]) -> List[Dict[str, Any]]:
-    if not (start or end):
-        return []
-    time_range: Dict[str, str] = {}
-    if start:
-        time_range["gte"] = start
-    if end:
-        time_range["lte"] = end
-    return [{"range": {"@timestamp": time_range}}]
-
-
 def _time_range_query(start: Optional[str], end: Optional[str]) -> Dict[str, Any]:
     if not (start or end):
         return {"match_all": {}}
@@ -52,52 +51,11 @@ def _time_range_query(start: Optional[str], end: Optional[str]) -> Dict[str, Any
     return {"bool": {"filter": [{"range": {"@timestamp": time_range}}]}}
 
 
-def _severity_filters(min_severity: Optional[int], severity: Optional[int]) -> List[Dict[str, Any]]:
-    """Overview KPI 카드(Total/Errors/Warnings) 클릭 필터를 /stats류 집계
-    엔드포인트에도 그대로 적용하기 위한 공용 헬퍼. severity(정확히 일치, WARNING
-    전용)가 있으면 그걸 우선하고, 없으면 min_severity(">=", ERROR 전용)를 쓴다.
-    (dashboard/src/views/LogDashboard.jsx의 KPI_MIN_SEVERITY와 짝 - ALL은 둘 다
-    None이라 필터 없음.)"""
-    if severity is not None:
-        return [{"term": {"event.severity": severity}}]
-    if min_severity is not None:
-        return [{"range": {"event.severity": {"gte": min_severity}}}]
-    return []
-
-
-@router.get("")
-async def get_stats(
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    min_severity: Optional[int] = None,
-    severity: Optional[int] = None,
-) -> Dict[str, Any]:
-    filters = _time_filters(start, end) + _severity_filters(min_severity, severity)
-    query: Dict[str, Any] = {"match_all": {}} if not filters else {"bool": {"filter": filters}}
-
-    result = await opensearch_client.search(
-        index=settings.attack_log_index_pattern,
-        body={
-            "size": 0,
-            "track_total_hits": True,
-            "query": query,
-            "aggs": {
-                "by_module": {"terms": {"field": "event.module", "size": 10}},
-                "by_severity": {"terms": {"field": "event.severity", "size": 4}},
-            },
-        },
-    )
-
-    aggs = result["aggregations"]
-    return {
-        "total": result["hits"]["total"]["value"],
-        "by_module": [
-            {"module": b["key"], "count": b["doc_count"]} for b in aggs["by_module"]["buckets"]
-        ],
-        "by_severity": [
-            {"severity": b["key"], "count": b["doc_count"]} for b in aggs["by_severity"]["buckets"]
-        ],
-    }
+# GET /stats(root, by_module/by_severity)는 여기 없다 - app/analytics_api.py
+# (ClickHouse) 참고. 2026-07-24, "탐지 소스별 분포/모듈 상세뷰 Total 카드가
+# 느리다" 피드백으로 실측 확인 - attack-logs-* 와일드카드에 대한 module+severity
+# terms agg를 4개 화면(Overview + WAS/WAF/Falco/K8s Audit 상세)이 각자 2초
+# 폴링마다, 90일 프리셋까지 걸어서 호출하고 있었다. 응답 계약은 그대로 유지.
 
 
 @router.get("/source-health")
@@ -153,33 +111,24 @@ async def get_source_health() -> List[Dict[str, Any]]:
 # 이 버전은 지웠다(응답 계약 `{items:[{source_ip,count}]}`는 그대로 유지됨).
 
 
-async def _window_kpi(start: datetime, end: datetime) -> Dict[str, int]:
-    """구간 하나에 대한 total/errors(severity>=3)/warnings(severity==2)/sources(고유
-    event.module 수)/blocked(waf.blocked=true 건수)를 한 번의 요청으로 뽑는다.
-    /kpi가 현재/이전 두 구간에 대해 호출. blocked는 2026-07-16 "총 BLOCKED가
-    뭘 뜻하는지" 피드백으로 추가 - WAF가 실제로 막은(waf.blocked=true) 요청
-    건수로 정의했다(모듈 전체가 아니라 "차단까지 된" 것만 센다 - 탐지만 되고
-    통과된 요청은 포함 안 함)."""
+async def _window_blocked(start: datetime, end: datetime) -> int:
+    """WAF가 실제로 막은(waf.blocked=true) 요청 건수(모듈 전체가 아니라 "차단까지
+    된" 것만 - 탐지만 되고 통과된 요청은 제외, 2026-07-16 "총 BLOCKED가 뭘
+    뜻하는지" 피드백으로 정의). Total/Errors/Warnings/Active Sources는
+    app/analytics_api.py의 get_kpi_windows()가 ClickHouse로 계산하는데, 이
+    값만은 security_events_analytics 테이블에 waf.blocked 컬럼이 없어서(화이트
+    리스트된 컬럼만 저장) 여기서 OpenSearch에 filter agg 하나로 가볍게
+    묻는다(2026-07-24, 예전엔 이것도 severity terms/module cardinality와
+    한 요청에 같이 껴서 훨씬 무거웠다)."""
     result = await opensearch_client.search(
         index=settings.attack_log_index_pattern,
         body={
             "size": 0,
-            "track_total_hits": True,
             "query": _time_range_query(start.isoformat(), end.isoformat()),
-            "aggs": {
-                "by_severity": {"terms": {"field": "event.severity", "size": 4}},
-                "distinct_modules": {"cardinality": {"field": "event.module"}},
-                "blocked": {"filter": {"term": {"waf.blocked": True}}},
-            },
+            "aggs": {"blocked": {"filter": {"term": {"waf.blocked": True}}}},
         },
     )
-    total = result["hits"]["total"]["value"]
-    sev_counts = {b["key"]: b["doc_count"] for b in result["aggregations"]["by_severity"]["buckets"]}
-    errors = sum(count for sev, count in sev_counts.items() if sev >= 3)
-    warnings = sev_counts.get(2, 0)
-    sources = result["aggregations"]["distinct_modules"]["value"]
-    blocked = result["aggregations"]["blocked"]["doc_count"]
-    return {"total": total, "errors": errors, "warnings": warnings, "sources": sources, "blocked": blocked}
+    return result["aggregations"]["blocked"]["doc_count"]
 
 
 def _pct_delta(current: int, previous: int) -> Optional[float]:
@@ -198,6 +147,8 @@ def _pct_delta(current: int, previous: int) -> Optional[float]:
 async def get_kpi(hours: float = 24) -> Dict[str, Any]:
     """Overview 상단 KPI 카드(Total/Errors/Warnings/Active Sources/Blocked) - 현재
     구간과 바로 직전 동일 길이 구간을 함께 계산해서 델타(%)도 같이 내려준다.
+    Total/Errors/Warnings/Active Sources는 ClickHouse(get_kpi_windows), Blocked만
+    OpenSearch(_window_blocked) - 위 두 함수 docstring 참고.
 
     hours가 int면 1시간 미만 RANGE_PRESETS(1분/5분/15분/30분)에서 422가 난다 -
     /stats/volume과 동일한 이유로 float (2026-07-14)."""
@@ -205,8 +156,12 @@ async def get_kpi(hours: float = 24) -> Dict[str, Any]:
     current_start = now - timedelta(hours=hours)
     previous_start = current_start - timedelta(hours=hours)
 
-    current = await _window_kpi(current_start, now)
-    previous = await _window_kpi(previous_start, current_start)
+    ch_current, ch_previous = await _clickhouse_kpi_windows(current_start, now, previous_start, current_start)
+    blocked_current = await _window_blocked(current_start, now)
+    blocked_previous = await _window_blocked(previous_start, current_start)
+
+    current = {**ch_current, "blocked": blocked_current}
+    previous = {**ch_previous, "blocked": blocked_previous}
 
     return {
         "current": current,
