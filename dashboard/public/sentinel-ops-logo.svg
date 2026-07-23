@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <filter id="mintGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 사이드바 로고 타일(rounded-lg bg-dash-mint/20)과 동일한 다크 배경 -->
+  <rect x="4" y="4" width="192" height="192" rx="40" fill="#030305" />
+  <rect x="4" y="4" width="192" height="192" rx="40" fill="none" stroke="#00FFA6" stroke-opacity="0.55" stroke-width="4" />
+
+  <!-- LogoMarkIcon(navIcons.jsx)을 그대로 재현 - 레이더 링 + 중심점 -->
+  <g transform="translate(100 100)" filter="url(#mintGlow)" stroke="#00FFA6" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <circle cx="0" cy="0" r="68" opacity="0.55" />
+    <circle cx="0" cy="0" r="38" opacity="0.85" />
+    <line x1="0" y1="0" x2="0" y2="-67" />
+    <circle cx="0" cy="0" r="12" fill="#00FFA6" stroke="none" />
+  </g>
+</svg>

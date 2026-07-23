@@ -333,7 +333,7 @@ function useLogVolumeColors(defaults) {
 // 거기서까지 이 breakdown을 켜면 이미 좁힌 모듈 하나 보겠다고 API를 4번 더
 // 부르는 낭비가 생긴다 - 그래서 module 유무로 분기해서 별도 하위 컴포넌트로
 // 뺐다(훅 호출 순서는 각 컴포넌트 인스턴스마다 고정이라 이렇게 나눠도 안전함).
-function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
+function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const preset = RANGE_PRESETS.find((p) => p.key === rangeKey);
@@ -424,7 +424,15 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL" }) {
           </span>
         ) : null
       }
-      className="h-80 flex flex-col"
+      // 커스텀 대시보드(위젯 박스 리사이즈 가능)에서는 min-h-80 h-full로 그리드
+      // 셀 실제 높이를 그대로 채운다 - 여기가 isControlled를 안 받고 항상
+      // h-80(320px) 고정이었던 게 실제 버그였다: WIDGET_CATALOG의 log-volume
+      // h:14(실측 488px)는 이 컴포넌트가 그 공간을 다 쓴다는 전제로 잡힌
+      // 값인데, module 없이 호출되는 Overview 버전(이 함수)만 그 실측 대상인
+      // LogVolumeChart의 module 갈래(위, isControlled 배선 있음)와 다르게
+      // isControlled 배선이 아예 빠져 있어서 항상 320px에 멈추고 나머지는
+      // 빈 여백으로 남았다(2026-07-23, 스크린샷/녹화로 재현 확인).
+      className={isControlled ? "min-h-80 h-full flex flex-col" : "h-80 flex flex-col"}
     >
       {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs">Log Volume을 불러오지 못했습니다.</p>}
@@ -565,7 +573,7 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
   const spikePoint = spike ? data[spike.index] : null;
 
   if (!module) {
-    return <LogVolumeBreakdownBody rangeKey={rangeKey} kpiFilter={kpiFilter} />;
+    return <LogVolumeBreakdownBody rangeKey={rangeKey} kpiFilter={kpiFilter} isControlled={isControlled} />;
   }
 
   return (
@@ -1090,7 +1098,7 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   );
 }
 
-export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emergency~Major 비중", unitLabel = "logs" }) {
+export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emergency~Major 비중", unitLabel = "logs", fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const errorCount = events.filter((l) => ERROR_BAND.includes(l.level)).length;
@@ -1103,8 +1111,13 @@ export function ErrorRateGauge({ events, title = "Error Rate", subtitle = "Emerg
   // 차트+오버레이 블록은 그대로 두고, 그 블록을 담은 wrapper를 flex로 세로
   // 중앙정렬해서 늘어난 공간이 위아래로 고르게 여백처럼 보이게 했다(예전처럼
   // 카드 아래쪽에만 어색하게 빈 공간이 남지 않도록).
+  // flex-1은 기본 모드의 flex-col 오른쪽 컬럼 안에서만 의미가 있다 - 커스텀
+  // 대시보드에서는 이 위젯 혼자 WidgetFrame의 평범한(비-flex) div 안에 놓이므로
+  // flex-1이 아무 부모도 못 찾아 자기 콘텐츠 높이(약 140px 게이지 + 헤더)에서
+  // 멈추고, 그리드 셀의 나머지 높이는 빈 여백으로 남았다(2026-07-23 확인) -
+  // fillHeight일 때는 h-full로 그리드 셀 실제 높이를 직접 채운다.
   return (
-    <Card title={title} icon={Gauge} subtitle={subtitle} className="flex-1 flex flex-col">
+    <Card title={title} icon={Gauge} subtitle={subtitle} className={fillHeight ? "h-full flex flex-col" : "flex-1 flex flex-col"}>
       <div className="relative flex-1 flex items-center justify-center min-h-[140px]">
         <div className="relative w-full">
           <ResponsiveContainer width="100%" height={140}>
@@ -2303,7 +2316,7 @@ function LayerAttackStatsCompact({ scenarios, status, error, controlled = false,
 // countries는 도시 단위 포인트라(2026-07-16, GeoLite2-City 도입) 같은 나라가 여러
 // 개 있을 수 있다 - 부제의 "N개국"은 countries.length가 아니라 countryCode
 // distinct count로 센다.
-function GeoSummaryCard() {
+function GeoSummaryCard({ fillHeight = false }) {
   const { theme } = useTheme();
   const { countries, status, error } = useGeoStats({ limit: 50 });
   const total = countries.reduce((s, c) => s + c.count, 0);
@@ -2347,7 +2360,11 @@ function GeoSummaryCard() {
       // 커지게 했다(전에 도넛 위젯에서 겪은 것과 같은 이유로 Card를 flex-col +
       // 내부를 flex-1 min-h-0으로 - block 레이아웃이면 height:100%가 카드
       // 전체 기준으로 계산돼서 타이틀 행만큼 넘친다).
-      className="h-[560px] flex flex-col"
+      // 2026-07-23: h-[560px] 자체가 커스텀 대시보드의 geo-summary 그리드 셀
+      // 실측 높이(h:17 -> 596px)보다 작게 고정돼 있었고, 위젯을 리사이즈로
+      // 더 키워도 지도가 전혀 안 따라와 빈 여백만 커졌다 - fillHeight일 때는
+      // h-full로 그리드 셀 실제 높이를 그대로 채운다.
+      className={fillHeight ? "min-h-[560px] h-full flex flex-col" : "h-[560px] flex flex-col"}
     >
       {status === "error" && <p className="text-dash-critical text-xs mb-2">{error}</p>}
       <div className="flex-1 min-h-0">
@@ -2834,7 +2851,6 @@ function applyLayoutToWidgets(widgets, newLayout) {
 function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent }) {
   const [widgets, setWidgets] = useState(() => (baseDashboard ? baseDashboard.widgets.map((w) => ({ ...w })) : []));
   const [name, setName] = useState(baseDashboard ? baseDashboard.name : "");
-  const [draggingType, setDraggingType] = useState(null);
   // 2026-07-19 요청: 캔버스 높이가 드래그/리사이즈 중엔 안 따라오고 손을 뗀
   // 순간(onLayoutChange, widgets 상태 커밋 시점)에만 갱신돼서 한 박자 늦게
   // 느껴진다는 피드백 - onDrag/onResize(react-grid-layout이 마우스를 움직일
@@ -2848,48 +2864,41 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   const handleLiveDragStop = () => setLiveBottomRow(0);
   const canvasRef = useRef(null);
 
-  // 2026-07-19에 "팔레트 위젯을 이미 놓인 위젯 위로 끌고 오면 초록 박스가 그
-  // 위젯과 겹쳐 보이는 문제"를 고치려고 여기 CSS로 기존 위젯을 미리 밀어
-  // 보여주는 프리뷰(shiftedUids)를 추가했었는데, 2026-07-22 실측(녹화 영상 +
-  // 콘솔 로그)으로 확인해보니 react-grid-layout 자체가 호버 중에 이미 어느
-  // 정도 내부적으로 위치를 밀어주고 있어서, 그 위에 우리 CSS가 또 밀어
-  // 이중으로 겹쳐 "1칸이 아니라 2칸(그 이상) 밀리는" 버그의 실제 원인이었다.
-  // (onLayoutChange를 draggingType 동안 무시하게 막아봐도 안 고쳐졌다 - RGL이
-  // 콜백과 무관하게 내부적으로 이미 밀고 있다는 뜻. shiftedUids CSS를 완전히
-  // 꺼보니 "밀림" 버그 자체가 사라지고, 원래 있던 사소한 문제(초록 고스트가
-  // 대상 위젯의 중앙을 넘어야 비켜준다 - RGL 자체의 표준 동작)만 남았다.)
-  // 그래서 이 프리뷰 자체를 제거하고 RGL 자체 동작에 맡긴다.
-
-  // 팀원 main 버전 그대로: react-grid-layout이 넘겨주는 item.x/item.y를 그대로
-  // 믿고 쓴다 - 우리가 직접 좌표를 계산해서 끼어들면(computeDropTarget 등)
-  // 오히려 라이브러리 자체 상태와 어긋나 이상하게 보이는 부작용이 있었다.
-  const handleDrop = (_newLayout, item, e) => {
-    const type = e.dataTransfer.getData("text/plain");
+  // 2026-07-19~22: 팔레트에서 캔버스로 "드래그해서" 놓는 방식(HTML5 네이티브
+  // 드래그 + RGL의 isDroppable/droppingItem 브릿지)을 여러 각도로 고쳐봤다 -
+  // 겹친 위젯을 CSS로 미리 밀어 보여주는 프리뷰를 얹었다가 RGL 자체 호버 처리와
+  // 이중으로 겹쳐 "2칸 밀림" 버그가 났고(제거함), 그 프리뷰를 없애도 실제
+  // 드롭 위치 자체가 RGL 내부 상태 갱신 타이밍과 어긋나 "항상 한 칸 뒤로
+  // 밀려서 놓이는" 문제가 남았다(react-grid-layout 소스까지 확인 - handleDrop이
+  // 읽는 위치가 내부 layoutRef에 최신 dragover 위치가 반영되는 시점과 어긋남).
+  // 이 타이밍 문제를 근본적으로 없애려면 라이브러리의 훅 기반 API(useGridLayout)
+  // 로 갈아타야 하는데 대시보드 빌더 렌더링을 통째로 다시 짜야 할 만큼 큰
+  // 작업이라, 대신 "드래그해서 놓기" 자체를 없애고 "클릭하면 캔버스 맨 아래에
+  // 바로 추가"로 바꿨다 - 위치를 조정하고 싶으면 이미 안정적으로 동작이
+  // 확인된 기존 위젯 드래그(아래 draggableHandle, handleLiveDrag/onDragStop)로
+  // 옮기면 된다. 외부 드래그 브릿지(isDroppable/droppingItem/onDrop) 자체가
+  // 필요 없어졌다.
+  const handleAddWidget = (type) => {
     const entry = catalogEntry(type);
     if (!entry) return;
-    setWidgets((prev) => [
-      ...prev,
-      {
-        uid: makeWidgetUid(),
-        type,
-        x: item.x,
-        y: item.y,
-        w: entry.w,
-        h: entry.h,
-        chartType: defaultChartTypeFor(type),
-      },
-    ]);
+    setWidgets((prev) => {
+      const bottomRow = prev.length === 0 ? 0 : Math.max(...prev.map((w) => w.y + w.h));
+      return [
+        ...prev,
+        {
+          uid: makeWidgetUid(),
+          type,
+          x: 0,
+          y: bottomRow,
+          w: entry.w,
+          h: entry.h,
+          chartType: defaultChartTypeFor(type),
+        },
+      ];
+    });
   };
 
   const handleLayoutChange = (newLayout) => {
-    // 2026-07-22 실측 확인: 팔레트 드래그를 캔버스 위 기존 위젯 위로 가져가면,
-    // 드롭하기도 전에(draggingType이 세팅된 채로) react-grid-layout이
-    // onLayoutChange를 한 번 쏜다 - droppingItem 미리보기를 위해 내부적으로
-    // 실제 layout도 같이 재계산하는 것으로 보인다. 이걸 그대로 커밋하면
-    // "미리보기"여야 할 밀림이 widgets state에 진짜로 반영돼버리므로, 팔레트
-    // 드래그 중엔 무시하고 실제 커밋은 handleDrop(새 위젯 추가)과 기존 위젯
-    // 재배치(이때는 draggingType이 애초에 null)에서만 일어나게 한다.
-    if (draggingType) return;
     setWidgets((prev) => applyLayoutToWidgets(prev, newLayout));
   };
 
@@ -2920,7 +2929,6 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   const gridBottomRow = Math.max(committedBottomRow, liveBottomRow);
   const gridContentHeightPx = gridBottomRow * 20 + Math.max(0, gridBottomRow - 1) * 16;
   const canvasMinHeight = gridContentHeightPx + DROP_BUFFER_PX;
-  const dropEntry = draggingType ? catalogEntry(draggingType) : null;
   const canSave = widgets.length > 0 && name.trim().length > 0;
   // 2026-07-18: "중복 제거해서 사용한 위젯은 안 나오게" 피드백 - 캔버스에 이미
   // 올라간 타입은 팔레트에서 숨긴다(이전엔 같은 타입을 여러 번 놓을 수 있게
@@ -2933,28 +2941,20 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
   return (
     <div className="flex flex-col lg:flex-row gap-4 items-start">
       <div className="w-full lg:w-56 shrink-0 bg-dash-surface rounded-2xl border border-dash-mint/15 p-3 space-y-1.5">
-        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-1">위젯 목록 (드래그해서 캔버스에 추가)</p>
+        <p className="text-dash-faint text-[11px] uppercase tracking-wide mb-1">위젯 목록 (클릭해서 캔버스 맨 아래에 추가)</p>
         {availableCatalog.length === 0 && (
           <p className="text-dash-faint text-[11px] px-1 py-2">모든 위젯을 이미 추가했습니다.</p>
         )}
         {availableCatalog.map((w) => (
-          <div
+          <button
             key={w.type}
-            draggable
-            unselectable="on"
-            onDragStart={(e) => {
-              setDraggingType(w.type);
-              e.dataTransfer.setData("text/plain", w.type);
-              e.dataTransfer.effectAllowed = "copy";
-            }}
-            onDragEnd={() => {
-              setDraggingType(null);
-            }}
-            className="cursor-grab active:cursor-grabbing flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none"
+            type="button"
+            onClick={() => handleAddWidget(w.type)}
+            className="w-full cursor-pointer flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-dash-surfaceAlt/70 text-dash-fg hover:bg-dash-mint/15 hover:text-dash-mint transition-colors select-none text-left"
           >
             <WidgetPreviewIcon kind={w.icon} />
             <span className="truncate">{w.label}</span>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -2990,7 +2990,7 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
         <div className="relative" ref={canvasRef}>
           {widgets.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center text-dash-faint text-xs pointer-events-none border border-dashed border-dash-mint/25 rounded-2xl px-6 text-center">
-              왼쪽 목록에서 위젯을 이 캔버스로 드래그해서 추가하세요.
+              왼쪽 목록에서 위젯을 클릭해서 추가하세요.
             </div>
           )}
           <ResponsiveGridLayout
@@ -3009,28 +3009,7 @@ function DashboardBuilder({ baseDashboard, onCancel, onSave, renderWidgetContent
             // 지우거나 옮기면 그 아래 위젯들이 자동으로 위 빈자리를 채운다.
             // null로 자유 배치를 시도했었는데("위치 그대로 유지") 지운 자리가
             // 안 채워져서 오히려 더 불편하다는 피드백으로 되돌림.
-            //
-            // 2026-07-19: 팔레트 드래그 중에만 compactType을 껐다가(null)
-            // 놓으면 되돌리는 시도를 했었는데 - onDrop이 dragend보다 먼저
-            // 발생해서(draggingType이 아직 true인 시점) 정작 "드롭 확정"
-            // 순간에도 compactType이 꺼진 상태로 react-grid-layout이 item.x/
-            // item.y를 계산해버려, 충돌 회피 없이 기존 위젯과 겹친 채로 그냥
-            // 설치되는 훨씬 심각한 문제를 만들었다(실측 확인) - compactType/
-            // preventCollision은 항상 원래 값(팀원 main 그대로)으로 고정한다.
-            // 겹침 시 기존 위젯이 비켜나는 시각 효과는 react-grid-layout 자체의
-            // 기본 동작에 맡긴다(2026-07-22 - 직접 CSS로 미는 프리뷰를 얹었다가
-            // RGL 자체 동작과 이중으로 겹쳐 "1칸이 아니라 2칸 밀리는" 버그가
-            // 생겨서 제거함, 위 handleDrop 위 주석 참고).
             compactType="vertical"
-            isDroppable
-            onDrop={handleDrop}
-            droppingItem={{
-              i: "__dropping__",
-              w: dropEntry?.w ?? 4,
-              h: dropEntry?.h ?? 6,
-              minW: dropEntry?.minW,
-              minH: dropEntry?.minH,
-            }}
             // 2026-07-19 요청: 위젯이 화면 절반쯤 채워지면 그 아래로 새 위젯을
             // 놓을 여유 공간이 안 보여서(react-grid-layout의 autoSize가 기본값
             // true라 컨테이너가 콘텐츠 높이에 딱 맞게 줄어듦) 어디에 드롭해야
@@ -3454,9 +3433,9 @@ export function DashboardContent() {
           />
         );
       case "error-rate":
-        return <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" />;
+        return <ErrorRateGauge events={displayEvents} title="Error Rate" subtitle="Major~Critical 비중" fillHeight />;
       case "geo-summary":
-        return <GeoSummaryCard />;
+        return <GeoSummaryCard fillHeight />;
       case "activity-flow":
         return <LiveActivityTree />;
       default:
