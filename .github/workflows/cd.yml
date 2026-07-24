@@ -137,8 +137,8 @@ jobs:
             docker compose -f servers/docker-compose.yml pull
             # dashboard is built locally on the deploy host (it is not published
             # to GHCR), so rebuild it after pulling the latest source.
-            docker compose -f servers/docker-compose.yml build dashboard
-            docker compose -f servers/docker-compose.yml up -d --remove-orphans
+            docker compose -f servers/docker-compose.yml build --no-cache dashboard
+            docker compose -f servers/docker-compose.yml up -d --force-recreate --remove-orphans
             # 2026-07-22 실측 발견: otel/proxy는 여기 없어서 커밋해도 컨테이너가
             # 재생성 안 되고 있었다(예: otel-collector가 2026-07-15 라벨로 멈춰
             # 있어서 Traefik 라우팅이 실제로는 옛날 규칙 그대로였음, 그날 이후
