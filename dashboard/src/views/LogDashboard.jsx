@@ -423,12 +423,14 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
   const spikePoint = spike ? data[spike.index] : null;
 
-  // was/waf/falco/k8s_audit 4개는 Infrastructure의 "모듈별 로그량 추이"와 같은
-  // 방식으로 그라디언트 채움 + 적층(stackId)해서 보여준다. total은 그 4개의
-  // 합이라 같이 쌓으면 높이가 두 배로 왜곡되므로 스택엔 안 넣고, 위에 얇은
-  // 오버레이 선(Line)으로만 그려서 급증 배지/기준선 역할을 유지한다
-  // (2026-07-16: Infrastructure 쪽 디자인이 더 낫다는 피드백으로 LineChart 5선
-  // → ComposedChart[stacked Area 4 + overlay Line 1]로 교체).
+  // was/waf/falco/k8s_audit 4개는 그라디언트 채움 Area로 각자 독립된(적층X)
+  // 자기 값만 그린다 - 2026-07-16엔 Infrastructure의 "모듈별 로그량 추이"처럼
+  // stackId로 누적시켰었는데, 그러면 예를 들어 WAS 영역의 윗변이 WAS+WAF+
+  // Falco+K8s Audit 누적값이 돼서 "각 모듈이 자기 로그가 아니라 서로 합쳐진
+  // 걸 보여준다"는 오해를 준다(2026-07-24 피드백) - 4개를 겹쳐 그리되 각자
+  // 0부터 시작하는 자기 값만 표시하도록 stackId를 뺐다. total은 그 4개의
+  // 합이라(적층 여부와 무관하게) 위에 얇은 오버레이 선(Line)으로만 그려서
+  // 급증 배지/기준선 역할을 유지한다.
   const stackSeries = [
     { key: "was", label: "WAS" },
     { key: "waf", label: "WAF" },
@@ -493,7 +495,6 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
                   type="monotone"
                   dataKey={s.key}
                   name={s.label}
-                  stackId="module"
                   stroke={colors[s.key]}
                   fill={`url(#logVolumeFill-${s.key})`}
                   strokeWidth={1.5}
