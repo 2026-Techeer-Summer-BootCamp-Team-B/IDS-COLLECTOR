@@ -7,6 +7,7 @@ import { useTheme } from "../hooks/useTheme";
 import { usePersistedPreference } from "../hooks/usePersistedPreference";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
 import { useIncidents } from "../hooks/useIncidents";
+import { useIncidentCounts } from "../hooks/useIncidentCounts";
 import { useIncidentsSocket } from "../hooks/useIncidentsSocket";
 import { useIncidentTimeline } from "../hooks/useIncidentTimeline";
 import { useScenarios } from "../hooks/useScenarios";
@@ -89,16 +90,20 @@ function MiniKpi({ label, value, sub, color, onClick, active = false, accent = "
   );
 }
 
-// 상태(open/investigating/closed) 필터 버튼 4개. GET /incidents로 받은 목록
-// 하나에서 전부 파생. Top 상관 규칙/Top 공격 IP는 클릭해도 필터링되지 않는
-// 순수 정보 카드라 이 버튼 그리드와 섞으면 "이것도 눌리나?" 하는 오해를 주고
-// 톤도 안 맞았다(2026-07-16) - TopSignalsCard로 완전히 분리했다.
-function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
+// 상태(open/investigating/closed) 필터 버튼 4개. 2026-07-24 이전엔 GET
+// /incidents로 받은 전체 목록에서 .filter()로 세었는데, 인시던트가 수천 건으로
+// 늘면서(더미 생성기가 계속 발화) 그 전체 fetch 자체가 느려져 이 카운트도 같이
+// 늦게 떴다(useIncidentCounts.js, GET /incidents/stats Postgres 집계로 분리 -
+// 카드 목록/그룹핑용 전체 fetch(useIncidents)와 개수는 이제 완전히 독립).
+// Top 상관 규칙/Top 공격 IP는 클릭해도 필터링되지 않는 순수 정보 카드라 이
+// 버튼 그리드와 섞으면 "이것도 눌리나?" 하는 오해를 주고 톤도 안 맞았다
+// (2026-07-16) - TopSignalsCard로 완전히 분리했다.
+function IncidentKpiRow({ counts, statusFilter, onFilterChange }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const openCount = incidents.filter((i) => i.status === "open").length;
-  const investigatingCount = incidents.filter((i) => i.status === "investigating").length;
-  const closedCount = incidents.filter((i) => i.status === "closed").length;
+  const openCount = counts.byStatus.open ?? 0;
+  const investigatingCount = counts.byStatus.investigating ?? 0;
+  const closedCount = counts.byStatus.closed ?? 0;
 
   return (
     <div className="flex flex-wrap gap-4">
@@ -123,7 +128,7 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
         onClick={() => onFilterChange("closed")}
         active={statusFilter === "closed"}
       />
-      <MiniKpi label="Total" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
+      <MiniKpi label="Total" value={counts.total} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
     </div>
   );
 }
@@ -180,15 +185,15 @@ function DistributionTypeToggle({ value, onChange }) {
   );
 }
 
-function SeverityDonut({ incidents }) {
+function SeverityDonut({ bySeverity }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const [chartType, setChartType] = usePersistedPreference("sentinel-ops:chart-type:incident-severity", "donut", ["donut", "bar"]);
   const data = useMemo(() => {
     const counts = {};
-    incidents.forEach((i) => {
-      const key = severityBadgeKey(i.severity);
-      counts[key] = (counts[key] || 0) + 1;
+    Object.entries(bySeverity).forEach(([sev, count]) => {
+      const key = severityBadgeKey(Number(sev));
+      counts[key] = (counts[key] || 0) + count;
     });
     // 공격 스토리라인 카드 배지(CRITICAL/HIGH/MEDIUM/LOW)와 같은 라벨을 쓴다 -
     // 예전엔 REAL_SEVERITY_LEVELS 원래 이름(Critical/Major/Minor/Info)을 써서
@@ -201,7 +206,7 @@ function SeverityDonut({ incidents }) {
       // 통일 - severity 배지 등 다른 곳의 의미색(빨강=critical 등)과는 별개.
       color: donutPalette(theme)[i % DONUT_PALETTE.length],
     }));
-  }, [incidents, theme]);
+  }, [bySeverity, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
   const targetFills = useMemo(() => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)), [data, highlighting, activeIndex, C.donutDim]);
@@ -271,24 +276,20 @@ function SeverityDonut({ incidents }) {
   );
 }
 
-function StatusDonut({ incidents }) {
+function StatusDonut({ byStatus }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const [chartType, setChartType] = usePersistedPreference("sentinel-ops:chart-type:incident-status", "donut", ["donut", "bar"]);
   const data = useMemo(() => {
-    const counts = {};
-    incidents.forEach((i) => {
-      counts[i.status] = (counts[i.status] || 0) + 1;
-    });
     return Object.entries(STATUS_META)
-      .filter(([key]) => counts[key])
+      .filter(([key]) => byStatus[key])
       .map(([key, meta], i) => ({
         key,
         label: meta.label,
-        count: counts[key],
+        count: byStatus[key],
         color: donutPalette(theme)[i % DONUT_PALETTE.length],
       }));
-  }, [incidents, theme]);
+  }, [byStatus, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
   const targetFills = useMemo(() => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)), [data, highlighting, activeIndex, C.donutDim]);
@@ -560,6 +561,11 @@ function StorylineEntry({ entry, isLast }) {
  */
 export default function IncidentsView({ pushToast, pendingIncident }) {
   const { incidents, status, error, reload } = useIncidents({ limit: 500 });
+  // KPI 행("Open"/"Investigating"/"Resolved"/"Total")과 "심각도 분포"/"상태별
+  // 분포" 도넛은 전체 incidents 배열이 아니라 이 서버 집계를 쓴다(2026-07-24,
+  // 위 useIncidents가 몇 초씩 걸리는 것과 별개로 개수 세 위젯만이라도 빠르게
+  // 뜨게 하기 위함 - useIncidentCounts.js 참고).
+  const counts = useIncidentCounts();
   const { scenarios } = useScenarios();
   // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
   // 여기서는 "이미 차단됐는지" 판단(alreadyBanned)에만 bannedIps를 쓴다.
@@ -593,7 +599,10 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
     });
   }
 
-  useIncidentsSocket(reload);
+  useIncidentsSocket(() => {
+    reload();
+    counts.reload();
+  });
 
   useEffect(() => {
     if (!selectedId && incidents.length) setSelectedId(incidents[0].id);
@@ -745,13 +754,13 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
 
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
 
-      <IncidentKpiRow incidents={incidents} statusFilter={statusFilter} onFilterChange={setStatusFilter} />
+      <IncidentKpiRow counts={counts} statusFilter={statusFilter} onFilterChange={setStatusFilter} />
 
       <TopSignalsCard topScenario={topScenario} topIp={topIps[0]} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <SeverityDonut incidents={incidents} />
-        <StatusDonut incidents={incidents} />
+        <SeverityDonut bySeverity={counts.bySeverity} />
+        <StatusDonut byStatus={counts.byStatus} />
       </div>
 
       <TopAttackTypesBarChart scenarios={scenarios} />

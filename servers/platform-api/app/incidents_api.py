@@ -95,6 +95,37 @@ def _row_to_incident(row) -> IncidentOut:
     )
 
 
+@router.get("/stats")
+async def get_incident_stats() -> Dict[str, Any]:
+    """Incidents 화면 KPI(Open/Investigating/Resolved/Total) + 심각도 분포/상태별
+    분포 도넛 전용 집계 - GET /incidents를 커서로 끝까지 페이지네이션해서 전체를
+    받아온 뒤 프론트에서 세던 방식(2026-07-24 이전)이, 더미 생성기가 계속
+    발화하면서 인시던트가 수천 건으로 늘어나자 심각하게 느려졌다(limit=500
+    기준 12페이지 넘게 순차 요청 필요 - 실측으로 "그래프가 느리다" 피드백
+    확인). 이 화면이 필요한 건 개수뿐이라 GROUP BY 하나면 충분하다 - 카드
+    목록/그룹핑처럼 실제 인시던트 행이 필요한 부분은 여전히 GET /incidents를
+    그대로 쓴다(이 엔드포인트는 카운트 집계 전용, id/severity 배열 순서는
+    무관하므로 X-Next-Cursor 페이지네이션 대상이 아님)."""
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT status, severity, count(*) AS cnt FROM incidents GROUP BY status, severity"
+        )
+
+    by_status: Dict[str, int] = {}
+    by_severity: Dict[int, int] = {}
+    total = 0
+    for row in rows:
+        by_status[row["status"]] = by_status.get(row["status"], 0) + row["cnt"]
+        by_severity[row["severity"]] = by_severity.get(row["severity"], 0) + row["cnt"]
+        total += row["cnt"]
+
+    return {
+        "total": total,
+        "by_status": [{"status": s, "count": c} for s, c in by_status.items()],
+        "by_severity": [{"severity": s, "count": c} for s, c in sorted(by_severity.items())],
+    }
+
+
 @router.get("", response_model=List[IncidentOut])
 async def list_incidents(
     response: Response,
