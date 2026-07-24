@@ -6,7 +6,6 @@ import {
   BarChart,
   Bar,
   LineChart,
-  Line,
   ComposedChart,
   XAxis,
   YAxis,
@@ -375,7 +374,12 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
 
   const defaults = useMemo(
     () => ({
-      total: donutPalette(theme)[3],
+      // DONUT_PALETTE[0]("#C05B4D") - 이 파일의 LogVolumeChart(module 지정
+      // 버전)가 이미 errorColor로 쓰는 것과 같은 연한 빨강(테라코타) 톤. "전체"가
+      // 스틸블루(옛 [3])라 WAS/WAF/Falco/K8s Audit 사이에서 눈에 안 띈다는
+      // 피드백(2026-07-24)으로 톤을 바꿨다 - 새 hex를 만들지 않고 이미 테마별
+      // 라이트/다크 변형이 있는 팔레트 토큰을 재사용.
+      total: donutPalette(theme)[0],
       was: getModuleMeta("was").color,
       waf: getModuleMeta("waf").color,
       falco: getModuleMeta("falco").color,
@@ -478,7 +482,7 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data}>
               <defs>
-                {stackSeries.map((s) => (
+                {series.map((s) => (
                   <linearGradient key={s.key} id={`logVolumeFill-${s.key}`} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={colors[s.key]} stopOpacity={0.55} />
                     <stop offset="100%" stopColor={colors[s.key]} stopOpacity={0.05} />
@@ -500,13 +504,18 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
                   strokeWidth={1.5}
                 />
               ))}
-              <Line
+              {/* "전체"도 WAS/WAF/Falco/K8s Audit 4개와 같은 톤(그라디언트 채움
+                  Area)으로 통일 - 예전엔 이 4개 위에 얇은 점선(Line, 채움 없음)
+                  오버레이로만 그려서 "전체"만 색칠이 안 된 게 도드라져 보였다
+                  (2026-07-24 피드백). strokeWidth만 2.5로 나머지보다 굵게 둬서
+                  급증 배지/기준선 역할로 여전히 구분되게 한다. */}
+              <Area
                 type="monotone"
                 dataKey="total"
                 name="전체"
                 stroke={colors.total}
+                fill="url(#logVolumeFill-total)"
                 strokeWidth={2.5}
-                dot={false}
                 isAnimationActive={false}
               />
               {spikePoint && (
