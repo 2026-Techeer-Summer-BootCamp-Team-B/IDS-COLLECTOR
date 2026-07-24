@@ -885,14 +885,27 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
                   />
                 ))}
             </div>
-            {/* 스크롤 바닥 도달 감지용 sentinel + 아직 안 불러온 나머지 행만큼의
-                빈 공간(스크롤바 thumb이 튀지 않게) - statusFilter로 좁혀 보고
-                있을 때(filteredIncidents.length < incidents.length)는 남은
-                분량을 정확히 추정할 수 없어 스페이서를 생략한다. */}
-            {hasMore && statusFilter === "ALL" && !groupSimilar && (
-              <div style={{ height: estimatedRemaining * avgRowHeight }} aria-hidden="true" />
-            )}
-            <div ref={bottomSentinelRef} className="h-px" />
+            {/* 스크롤 바닥 도달 감지용 sentinel - 높이 자체를 "아직 안 불러온
+                나머지 행 분량"으로 잡아서(스페이서를 별도 엘리먼트로 앞에
+                두지 않음) sentinel의 윗변이 실제로 불러온 행 바로 아래에 오게
+                한다. 스페이서를 sentinel과 분리해서 앞에 두면(첫 구현의 버그,
+                2026-07-24 "밑으로 내려도 안 불려와짐" 피드백) sentinel이 그
+                거대한 빈 공간 맨 아래로 밀려나서 실제로 그 끝까지 스크롤해야만
+                옵저버가 반응한다 - AttackMatrixView.jsx와 같은 방식으로
+                sentinel 자체를 그 공간만큼 늘려서, 로드된 행 바로 아래에
+                닿는 즉시(rootMargin 200px 여유까지 더해) 반응하게 한다.
+                statusFilter로 좁혀 보고 있을 때(filteredIncidents.length <
+                incidents.length)는 남은 분량을 정확히 추정할 수 없어 높이를
+                최소값(1px)으로 둔다. */}
+            <div
+              ref={bottomSentinelRef}
+              style={{
+                height:
+                  hasMore && statusFilter === "ALL" && !groupSimilar
+                    ? Math.max(1, Math.round(estimatedRemaining * avgRowHeight))
+                    : 1,
+              }}
+            />
             {loadingMore && <p className="text-dash-muted text-[11px] text-center py-1">더 불러오는 중...</p>}
           </div>
         </div>

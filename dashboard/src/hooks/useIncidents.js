@@ -22,24 +22,30 @@ export function useIncidents({ limit = PAGE_SIZE } = {}) {
   const [reloadToken, setReloadToken] = useState(0);
   const cursorRef = useRef(null);
   const loadingMoreRef = useRef(false);
+  const loadedCountRef = useRef(0);
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
   useEffect(() => {
     let cancelled = false;
     // 리로드(재조회)일 땐 이미 ready 상태를 유지해서 목록이 깜빡이지 않게 한다 —
-    // 최초 로드일 때만 loading 문구를 보여준다. 리로드는 항상 1페이지부터 새로
-    // 받는다 — 폴링(useIncidentsSocket)이 5초마다 부르는데, 스크롤로 더 불러온
-    // 페이지까지 계속 유지하면 "최신 상태로 갱신"이라는 목적과 어긋나고 구현도
-    // 복잡해진다. 기존(전체 fetch) 동작도 매번 목록을 통째로 새로 받아왔던 거라
-    // 사용자 입장에서 체감 차이는 없다.
+    // 최초 로드일 때만 loading 문구를 보여준다. 폴링(useIncidentsSocket, 5초
+    // 주기)이 부르는 리로드가 매번 1페이지(PAGE_SIZE)로 되돌아가면, 스크롤로
+    // 더 불러온 카드가 몇 초 안에 조용히 사라져서 마치 무한 스크롤 자체가 안
+    // 되는 것처럼 보인다(2026-07-24, "밑으로 내려도 안 불려와짐" 피드백) -
+    // 이미 불러온 만큼(loadedCountRef)은 리로드에서도 요청 하나로 그대로
+    // 유지한다(키셋 커서라 큰 limit이어도 OFFSET처럼 느려지지 않음). 서버도
+    // limit을 500으로 캡하므로(incidents_api.py) 여기서도 맞춰 캡한다 - 그
+    // 이상 스크롤해 들어간 뒤의 리로드는 500건까지만 보존되는 게 그나마 낫다.
     setStatus((s) => (s === "ready" ? "ready" : "loading"));
     cursorRef.current = null;
+    const fetchLimit = Math.min(Math.max(limit, loadedCountRef.current), 500);
 
-    apiGetPaged(`/incidents?limit=${limit}`)
+    apiGetPaged(`/incidents?limit=${fetchLimit}`)
       .then(({ data, nextCursor }) => {
         if (cancelled) return;
         setIncidents(data);
+        loadedCountRef.current = data.length;
         cursorRef.current = nextCursor;
         setHasMore(Boolean(nextCursor));
         setStatus("ready");
@@ -68,7 +74,11 @@ export function useIncidents({ limit = PAGE_SIZE } = {}) {
     setLoadingMore(true);
     return apiGetPaged(`/incidents?limit=${limit}&cursor=${encodeURIComponent(cursorRef.current)}`)
       .then(({ data, nextCursor }) => {
-        setIncidents((prev) => prev.concat(data));
+        setIncidents((prev) => {
+          const next = prev.concat(data);
+          loadedCountRef.current = next.length;
+          return next;
+        });
         cursorRef.current = nextCursor;
         setHasMore(Boolean(nextCursor));
         return Boolean(nextCursor);
