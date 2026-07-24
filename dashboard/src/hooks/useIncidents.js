@@ -6,14 +6,20 @@ const MAX_RETAINED_INCIDENTS = 100;
 
 function uniqueById(items) {
   const map = new Map();
-  items.forEach((item) => map.set(item.id, item));
+  items.forEach((item) => {
+    const current = map.get(item.id);
+    if (!current || item.updated_at > current.updated_at) map.set(item.id, item);
+  });
   return [...map.values()]
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id))
     .slice(0, MAX_RETAINED_INCIDENTS);
 }
 
 function latestUpdatedAt(items, fallback) {
-  return items.reduce((latest, item) => (new Date(item.updated_at) > new Date(latest) ? item.updated_at : latest), fallback);
+  return items.reduce(
+    (latest, item) => (!latest || new Date(item.updated_at) > new Date(latest) ? item.updated_at : latest),
+    fallback
+  );
 }
 
 // Keep a bounded, cursor-paged window. Aggregates deliberately live in
@@ -30,6 +36,10 @@ export function useIncidents({ statusFilter = "ALL", limit = PAGE_SIZE } = {}) {
   const loadingMoreRef = useRef(false);
   const loadedCountRef = useRef(0);
   const epochRef = useRef(0);
+  // 페이지 요청이 진행되는 동안 delta가 먼저 도착할 수 있다. 목록에서 빠진
+  // 항목까지 최신 updated_at을 기억해야 뒤늦게 온 오래된 페이지가 그 상태를
+  // 되돌려 넣지 못한다.
+  const liveUpdatedAtRef = useRef(new Map());
 
   const query = statusFilter === "ALL" ? "" : `&status=${encodeURIComponent(statusFilter)}`;
   const reload = useCallback(() => setReloadToken((token) => token + 1), []);
@@ -37,21 +47,33 @@ export function useIncidents({ statusFilter = "ALL", limit = PAGE_SIZE } = {}) {
   useEffect(() => {
     let cancelled = false;
     const myEpoch = ++epochRef.current;
-    const requestedAt = new Date().toISOString();
     setStatus((current) => (current === "ready" ? "ready" : "loading"));
 
     // Preserve the currently loaded window across a refresh, but never render
     // more than the bounded client-side list permits.
     const fetchLimit = Math.min(Math.max(limit, loadedCountRef.current), MAX_RETAINED_INCIDENTS);
     apiGetPaged(`/incidents?limit=${fetchLimit}${query}`)
-      .then(({ data, nextCursor }) => {
+      .then(({ data, nextCursor, nextSince }) => {
         if (cancelled || myEpoch !== epochRef.current) return;
-        const next = uniqueById(data);
-        setIncidents(next);
-        loadedCountRef.current = next.length;
+        const freshData = data.filter((item) => {
+          const liveUpdatedAt = liveUpdatedAtRef.current.get(item.id);
+          return !liveUpdatedAt || item.updated_at >= liveUpdatedAt;
+        });
+        setIncidents((previous) => {
+          const preservedLiveItems = previous.filter((item) => {
+            const liveUpdatedAt = liveUpdatedAtRef.current.get(item.id);
+            if (liveUpdatedAt !== item.updated_at) return false;
+            if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+            const fetched = data.find((candidate) => candidate.id === item.id);
+            return !fetched || item.updated_at > fetched.updated_at;
+          });
+          const next = uniqueById([...freshData, ...preservedLiveItems]);
+          loadedCountRef.current = next.length;
+          return next;
+        });
         cursorRef.current = nextCursor;
-        setHasMore(Boolean(nextCursor) && next.length < MAX_RETAINED_INCIDENTS);
-        setSyncWatermark(latestUpdatedAt(next, requestedAt));
+        setHasMore(Boolean(nextCursor) && loadedCountRef.current < MAX_RETAINED_INCIDENTS);
+        setSyncWatermark(nextSince || latestUpdatedAt(freshData, null));
         setStatus("ready");
         setError(null);
       })
@@ -78,7 +100,12 @@ export function useIncidents({ statusFilter = "ALL", limit = PAGE_SIZE } = {}) {
       .then(({ data, nextCursor }) => {
         if (myEpoch !== epochRef.current) return false;
         setIncidents((previous) => {
-          const next = uniqueById([...previous, ...data]);
+          const freshData = data.filter((item) => {
+            const liveUpdatedAt = liveUpdatedAtRef.current.get(item.id);
+            const inFilter = statusFilter === "ALL" || item.status === statusFilter;
+            return inFilter && (!liveUpdatedAt || item.updated_at >= liveUpdatedAt);
+          });
+          const next = uniqueById([...previous, ...freshData]);
           loadedCountRef.current = next.length;
           return next;
         });
@@ -99,9 +126,22 @@ export function useIncidents({ statusFilter = "ALL", limit = PAGE_SIZE } = {}) {
 
   const mergeChanges = useCallback((changes) => {
     if (!changes?.length) return;
+    const freshChanges = changes.filter((item) => {
+      const current = liveUpdatedAtRef.current.get(item.id);
+      return !current || item.updated_at >= current;
+    });
+    if (!freshChanges.length) return;
+    freshChanges.forEach((item) => {
+      liveUpdatedAtRef.current.set(item.id, item.updated_at);
+    });
     setIncidents((previous) => {
       const inFilter = (item) => statusFilter === "ALL" || item.status === statusFilter;
-      const next = uniqueById([...previous.filter((item) => !changes.some((change) => change.id === item.id)), ...changes.filter(inFilter)]);
+      const next = uniqueById([
+        ...previous.filter(
+          (item) => !freshChanges.some((change) => change.id === item.id)
+        ),
+        ...freshChanges.filter(inFilter),
+      ]);
       loadedCountRef.current = next.length;
       return next;
     });

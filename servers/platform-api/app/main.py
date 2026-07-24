@@ -137,7 +137,7 @@ app.add_middleware(
     allow_origins=settings.cors_allowed_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Next-Cursor"],
+    expose_headers=["X-Next-Cursor", "X-Next-Since"],
 )
 
 # 게이트웨이 시크릿 강제(감사 S13, 2026-07-16) - 모듈 docstring 및

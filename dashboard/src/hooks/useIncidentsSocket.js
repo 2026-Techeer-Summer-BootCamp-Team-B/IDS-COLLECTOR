@@ -22,7 +22,12 @@ export function useIncidentsSocket(initialWatermark, onChanges) {
           const page = await fetchIncidentChanges({ since: watermarkRef.current, cursor });
           if (page.data.length) handlerRef.current?.(page.data);
           cursor = page.nextCursor;
-          nextSince = page.nextSince ?? nextSince;
+          if (
+            page.nextSince &&
+            (!nextSince || new Date(page.nextSince) < new Date(nextSince))
+          ) {
+            nextSince = page.nextSince;
+          }
         } while (cursor && !stopped);
         if (!stopped && nextSince) watermarkRef.current = nextSince;
       } finally {

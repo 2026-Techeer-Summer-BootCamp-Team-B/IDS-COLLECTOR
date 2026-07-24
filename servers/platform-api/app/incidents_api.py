@@ -2,7 +2,6 @@
 incident_events 서브 리소스 + timeline(스토리라인) 서브 리소스.
 datastore/postgres/init/001-schema.sql의 incidents/incident_events/scenario_rules
 참고."""
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -102,6 +101,41 @@ def _row_to_incident(row) -> IncidentOut:
     )
 
 
+async def _snapshot_bounds(conn):
+    """Return a query cutoff and a commit-safe delta watermark.
+
+    ``updated_at`` is assigned inside the writer transaction. A row may carry
+    the transaction start time but become visible only after a concurrent list
+    query has taken its MVCC snapshot. Holding the watermark just before the
+    oldest open transaction keeps that late commit eligible for the next
+    ``updated_at > since`` poll.
+    """
+    return await conn.fetchrow(
+        """
+        WITH bounds AS (
+            SELECT clock_timestamp() AS cutoff
+        )
+        SELECT
+            bounds.cutoff,
+            LEAST(
+                bounds.cutoff,
+                COALESCE(
+                    (
+                        SELECT min(activity.xact_start) - interval '1 microsecond'
+                        FROM pg_stat_activity AS activity
+                        WHERE activity.datname = current_database()
+                          AND activity.pid <> pg_backend_pid()
+                          AND activity.xact_start IS NOT NULL
+                          AND activity.backend_xid IS NOT NULL
+                    ),
+                    bounds.cutoff
+                )
+            ) AS watermark
+        FROM bounds
+        """
+    )
+
+
 @router.get("/stats")
 async def get_incident_stats() -> Dict[str, Any]:
     """Incidents 화면 KPI(Open/Investigating/Resolved/Total) + 심각도 분포/상태별
@@ -169,25 +203,34 @@ async def list_incident_changes(
 
     This deliberately remains separate from ``/incidents?since=`` whose public
     contract is creation-time based and is used by notification consumers.
-    ``X-Next-Since`` is emitted only after the last cursor page so callers do
-    not advance their watermark while a paged delta is still incomplete.
+    Every page emits its safe ``X-Next-Since`` bound. A caller must keep the
+    earliest bound across the cursor chain and advance only after the final
+    page. That preserves a transaction which commits between pages with an
+    ``updated_at`` older than the current tuple cursor.
     """
     limit = min(max(limit, 1), 500)
-    clauses: List[str] = []
-    params: List[Any] = []
-    if since:
-        params.append(parse_iso8601(since))
-        clauses.append(f"updated_at > ${len(params)}")
-    if cursor:
-        cursor_value, cursor_id = decode_cursor(cursor)
-        params.append(parse_iso8601(cursor_value))
-        ts_param = len(params)
-        params.append(cursor_id)
-        id_param = len(params)
-        clauses.append(f"(updated_at, id) > (${ts_param}, ${id_param})")
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.append(limit)
     async with pool().acquire() as conn:
+        # SELECT 뒤에 현재 시각을 watermark로 만들면 그 사이 커밋된 변경이
+        # 현재 응답과 다음 `updated_at > since` 양쪽에서 빠진다. 조회 전에 DB
+        # cutoff를 고정하고 같은 값을 쿼리 상한과 다음 watermark로 사용한다.
+        bounds = await _snapshot_bounds(conn)
+        cutoff = bounds["cutoff"]
+        clauses: List[str] = []
+        params: List[Any] = []
+        if since:
+            params.append(parse_iso8601(since))
+            clauses.append(f"updated_at > ${len(params)}")
+        if cursor:
+            cursor_value, cursor_id = decode_cursor(cursor)
+            params.append(parse_iso8601(cursor_value))
+            ts_param = len(params)
+            params.append(cursor_id)
+            id_param = len(params)
+            clauses.append(f"(updated_at, id) > (${ts_param}, ${id_param})")
+        params.append(cutoff)
+        clauses.append(f"updated_at <= ${len(params)}")
+        where = f"WHERE {' AND '.join(clauses)}"
+        params.append(limit)
         rows = await conn.fetch(
             f"""
             SELECT id, title, correlation_key_type, correlation_key_value, severity,
@@ -201,8 +244,7 @@ async def list_incident_changes(
     if len(rows) == limit:
         last = rows[-1]
         set_next_cursor_header(response, [last["updated_at"].isoformat(), str(last["id"])])
-    else:
-        response.headers["X-Next-Since"] = datetime.now(timezone.utc).isoformat()
+    response.headers["X-Next-Since"] = bounds["watermark"].isoformat()
     return [_row_to_incident(row) for row in rows]
 
 
@@ -227,34 +269,37 @@ async def list_incidents(
     limit = min(limit, 500)
     sort_col = "created_at" if since else "updated_at"
     ascending = bool(since)
-    clauses = []
-    params: List[Any] = []
-    if status:
-        params.append(status)
-        clauses.append(f"status = ${len(params)}")
-    if since:
-        # asyncpg는 문자열을 timestamptz 파라미터로 암묵 변환하지 않는다(psycopg2와
-        # 달리 "expected a datetime.date or datetime.datetime instance, got 'str'"로
-        # 거부) - app.timeparse.parse_iso8601로 datetime으로 직접 변환해서 바인딩해야
-        # 한다(2026-07-14, since 폴링이 항상 500이던 원인 - 실측 확인).
-        params.append(parse_iso8601(since))
-        clauses.append(f"created_at > ${len(params)}")
-    if cursor:
-        cursor_value, cursor_id = decode_cursor(cursor)
-        params.append(parse_iso8601(cursor_value))
-        ts_param = len(params)
-        params.append(cursor_id)
-        id_param = len(params)
-        op = ">" if ascending else "<"
-        # 튜플(row constructor) 비교 - sort_col이 같은 값이 여러 행에 걸쳐 있어도
-        # id(uuid, 항상 유일)를 2차 정렬키로 같이 비교해서 건너뛰거나 중복되지 않는다.
-        clauses.append(f"({sort_col}, id) {op} (${ts_param}, ${id_param})")
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    direction = "ASC" if ascending else "DESC"
-    order = f"{sort_col} {direction}, id {direction}"
-    params.append(limit)
-
     async with pool().acquire() as conn:
+        bounds = await _snapshot_bounds(conn)
+        cutoff = bounds["cutoff"]
+        clauses = []
+        params: List[Any] = []
+        if status:
+            params.append(status)
+            clauses.append(f"status = ${len(params)}")
+        if since:
+            # asyncpg는 문자열을 timestamptz 파라미터로 암묵 변환하지 않는다(psycopg2와
+            # 달리 "expected a datetime.date or datetime.datetime instance, got 'str'"로
+            # 거부) - app.timeparse.parse_iso8601로 datetime으로 직접 변환해서 바인딩해야
+            # 한다(2026-07-14, since 폴링이 항상 500이던 원인 - 실측 확인).
+            params.append(parse_iso8601(since))
+            clauses.append(f"created_at > ${len(params)}")
+        if cursor:
+            cursor_value, cursor_id = decode_cursor(cursor)
+            params.append(parse_iso8601(cursor_value))
+            ts_param = len(params)
+            params.append(cursor_id)
+            id_param = len(params)
+            op = ">" if ascending else "<"
+            # 튜플(row constructor) 비교 - sort_col이 같은 값이 여러 행에 걸쳐 있어도
+            # id(uuid, 항상 유일)를 2차 정렬키로 같이 비교해서 건너뛰거나 중복되지 않는다.
+            clauses.append(f"({sort_col}, id) {op} (${ts_param}, ${id_param})")
+        params.append(cutoff)
+        clauses.append(f"{sort_col} <= ${len(params)}")
+        where = f"WHERE {' AND '.join(clauses)}"
+        direction = "ASC" if ascending else "DESC"
+        order = f"{sort_col} {direction}, id {direction}"
+        params.append(limit)
         rows = await conn.fetch(
             f"""
             SELECT id, title, correlation_key_type, correlation_key_value, severity,
@@ -266,6 +311,10 @@ async def list_incidents(
             *params,
         )
 
+    if not since:
+        # 초기 목록과 `/changes` 사이에 브라우저 시계를 끼우지 않는다. 빈 목록도
+        # 이 서버 cutoff를 받아 이후 생성·변경을 안전하게 폴링할 수 있다.
+        response.headers["X-Next-Since"] = bounds["watermark"].isoformat()
     if len(rows) == limit:
         last = rows[-1]
         set_next_cursor_header(response, [last[sort_col].isoformat(), str(last["id"])])
@@ -410,26 +459,33 @@ async def get_incident_timeline(incident_id: UUID):
 @router.patch("/{incident_id}/status", response_model=IncidentOut)
 async def update_status(incident_id: UUID, body: StatusUpdate, request: Request):
     async with pool().acquire() as conn:
-        current = await conn.fetchrow("SELECT status FROM incidents WHERE id = $1", incident_id)
-        if not current:
-            raise HTTPException(status_code=404, detail="incident not found")
-
-        if body.status not in _VALID_TRANSITIONS.get(current["status"], set()):
-            raise HTTPException(
-                status_code=400,
-                detail=f"invalid transition {current['status']} -> {body.status}",
+        # 같은 인시던트의 상태 변경을 직렬화한다. SELECT와 UPDATE가 별도
+        # autocommit statement면 동시 요청이 둘 다 이전 상태를 읽고 성공해
+        # 감사 로그까지 중복 기록할 수 있다.
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                "SELECT status FROM incidents WHERE id = $1 FOR UPDATE",
+                incident_id,
             )
+            if not current:
+                raise HTTPException(status_code=404, detail="incident not found")
 
-        row = await conn.fetchrow(
-            """
-            UPDATE incidents SET status = $2, updated_at = now() WHERE id = $1
-            RETURNING id, title, correlation_key_type, correlation_key_value, severity,
-                      status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,
-                      verdict, verdict_note, verdict_at
-            """,
-            incident_id,
-            body.status,
-        )
+            if body.status not in _VALID_TRANSITIONS.get(current["status"], set()):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"invalid transition {current['status']} -> {body.status}",
+                )
+
+            row = await conn.fetchrow(
+                """
+                UPDATE incidents SET status = $2, updated_at = clock_timestamp() WHERE id = $1
+                RETURNING id, title, correlation_key_type, correlation_key_value, severity,
+                          status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,
+                          verdict, verdict_note, verdict_at
+                """,
+                incident_id,
+                body.status,
+            )
     await record_action(
         "INCIDENT_STATUS_CHANGED",
         "incidents",
@@ -461,7 +517,8 @@ async def update_verdict(incident_id: UUID, body: VerdictUpdate, request: Reques
         row = await conn.fetchrow(
             """
             UPDATE incidents
-            SET verdict = $2, verdict_note = $3, verdict_by = $4, verdict_at = now(), updated_at = now()
+            SET verdict = $2, verdict_note = $3, verdict_by = $4,
+                verdict_at = clock_timestamp(), updated_at = clock_timestamp()
             WHERE id = $1
             RETURNING id, title, correlation_key_type, correlation_key_value, severity,
                       status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,

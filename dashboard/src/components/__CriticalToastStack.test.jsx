@@ -64,7 +64,7 @@ describe("CriticalToastStack", () => {
       await vi.advanceTimersByTimeAsync(50);
     });
 
-    const buttons = screen.getAllByText("조사하기 →");
+    const buttons = screen.getAllByText("조사하기");
     await act(async () => {
       fireEvent.click(buttons[0]);
       await vi.advanceTimersByTimeAsync(10);
@@ -91,7 +91,7 @@ describe("CriticalToastStack", () => {
     expect(screen.getByText("sqli")).toBeInTheDocument(); // 다른 종류는 별도 카드 유지
   });
 
-  it("카운트가 올라가면 5초 타이머가 리셋된다(늦게 사라짐)", async () => {
+  it("카운트가 올라가면 자동소멸 타이머가 리셋된다(늦게 사라짐)", async () => {
     let events = [ev("e1", "xss")];
     let rerender;
     await act(async () => {
@@ -116,14 +116,14 @@ describe("CriticalToastStack", () => {
       await vi.advanceTimersByTimeAsync(10);
     });
 
-    // 리셋 안 됐다면 원래 5000ms 시점(4000ms + 1050ms) 근처에서 이미 사라졌어야 함
+    // 리셋 후에는 최초 자동소멸 시점보다 더 오래 유지돼야 한다.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1050);
     });
     expect(screen.getByText("xss")).toBeInTheDocument(); // 리셋 덕분에 아직 살아있음
   });
 
-  it("5초 뒤 자동으로 사라진다", async () => {
+  it("인시던트로 묶이지 않으면 15초 뒤 자동으로 사라진다", async () => {
     const events = [ev("e1", "곧사라짐")];
     await act(async () => {
       renderStack({ events, onInvestigate: () => {} });
@@ -132,7 +132,7 @@ describe("CriticalToastStack", () => {
     expect(screen.getByText("곧사라짐")).toBeInTheDocument();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5050); // TOAST_LIFETIME_MS(5000) 만료 시점 지남
+      await vi.advanceTimersByTimeAsync(15050); // FALLBACK_LIFETIME_MS(15000) 만료 시점 지남
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(350); // EXIT_DURATION_MS(300) 퇴장애니메이션까지

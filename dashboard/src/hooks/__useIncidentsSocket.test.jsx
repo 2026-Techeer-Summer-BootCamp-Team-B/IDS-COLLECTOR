@@ -55,4 +55,42 @@ describe("useIncidentsSocket", () => {
 
     expect(fetchIncidentChanges).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps the earliest safe watermark across cursor pages", async () => {
+    fetchIncidentChanges
+      .mockResolvedValueOnce({
+        data: [{ id: "first" }],
+        nextCursor: "page-2",
+        nextSince: "2026-07-23T00:00:01Z",
+      })
+      .mockResolvedValueOnce({
+        data: [],
+        nextCursor: null,
+        nextSince: "2026-07-23T00:00:05Z",
+      })
+      .mockResolvedValueOnce({
+        data: [],
+        nextCursor: null,
+        nextSince: "2026-07-23T00:00:06Z",
+      });
+
+    renderHook(() => useIncidentsSocket("2026-07-23T00:00:00Z", vi.fn()));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchIncidentChanges).toHaveBeenNthCalledWith(2, {
+      since: "2026-07-23T00:00:00Z",
+      cursor: "page-2",
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(fetchIncidentChanges).toHaveBeenNthCalledWith(3, {
+      since: "2026-07-23T00:00:01Z",
+      cursor: null,
+    });
+  });
 });

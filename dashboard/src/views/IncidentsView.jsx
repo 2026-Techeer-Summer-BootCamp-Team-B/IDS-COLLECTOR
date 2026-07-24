@@ -568,7 +568,19 @@ function StorylineEntry({ entry, isLast }) {
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
 export default function IncidentsView({ pushToast, pendingIncident, focusEvent, onFocusConsumed, reloadIncidentStats }) {
-  const { incidents, status, error, hasMore, loadingMore, loadMore, reload } = useIncidents();
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const {
+    incidents,
+    status,
+    error,
+    hasMore,
+    loadingMore,
+    loadMore,
+    reload,
+    mergeChanges,
+    ensureIncident,
+    syncWatermark,
+  } = useIncidents({ statusFilter });
   const incidentsRef = useRef(incidents);
   incidentsRef.current = incidents;
   // KPI 행("Open"/"Investigating"/"Resolved"/"Total")과 "심각도 분포"/"상태별
@@ -591,8 +603,9 @@ export default function IncidentsView({ pushToast, pendingIncident, focusEvent, 
   // 24h 위주 range와 다름 - 원래 mock의 "최근 7일" 문구를 그대로 이어받음).
   const { items: topIps } = useTopIps({ lookbackMs: 7 * 24 * 60 * 60 * 1000, limit: 1 });
 
-  const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedId, setSelectedId] = useState(null);
+  const [directIncident, setDirectIncident] = useState(null);
+  const [loadingDirectId, setLoadingDirectId] = useState(null);
   // 2026-07-17: "유사 항목 묶어보기" - 같은 상관 규칙 + 같은 상관 키(또는 비슷한
   // 대역의 IP)인 인시던트를 리스트에서 그룹 하나로 접어 보여준다. ipTolerance는
   // ipPrefixKey의 prefixBits와 같은 값(32=정확히 일치, 24=같은 /24 대역(기본,
@@ -669,15 +682,21 @@ export default function IncidentsView({ pushToast, pendingIncident, focusEvent, 
   // 안전하고, 상태 변경 등 사용자가 직접 조치를 취했을 때는 각 핸들러가 이미
   // reload()를 따로 부른다(2026-07-24, "스크롤 내려도 안 불러와지고 위로
   // 올리면 카드가 사라지고 화면이 멈춘다" 피드백).
-  useIncidentsSocket(() => {
+  useIncidentsSocket(syncWatermark, (changes) => {
+    mergeChanges(changes);
+    setDirectIncident((current) => changes.find((item) => item.id === current?.id) || current);
     counts.reload();
     reloadIncidentStats?.().catch(() => {});
   });
 
   useEffect(() => {
     const first = newestIncident(incidents);
-    if (!selectedId && first) setSelectedId(first.id);
-  }, [incidents, selectedId]);
+    const selectedIsAvailable =
+      incidents.some((item) => item.id === selectedId) ||
+      directIncident?.id === selectedId ||
+      loadingDirectId === selectedId;
+    if (!selectedId || !selectedIsAvailable) setSelectedId(first?.id || null);
+  }, [incidents, selectedId, directIncident, loadingDirectId]);
 
   // 라이브 이벤트는 상관 엔진이 인시던트를 만들기 전에 도착할 수 있다. 같은
   // correlation key 후보의 실제 event 소속을 확인하고, 잠깐 재시도한 뒤에도
@@ -726,8 +745,37 @@ export default function IncidentsView({ pushToast, pendingIncident, focusEvent, 
   // /events/{event_id}/incident로 이미 정확한 incident_id를 들고 오므로, 여기서
   // 별도로 이벤트→인시던트 매칭을 할 필요가 없어졌다.
   useEffect(() => {
-    if (pendingIncident?.id) setSelectedId(pendingIncident.id);
-  }, [pendingIncident]);
+    if (!pendingIncident?.id) return undefined;
+    const incidentId = pendingIncident.id;
+    const existing = incidentsRef.current.find((item) => item.id === incidentId);
+    setSelectedId(incidentId);
+    if (existing) {
+      setDirectIncident(null);
+      setLoadingDirectId(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoadingDirectId(incidentId);
+    ensureIncident(incidentId)
+      .then((item) => {
+        if (!cancelled) setDirectIncident(item);
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          toast(
+            requestError instanceof ApiError ? requestError.message : "인시던트 상세를 불러오지 못했습니다.",
+            "error"
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingDirectId((current) => (current === incidentId ? null : current));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingIncident?.id, pendingIncident?.nonce]);
 
   // 다른 인시던트로 전환하면 이전에 펼쳐둔 조치 유형 선택 UI가 그대로 남아있지
   // 않도록 초기화.
@@ -772,7 +820,9 @@ export default function IncidentsView({ pushToast, pendingIncident, focusEvent, 
     })).filter((g) => g.total > 0);
   }, [groupSimilar, filteredIncidents, severityTotals]);
 
-  const selected = incidents.find((i) => i.id === selectedId) || null;
+  const selected =
+    incidents.find((i) => i.id === selectedId) ||
+    (directIncident?.id === selectedId ? directIncident : null);
   const { timeline, status: timelineStatus } = useIncidentTimeline(selected?.id);
 
   const topScenario = useMemo(() => scenarios.find((s) => s.hit_count > 0), [scenarios]);
@@ -792,7 +842,9 @@ export default function IncidentsView({ pushToast, pendingIncident, focusEvent, 
   async function handleAdvanceStatus(nextStatus) {
     if (!selected) return;
     try {
-      await apiPatch(`/incidents/${selected.id}/status`, { status: nextStatus });
+      const updated = await apiPatch(`/incidents/${selected.id}/status`, { status: nextStatus });
+      mergeChanges([updated]);
+      setDirectIncident((current) => (current?.id === updated.id ? updated : current));
       toast(`인시던트 상태를 ${STATUS_LABEL[nextStatus]}(으)로 변경했습니다.`, "success");
       reload();
       reloadIncidentStats?.().catch(() => {});
@@ -822,7 +874,9 @@ export default function IncidentsView({ pushToast, pendingIncident, focusEvent, 
       if (categoryKey === "ip_ban" && isIpKeyType(selected.correlation_key_type) && !alreadyBanned) {
         await handleBanSourceIp();
       }
-      await apiPatch(`/incidents/${selected.id}/status`, { status: "closed" });
+      const updated = await apiPatch(`/incidents/${selected.id}/status`, { status: "closed" });
+      mergeChanges([updated]);
+      setDirectIncident((current) => (current?.id === updated.id ? updated : current));
       setResolutionCategories((prev) => ({ ...prev, [selected.id]: categoryKey }));
       toast(`${RESOLUTION_CATEGORY_LABEL[categoryKey]} 조치 후 인시던트를 종결했습니다.`, "success");
       setShowCategoryPicker(false);

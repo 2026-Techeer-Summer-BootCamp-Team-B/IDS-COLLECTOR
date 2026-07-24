@@ -2,6 +2,7 @@
 발화한 인시던트를 건드리지 않도록 synthetic_incident 픽스처(conftest.py)가 만든
 전용 인시던트로만 검증한다. 픽스처가 function-scope라 테스트마다 독립된 인시던트를
 새로 받으므로 테스트 간 순서 의존성이 없다."""
+import asyncio
 
 
 async def test_get_incident_detail(client, auth_headers, synthetic_incident):
@@ -45,6 +46,25 @@ async def test_status_transition_open_to_investigating_succeeds(
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "investigating"
+
+
+async def test_concurrent_status_transition_only_succeeds_once(
+    client, auth_headers, synthetic_incident
+):
+    responses = await asyncio.gather(
+        client.patch(
+            f"/incidents/{synthetic_incident}/status",
+            json={"status": "investigating"},
+            headers=auth_headers,
+        ),
+        client.patch(
+            f"/incidents/{synthetic_incident}/status",
+            json={"status": "investigating"},
+            headers=auth_headers,
+        ),
+    )
+
+    assert sorted(response.status_code for response in responses) == [200, 400]
 
 
 async def test_status_transition_backwards_is_rejected(client, auth_headers, synthetic_incident):
@@ -102,21 +122,144 @@ async def test_incident_summary_and_changes_include_verdict_updates(client, auth
     assert summary.json()["total"] >= 1
     assert "open" in summary.json()["by_status"]
 
-    before = "2000-01-01T00:00:00+00:00"
+    snapshot = await client.get("/incidents?limit=1", headers=auth_headers)
+    before = snapshot.headers["X-Next-Since"]
     verdict = await client.patch(
         f"/incidents/{synthetic_incident}/verdict",
         json={"verdict": "true_positive", "note": "delta test"},
         headers=auth_headers,
     )
     assert verdict.status_code == 200
-    changes = await client.get(f"/incidents/changes?since={before}", headers=auth_headers)
+    changes = await client.get(
+        "/incidents/changes",
+        params={"since": before},
+        headers=auth_headers,
+    )
     assert changes.status_code == 200
     assert any(item["id"] == synthetic_incident and item["verdict"] == "true_positive" for item in changes.json())
     assert changes.headers.get("X-Next-Since")
 
 
+async def test_initial_incident_snapshot_supplies_server_watermark(
+    client, auth_headers, synthetic_incident
+):
+    snapshot = await client.get("/incidents?status=open&limit=500", headers=auth_headers)
+    assert snapshot.status_code == 200
+    watermark = snapshot.headers.get("X-Next-Since")
+    assert watermark
+
+    updated = await client.patch(
+        f"/incidents/{synthetic_incident}/status",
+        json={"status": "investigating"},
+        headers=auth_headers,
+    )
+    assert updated.status_code == 200
+
+    changes = await client.get(
+        "/incidents/changes",
+        params={"since": watermark},
+        headers=auth_headers,
+    )
+    assert changes.status_code == 200
+    assert any(item["id"] == synthetic_incident for item in changes.json())
+
+
+async def test_watermark_does_not_pass_an_uncommitted_incident_change(
+    client, auth_headers, synthetic_incident, pg_pool
+):
+    async with pg_pool.acquire() as writer:
+        transaction = writer.transaction()
+        await transaction.start()
+        committed = False
+        try:
+            transaction_started_at = await writer.fetchval("SELECT now()")
+            await writer.execute(
+                """
+                UPDATE incidents
+                SET verdict_note = 'late commit', updated_at = now()
+                WHERE id = $1
+                """,
+                synthetic_incident,
+            )
+
+            snapshot = await client.get("/incidents?limit=1", headers=auth_headers)
+            assert snapshot.status_code == 200
+            watermark = snapshot.headers["X-Next-Since"]
+            assert watermark < transaction_started_at.isoformat()
+
+            await transaction.commit()
+            committed = True
+        except Exception:
+            if not committed:
+                await transaction.rollback()
+            raise
+
+    changes = await client.get(
+        "/incidents/changes",
+        params={"since": watermark},
+        headers=auth_headers,
+    )
+    assert changes.status_code == 200
+    assert any(item["id"] == synthetic_incident for item in changes.json())
+
+
+async def test_change_written_after_snapshot_uses_write_time(
+    client, auth_headers, synthetic_incident, pg_pool
+):
+    async with pg_pool.acquire() as writer:
+        transaction = writer.transaction()
+        await transaction.start()
+        committed = False
+        try:
+            # 트랜잭션은 먼저 열되 아직 XID를 받는 쓰기는 하지 않는다.
+            await writer.fetchval("SELECT 1")
+            snapshot = await client.get("/incidents?limit=1", headers=auth_headers)
+            assert snapshot.status_code == 200
+            watermark = snapshot.headers["X-Next-Since"]
+
+            # snapshot 뒤 실제 write 시각을 기록해야 위 watermark 다음 poll에
+            # 반드시 포함된다. transaction start 시각(now())을 쓰면 누락된다.
+            await writer.execute(
+                """
+                UPDATE incidents
+                SET verdict_note = 'post snapshot write',
+                    updated_at = clock_timestamp()
+                WHERE id = $1
+                """,
+                synthetic_incident,
+            )
+            await transaction.commit()
+            committed = True
+        except Exception:
+            if not committed:
+                await transaction.rollback()
+            raise
+
+    changes = await client.get(
+        "/incidents/changes",
+        params={"since": watermark},
+        headers=auth_headers,
+    )
+    assert changes.status_code == 200
+    assert any(item["id"] == synthetic_incident for item in changes.json())
+
+
+async def test_cors_exposes_incident_watermark(client, auth_headers):
+    response = await client.get(
+        "/incidents?limit=1",
+        headers={**auth_headers, "Origin": "http://dashboard.example"},
+    )
+    exposed = response.headers.get("Access-Control-Expose-Headers", "").lower()
+    assert "x-next-cursor" in exposed
+    assert "x-next-since" in exposed
+
+
 async def test_legacy_incident_since_remains_creation_based(client, auth_headers, synthetic_incident):
     baseline = "2100-01-01T00:00:00+00:00"
-    response = await client.get(f"/incidents?since={baseline}", headers=auth_headers)
+    response = await client.get(
+        "/incidents",
+        params={"since": baseline},
+        headers=auth_headers,
+    )
     assert response.status_code == 200
     assert response.json() == []

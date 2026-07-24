@@ -1,3 +1,5 @@
+from cryptography.fernet import Fernet
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -42,10 +44,10 @@ class Settings(BaseSettings):
 
     # 리포트 알림 연동(Slack/Discord OAuth, P8) - app/crypto_utils.py(Fernet 대칭키)가
     # report_notification_connections.access_token_encrypted를 이 키로 암복호화한다.
-    # Fernet.generate_key()로 만든 32바이트 urlsafe-base64 문자열이어야 함 - 이 기본값은
-    # dev 전용 placeholder다(운영에서는 반드시 별도로 생성해 REPORT_TOKEN_ENCRYPTION_KEY
-    # env로 덮어쓸 것 - 이 값이 바뀌면 기존에 암호화해둔 토큰은 전부 복호화 불가).
-    report_token_encryption_key: str = "8yWaRahCNcYY6l5EmPqJtXtbaIdbpTkOGAZOFWU55Cw="
+    # Fernet.generate_key()로 만든 32바이트 urlsafe-base64 문자열이어야 한다.
+    # 저장소 공용 기본값은 두지 않는다. 배포마다 고유한 값을 반드시 주입하고,
+    # 한 번 사용한 값이 바뀌면 기존 암호문을 복호화할 수 없으므로 보존해야 한다.
+    report_token_encryption_key: str
 
     # 스케줄 리포트의 Slack Block Kit/Discord Embed에 넣는 "대시보드로 이동" 딥링크의
     # 기준 origin. 프론트가 별도 레포/배포(Vercel 등)라 platform-api가 알 방법이 없어
@@ -71,6 +73,19 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+
+    @field_validator("report_token_encryption_key")
+    @classmethod
+    def validate_report_token_encryption_key(cls, value: str) -> str:
+        if not value:
+            raise ValueError(
+                "REPORT_TOKEN_ENCRYPTION_KEY is required; generate one with Fernet.generate_key()"
+            )
+        try:
+            Fernet(value.encode())
+        except (TypeError, ValueError) as exc:
+            raise ValueError("REPORT_TOKEN_ENCRYPTION_KEY must be a valid Fernet key") from exc
+        return value
 
     @property
     def cors_allowed_origins_list(self) -> list[str]:

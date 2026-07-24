@@ -116,7 +116,11 @@ export const apiDelete = (path) => apiFetch(path, { method: "DELETE" });
 // apiGet과 달리 다음 페이지 커서(없으면 null)까지 같이 돌려준다.
 export async function apiGetPaged(path) {
   const { body, res } = await apiFetchRaw(path);
-  return { data: body ?? [], nextCursor: res.headers.get("X-Next-Cursor") };
+  return {
+    data: body ?? [],
+    nextCursor: res.headers.get("X-Next-Cursor"),
+    nextSince: res.headers.get("X-Next-Since"),
+  };
 }
 
 // X-Next-Cursor가 있는 동안 계속 다음 페이지를 이어 받아 전체 목록을 배열 하나로
