@@ -703,12 +703,18 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
   );
 }
 
-// 모듈별(WAS/WAF/Falco/K8s Audit) 로그량 추이 적층 그래프 - Log Volume 차트는
-// 합산한 총량만 보여줘서 "지금 어느 소스가 볼륨을 주도하는지"가 안 보이던 문제.
+// 모듈별(WAS/WAF/Falco/K8s Audit) 로그량 추이 - Log Volume 차트는 합산한
+// 총량만 보여줘서 "지금 어느 소스가 볼륨을 주도하는지"가 안 보이던 문제.
 // /stats/volume을 module별로 호출하면 서버가 같은 date_histogram 경계를 쓰므로
 // 버킷 인덱스가 그대로 정렬돼 안전하게 합칠 수 있다. WAF는 2026-07-16 추가 -
 // WAF 백엔드가 실제로 트래픽을 받기 시작하면서 이 차트에서만 빠져있던 게
 // 눈에 띄어서 나머지 3개 모듈과 나란히 넣었다.
+//
+// 2026-07-16엔 4개를 stackId로 적층해서 그렸는데, 그러면 예를 들어 WAS
+// 영역의 윗변이 WAS+WAF+Falco+K8s Audit 누적값이라 "각 모듈이 자기 로그가
+// 아니라 서로 합쳐진 걸 보여준다"는 오해를 준다(LogVolumeBreakdownBody와
+// 같은 문제, 2026-07-24 피드백) - stackId를 빼서 4개가 각자 0부터 시작하는
+// 자기 값만 겹쳐 그리도록 수정.
 export function ModuleVolumeStackedChart({ fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
@@ -754,7 +760,7 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
     <Card
       title="모듈별 로그량 추이"
       icon={Layers}
-      subtitle={`Last ${preset.label} · WAS / WAF / Falco / K8s Audit 적층`}
+      subtitle={`Last ${preset.label} · WAS / WAF / Falco / K8s Audit 모듈별 구분`}
       action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
       className={fillHeight ? "min-h-80 h-full flex flex-col" : "h-80 flex flex-col"}
     >
@@ -797,7 +803,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="was"
                 name={metaWas.label}
-                stackId="module"
                 stroke={metaWas.color}
                 fill="url(#moduleWasFill)"
                 strokeWidth={1.5}
@@ -806,7 +811,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="waf"
                 name={metaWaf.label}
-                stackId="module"
                 stroke={metaWaf.color}
                 fill="url(#moduleWafFill)"
                 strokeWidth={1.5}
@@ -815,7 +819,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="falco"
                 name={metaFalco.label}
-                stackId="module"
                 stroke={metaFalco.color}
                 fill="url(#moduleFalcoFill)"
                 strokeWidth={1.5}
@@ -824,7 +827,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="k8s_audit"
                 name={metaK8s.label}
-                stackId="module"
                 stroke={metaK8s.color}
                 fill="url(#moduleK8sFill)"
                 strokeWidth={1.5}
