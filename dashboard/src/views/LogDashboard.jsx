@@ -506,7 +506,6 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
                 name="전체"
                 stroke={colors.total}
                 strokeWidth={2.5}
-                strokeDasharray="4 3"
                 dot={false}
                 isAnimationActive={false}
               />
