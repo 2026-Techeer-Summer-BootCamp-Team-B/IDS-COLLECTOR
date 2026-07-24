@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Sector } from "recharts";
 import { BarChart3, PieChart as PieChartIcon, FileSpreadsheet, FileText, Search, CheckCircle2, Ban, Layers, ChevronUp, ChevronDown, AlertTriangle, AlertOctagon, Activity, Crosshair } from "lucide-react";
 import { SeverityBadge, SourceBadge, SEVERITY_META } from "../components/badges";
@@ -560,7 +560,7 @@ function StorylineEntry({ entry, isLast }) {
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
 export default function IncidentsView({ pushToast, pendingIncident }) {
-  const { incidents, status, error, reload } = useIncidents({ limit: 500 });
+  const { incidents, status, error, hasMore, loadingMore, loadMore, reload } = useIncidents();
   // KPI 행("Open"/"Investigating"/"Resolved"/"Total")과 "심각도 분포"/"상태별
   // 분포" 도넛은 전체 incidents 배열이 아니라 이 서버 집계를 쓴다(2026-07-24,
   // 위 useIncidents가 몇 초씩 걸리는 것과 별개로 개수 세 위젯만이라도 빠르게
@@ -589,6 +589,51 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [resolutionCategories, setResolutionCategories] = useState({});
   const [resolving, setResolving] = useState(false);
+
+  // 무한 스크롤 - AttackMatrixView.jsx의 pump() 체인과 같은 패턴. 카드 목록
+  // 스크롤 박스(아래 scrollBoxRef)가 IntersectionObserver의 root, 그 안 맨
+  // 아래 sentinel이 바닥에 걸리면 loadMore()를 부른다. 스크롤바를 드래그해서
+  // 단번에 바닥까지 내리면 관찰 콜백이 한 번만 불려도 여러 페이지를 연달아
+  // 이어받아야 해서, loadMore()가 돌려주는 hasMore로 재귀 체이닝한다.
+  const scrollBoxRef = useRef(null);
+  const bottomSentinelRef = useRef(null);
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  const isIntersectingRef = useRef(false);
+
+  useEffect(() => {
+    const root = scrollBoxRef.current;
+    const target = bottomSentinelRef.current;
+    if (!root || !target) return;
+
+    function pump() {
+      if (!isIntersectingRef.current) return;
+      loadMoreRef.current().then((more) => more && pump());
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isIntersectingRef.current = entry.isIntersecting;
+        if (entry.isIntersecting) pump();
+      },
+      { root, rootMargin: "200px 0px" }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, []);
+
+  // 아직 안 불러온 나머지 행만큼 빈 공간을 미리 잡아둬서, 페이지를 이어받을
+  // 때마다 스크롤바 thumb 크기/위치가 툭툭 튀지 않게 한다(AttackMatrixView.jsx와
+  // 같은 기법) - counts.total(서버 집계, useIncidentCounts)이 "전체 몇 건인지"의
+  // 기준이고, 평균 행 높이는 실제 렌더링된 카드들에서 측정한다.
+  const rowsWrapperRef = useRef(null);
+  const [avgRowHeight, setAvgRowHeight] = useState(48);
+  useLayoutEffect(() => {
+    if (!rowsWrapperRef.current || incidents.length === 0) return;
+    const measured = rowsWrapperRef.current.scrollHeight / incidents.length;
+    if (measured > 0 && Math.abs(measured - avgRowHeight) > 1) setAvgRowHeight(measured);
+  }, [incidents.length]);
+  const estimatedRemaining = Math.max(0, (counts.total || incidents.length) - incidents.length);
 
   function toggleGroupExpanded(key) {
     setExpandedGroups((prev) => {
@@ -804,40 +849,51 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
             )}
           </div>
 
-          <div className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
+          <div ref={scrollBoxRef} className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
             {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
             {status === "ready" && filteredIncidents.length === 0 && (
               <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>
             )}
-            {!groupSimilar &&
-              severityGroups.map((group) => (
-                <div key={group.key}>
-                  <p className="text-dash-faint text-[10px] uppercase tracking-wide px-1 pt-2 pb-1 first:pt-0">
-                    {SEVERITY_META[group.key].label} · {group.items.length}
-                  </p>
-                  <div className="space-y-2">
-                    {group.items.map((inc) => (
-                      <IncidentCard
-                        key={inc.id}
-                        incident={inc}
-                        active={inc.id === selectedId}
-                        onClick={() => setSelectedId(inc.id)}
-                      />
-                    ))}
+            <div ref={rowsWrapperRef} className="space-y-2">
+              {!groupSimilar &&
+                severityGroups.map((group) => (
+                  <div key={group.key}>
+                    <p className="text-dash-faint text-[10px] uppercase tracking-wide px-1 pt-2 pb-1 first:pt-0">
+                      {SEVERITY_META[group.key].label} · {group.items.length}
+                    </p>
+                    <div className="space-y-2">
+                      {group.items.map((inc) => (
+                        <IncidentCard
+                          key={inc.id}
+                          incident={inc}
+                          active={inc.id === selectedId}
+                          onClick={() => setSelectedId(inc.id)}
+                        />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            {groupSimilar &&
-              incidentGroups.map((group) => (
-                <GroupedIncidentCard
-                  key={group.key}
-                  group={group}
-                  expanded={expandedGroups.has(group.key)}
-                  onToggleExpand={() => toggleGroupExpanded(group.key)}
-                  selectedId={selectedId}
-                  onSelectIncident={setSelectedId}
-                />
-              ))}
+                ))}
+              {groupSimilar &&
+                incidentGroups.map((group) => (
+                  <GroupedIncidentCard
+                    key={group.key}
+                    group={group}
+                    expanded={expandedGroups.has(group.key)}
+                    onToggleExpand={() => toggleGroupExpanded(group.key)}
+                    selectedId={selectedId}
+                    onSelectIncident={setSelectedId}
+                  />
+                ))}
+            </div>
+            {/* 스크롤 바닥 도달 감지용 sentinel + 아직 안 불러온 나머지 행만큼의
+                빈 공간(스크롤바 thumb이 튀지 않게) - statusFilter로 좁혀 보고
+                있을 때(filteredIncidents.length < incidents.length)는 남은
+                분량을 정확히 추정할 수 없어 스페이서를 생략한다. */}
+            {hasMore && statusFilter === "ALL" && !groupSimilar && (
+              <div style={{ height: estimatedRemaining * avgRowHeight }} aria-hidden="true" />
+            )}
+            <div ref={bottomSentinelRef} className="h-px" />
+            {loadingMore && <p className="text-dash-muted text-[11px] text-center py-1">더 불러오는 중...</p>}
           </div>
         </div>
 
