@@ -342,6 +342,15 @@ scenarios:
   # 나중에 조정할 것(015 피드백 루프가 바로 이 목적). MITRE 매핑은 S28과 같은
   # T1046(Network Service Discovery, 이미 카탈로그에 있음)로 잡았다 - 페이로드
   # 대신 응답 패턴으로 하는 정찰이라는 점에서 동일 기법으로 분류.
+  # S30 (threshold, 2026-07-24 정정): 존재하지 않는 /rest/* 경로를 두드리면 이
+  # 배포의 Juice Shop은 깔끔한 404가 아니라 처리되지 않은 예외("Error: Unexpected
+  # path: ...")를 Express 기본 에러 핸들러가 그대로 500으로 반환한다(실측 확인 -
+  # S1~S109 전수 점검 중 S30/S101이 계속 미탐지되던 원인, 응답 본문에 "Unexpected
+  # path" 스택트레이스가 그대로 찍힘). 반면 등록은 돼 있지만 데이터가 없는 리소스
+  # (예: /rest/products/999999/reviews)는 200을 반환하고, 아예 이 앱이 모르는
+  # 최상위 경로(예: /nonexistent-top-level)는 Angular SPA 라우팅 폴백으로 200을
+  # 반환한다 - 그래서 404도 여전히 후보로 남겨두되(다른 배포/버전에서는 진짜 404를
+  # 낼 수도 있음) 이 배포의 실제 동작인 500도 같이 받는다.
   - id: S30
     name: "동일 IP WAS 404 다발 (엔드포인트 무차별 탐색)"
     type: threshold
@@ -353,7 +362,7 @@ scenarios:
     cooldown_seconds: 300
     match:
       event_module: was
-      http_response_status_code: 404
+      http_response_status_code: [404, 500]
     severity: 2
     mitre_technique_id: "T1046"
 
@@ -1072,6 +1081,9 @@ scenarios:
   #
   # 신규 필드/매처/join_on 축 없이 기존 카탈로그 재료(S30, url 상태코드 매처)만으로
   # 구성 가능해 코드 변경 없이 YAML만으로 즉시 추가했다.
+  # S101 (sequence, 2026-07-24 정정): stage1도 S30과 같은 이유로 404와 함께 500을
+  # 받는다(이 배포의 Juice Shop이 존재하지 않는 /rest/* 경로에 500을 반환 - S30
+  # 주석 참고).
   - id: S101
     name: "무차별 경로 탐색 이후 실제 리소스 적중 확인 (WAS)"
     type: sequence
@@ -1081,7 +1093,7 @@ scenarios:
     window_seconds: 60
     stage1:
       event_module: was
-      http_response_status_code: 404
+      http_response_status_code: [404, 500]
     stage2:
       event_module: was
       http_response_status_code: [200, 201, 204]
