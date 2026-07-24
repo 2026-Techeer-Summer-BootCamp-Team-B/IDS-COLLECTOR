@@ -123,6 +123,17 @@ async def get_incident_stats() -> Dict[str, Any]:
         "total": total,
         "by_status": [{"status": s, "count": c} for s, c in by_status.items()],
         "by_severity": [{"severity": s, "count": c} for s, c in sorted(by_severity.items())],
+        # status 필터가 걸린 상태에서도 심각도별 개수를 정확히 보여주려면(예:
+        # "Open"만 걸러 봤을 때 CRITICAL 몇 건) status x severity 조합별 원본
+        # 카운트가 필요하다 - by_severity(위)는 status 무관 전체 합계라 필터
+        # 화면에는 못 쓴다. 이미 GROUP BY status, severity로 한 번에 받아온
+        # rows라 추가 쿼리 없이 그대로 내보낸다(2026-07-24, IncidentsView.jsx의
+        # 심각도 섹션 헤더 카운트가 "화면에 로드된 것만" 세서 실제보다 훨씬
+        # 작게 찍히던 버그 수정 - 무한 스크롤 도입으로 더 이상 전체 목록을
+        # 한 번에 다 안 받아오면서 생긴 문제).
+        "by_status_severity": [
+            {"status": row["status"], "severity": row["severity"], "count": row["cnt"]} for row in rows
+        ],
     }
 
 

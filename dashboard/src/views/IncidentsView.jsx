@@ -27,6 +27,7 @@ const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" 
 function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
 }
+const BADGE_KEY_TO_SEVERITY = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
 
 // 2026-07-17(5차): "심각도 분포" 도넛이 REAL_SEVERITY_LEVELS 원래 라벨
 // (Critical/Major/Minor/Info)을 그대로 써서, 같은 화면의 공격 스토리라인
@@ -691,14 +692,28 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   // 심각도가 뒤섞여 훑어보기 어렵다는 피드백 - CRITICAL/HIGH/MEDIUM/LOW
   // 섹션으로 나눠서 보여준다. 각 섹션 안에서는 기존 정렬(최신순, incidents가
   // updated_at DESC로 옴)을 그대로 유지.
+  //
+  // group.items는 "지금까지 스크롤로 불러온 것 중 이 심각도인 카드들"이라
+  // 무한 스크롤 도입(2026-07-24) 이후로는 전체 건수와 다르다(예: 5796건 중
+  // 100건만 로드된 시점엔 CRITICAL이 실제 2158건이어도 그중 39건만 보여서
+  // 섹션 헤더에 "CRITICAL · 39"처럼 실제보다 훨씬 작게 찍혔다 - 사용자 피드백으로
+  // 확인). 헤더에 보여줄 개수는 서버 집계(counts.severityCountsFor, GET
+  // /incidents/stats의 status x severity 조합 카운트)에서 현재 상태 필터
+  // 기준 진짜 총량을 따로 가져온다 - 카드 자체(group.items)는 여전히 로드된
+  // 만큼만 렌더링(무한 스크롤 그대로 유지).
+  const severityTotals = counts.severityCountsFor(statusFilter);
   const severityGroups = useMemo(() => {
     if (groupSimilar) return null;
     const buckets = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
     filteredIncidents.forEach((inc) => {
       buckets[severityBadgeKey(inc.severity)].push(inc);
     });
-    return SEVERITY_BADGE_ORDER.map((key) => ({ key, items: buckets[key] })).filter((g) => g.items.length > 0);
-  }, [groupSimilar, filteredIncidents]);
+    return SEVERITY_BADGE_ORDER.map((key) => ({
+      key,
+      items: buckets[key],
+      total: severityTotals[BADGE_KEY_TO_SEVERITY[key]] ?? buckets[key].length,
+    })).filter((g) => g.total > 0);
+  }, [groupSimilar, filteredIncidents, severityTotals]);
 
   const selected = incidents.find((i) => i.id === selectedId) || null;
   const { timeline, status: timelineStatus } = useIncidentTimeline(selected?.id);
@@ -866,7 +881,7 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
                 severityGroups.map((group) => (
                   <div key={group.key}>
                     <p className="text-dash-faint text-[10px] uppercase tracking-wide px-1 pt-2 pb-1 first:pt-0">
-                      {SEVERITY_META[group.key].label} · {group.items.length}
+                      {SEVERITY_META[group.key].label} · {group.total}
                     </p>
                     <div className="space-y-2">
                       {group.items.map((inc) => (

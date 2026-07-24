@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiGet, ApiError } from "../lib/authApi";
 
 // GET /incidents/stats (servers/platform-api/app/incidents_api.py, Postgres
@@ -12,6 +12,10 @@ export function useIncidentCounts() {
   const [total, setTotal] = useState(0);
   const [byStatus, setByStatus] = useState({});
   const [bySeverity, setBySeverity] = useState({});
+  // status x severity 조합별 원본 카운트 - 카드 목록의 심각도 섹션 헤더가
+  // "Open만 보기" 등 상태 필터가 걸렸을 때도 정확한 심각도별 개수를 보여줄 수
+  // 있게 한다(bySeverity는 상태 무관 전체 합계라 필터 화면엔 못 씀).
+  const [byStatusSeverity, setByStatusSeverity] = useState([]);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -28,6 +32,7 @@ export function useIncidentCounts() {
         setTotal(res?.total ?? 0);
         setByStatus(Object.fromEntries((res?.by_status ?? []).map((s) => [s.status, s.count])));
         setBySeverity(Object.fromEntries((res?.by_severity ?? []).map((s) => [s.severity, s.count])));
+        setByStatusSeverity(res?.by_status_severity ?? []);
         setStatus("ready");
         setError(null);
       })
@@ -42,5 +47,19 @@ export function useIncidentCounts() {
     };
   }, [reloadToken]);
 
-  return { total, byStatus, bySeverity, status, error, reload };
+  // statusFilter가 "ALL"이면 bySeverity와 동일(전체 합계), 특정 상태면 그
+  // 상태에 해당하는 조합만 골라 심각도별로 합산한다.
+  const severityCountsFor = useMemo(() => {
+    return (statusFilter) => {
+      if (!statusFilter || statusFilter === "ALL") return bySeverity;
+      const out = {};
+      byStatusSeverity.forEach((row) => {
+        if (row.status !== statusFilter) return;
+        out[row.severity] = (out[row.severity] ?? 0) + row.count;
+      });
+      return out;
+    };
+  }, [bySeverity, byStatusSeverity]);
+
+  return { total, byStatus, bySeverity, byStatusSeverity, severityCountsFor, status, error, reload };
 }
