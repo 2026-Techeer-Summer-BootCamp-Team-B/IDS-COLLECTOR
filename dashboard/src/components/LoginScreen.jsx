@@ -28,6 +28,14 @@ function ToolbarIcon({ children }) {
 // servers/platform-api/app/auth.py 기준 — users 테이블(pgcrypto) 실사용자 로그인.
 // 초기 관리자 계정은 postgres init/005-seed-admin-user.sh가
 // ADMIN_INITIAL_PASSWORD(.env)로 시드한다 - 화면에 기본 자격증명을 노출하지 않는다.
+// 평가자가 계정 없이 전체 기능(admin 전용 쓰기 포함)을 테스트해볼 수 있도록 하는
+// 공개 데모 계정 - servers/datastore/postgres/init/031-seed-demo-account.sh가
+// 같은 이름/비밀번호로 role=admin 계정을 시드한다. VITE_DEMO_PASSWORD가
+// 설정되지 않은 배포(주로 실서비스)에서는 아래 "로그인 없이 둘러보기" 버튼 자체가
+// 렌더링되지 않는다.
+const DEMO_USERNAME = "demo";
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD;
+
 export default function LoginScreen() {
   const { login, error } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -35,6 +43,7 @@ export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [demoSubmitting, setDemoSubmitting] = useState(false);
   // 2026-07-16: 로고(public/logo.png)가 아직 안 올라와 있을 수도 있으니, 이미지
   // 로드가 실패하면 기존의 흰 사각 아이콘으로 조용히 대체 - 깨진 이미지 아이콘이
   // 그대로 노출되는 것보다 낫다.
@@ -53,6 +62,13 @@ export default function LoginScreen() {
     setSubmitting(true);
     await login(username, password);
     setSubmitting(false);
+  }
+
+  async function handleDemoLogin() {
+    if (demoSubmitting) return;
+    setDemoSubmitting(true);
+    await login(DEMO_USERNAME, DEMO_PASSWORD);
+    setDemoSubmitting(false);
   }
 
   return (
@@ -243,6 +259,17 @@ export default function LoginScreen() {
               >
                 {submitting ? "로그인 중..." : "로그인"}
               </button>
+
+              {DEMO_PASSWORD && (
+                <button
+                  type="button"
+                  onClick={handleDemoLogin}
+                  disabled={submitting || demoSubmitting}
+                  className="w-full text-sm font-medium py-2 rounded-lg bg-transparent border border-white/20 text-white/80 hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  {demoSubmitting ? "입장 중..." : "로그인 없이 둘러보기 (평가용)"}
+                </button>
+              )}
             </form>
           </div>
         )}
