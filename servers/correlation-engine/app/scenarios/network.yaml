@@ -17,12 +17,22 @@ scenarios:
     severity: 3
     mitre_technique_id: "T1190"
 
-  # S5 (sequence, join_on=pod): WAF가 CRITICAL로 판정한 공격이 같은 pod 안에서 falco
-  # 쉘 실행/K8s API 접근으로 이어지는지 확인 - "외부 공격이 실제 침투로 이어졌는가"를
-  # 다루는 체인. S4(threshold)는 단순히 WAF 히트 건수만 세지만, S5는 그 공격이
-  # 실제로 성공해서 컨테이너 내부까지 침투했는지를 본다. join_on=pod는 workload.yaml의
-  # S1과 같은 근거로 성립 - waf/falco 둘 다 orchestrator.resource.name을 신뢰성
-  # 있게 채운다(waf는 enrichment.py 정적 매핑, falco는 k8s.pod.name).
+  # S5 (sequence, join_on=user_or_sa): WAF가 CRITICAL로 판정한 공격이 같은 대상에서
+  # falco 쉘 실행/K8s API 접근으로 이어지는지 확인 - "외부 공격이 실제 침투로
+  # 이어졌는가"를 다루는 체인. S4(threshold)는 단순히 WAF 히트 건수만 세지만, S5는
+  # 그 공격이 실제로 성공해서 컨테이너 내부까지 침투했는지를 본다.
+  #
+  # join_on은 원래 pod(orchestrator.resource.name 직접 비교)였는데, 이게 구조적으로
+  # 절대 매칭이 안 됐다(2026-07-24, dummy_generator.py로 S1~S109 전수 점검 중
+  # 실측 확인) - waf 이벤트의 orchestrator.resource.name은 enrichment.py가
+  # event.target_name(예: "juice-shop", 재배포에도 안 바뀌는 안정적 라벨)으로 채우는데,
+  # falco 이벤트는 k8s.pod.name(예: "juice-shop-7f9d8c6-abc12", ReplicaSet 해시가
+  # 붙은 실제 살아있는 pod 이름)을 그대로 쓴다 - 둘이 애초에 다른 값 체계라 문자열이
+  # 절대 같아질 수 없다. actor_identity(enrichment.py의 _TARGET_ACTOR_IDENTITY)는
+  # "juice-shop"과 "juice-shop-7f9d8c6-abc12" 둘 다 접두사 매칭으로 같은 신원
+  # (system:serviceaccount:default:default)으로 정규화해주므로, user_or_sa로 조인
+  # 축을 바꿔서 이 불일치를 우회한다 - workload.yaml의 인증 우회 체인들이 이미 같은
+  # 이유로 user_or_sa를 쓰는 것과 동일한 패턴.
   #
   # stage2 event_action의 "Contact K8S API Server From Container"는 대소문자까지
   # falco_rules.yaml 룰 이름과 완전히 똑같아야 한다(workload.yaml S1 주석 참고) -
@@ -34,8 +44,8 @@ scenarios:
   - id: S5
     name: "WAF CRITICAL 차단 이후 실제 컨테이너 침투 확인"
     type: sequence
-    join_on: pod
-    correlation_key_type: "orchestrator.resource.name"
+    join_on: user_or_sa
+    correlation_key_type: "user.name"
     required_modules: [waf, falco]
     window_seconds: 300
     stage1:
