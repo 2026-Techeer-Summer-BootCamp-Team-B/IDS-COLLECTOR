@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertTriangle, AlertCircle, Info, Globe, Eye, Boxes, Loader2, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, AlertCircle, Info, Globe, Shield, Eye, Boxes, Loader2, CheckCircle2 } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
 import { forTheme } from "../data/theme";
 
@@ -22,6 +22,7 @@ export const SEVERITY_META = {
 
 export const SOURCE_META = {
   WAS: { label: "WAS", color: "#1F57FF", icon: Globe },
+  WAF: { label: "WAF", color: "#D68C3E", icon: Shield },
   Falco: { label: "Falco", color: "#A64DFF", icon: Eye },
   "K8s Audit": { label: "K8s Audit", color: "#22C55E", icon: Boxes },
 };

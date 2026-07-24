@@ -1085,7 +1085,7 @@ export function LevelDistributionChart({ events }) {
 // GET /stats/top-ips 연동 이후로 "소스"는 서비스 이름이 아니라 공격 발원지
 // IP다. status/error가 오면(useTopIps) 로딩/에러 문구를 보여주고, 안 넘어오면
 // (다른 호출부가 여전히 즉시 계산된 배열을 넘기는 경우) 예전처럼 바로 렌더.
-export function TopSources({ sources, limit = 5, highlighted = false, status = "ready", error = null }) {
+export function TopSources({ sources, limit = 5, highlighted = false, status = "ready", error = null, fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
@@ -1093,15 +1093,22 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   // 내부 스크롤로만 보이게 한다. 이 카드는 오른쪽 컬럼(TopSources 위 +
   // ErrorRateGauge 아래)의 flex-col 안에서 자기 내용 높이만 차지하고, 남는
   // 세로 공간은 아래 ErrorRateGauge가 flex-1로 흡수해서 왼쪽 Recent Logs
-  // 높이와 맞춘다(아래 grid 행의 stretch + flex-col 구조 참고).
+  // 높이와 맞춘다(아래 grid 행의 stretch + flex-col 구조 참고) - 기본 모드
+  // 한정 이야기다.
+  // 2026-07-23: 커스텀 대시보드에서는 이 위젯 혼자 그리드 셀에 놓이므로 위
+  // 전제(아래 ErrorRateGauge가 남는 공간을 흡수)가 성립하지 않는다 - h-48
+  // 고정 목록 + 높이 미지정 Card라 그리드 셀(top-sources h:11 -> 실측 380px)
+  // 이 목록보다 크면 그 차이가 그대로 빈 여백으로 남았다. fillHeight일 때는
+  // Card를 h-full flex-col로, 목록을 h-48 대신 flex-1 min-h-0으로 바꿔서
+  // 셀 전체를 채우게 한다(줄 수가 넘치면 여전히 내부 스크롤).
   return (
     <Card
       title="Top Source IPs"
       icon={Crosshair}
       subtitle={highlighted ? `전체 ${sources.length}개 IP · 5개 이후 스크롤` : "선택 구간 기준"}
-      className={highlighted ? "glow-box-mint" : ""}
+      className={`${highlighted ? "glow-box-mint" : ""} ${fillHeight ? "h-full flex flex-col" : ""}`.trim()}
     >
-      <div className="space-y-3 h-48 min-h-0 overflow-y-auto pr-1">
+      <div className={fillHeight ? "space-y-3 flex-1 min-h-0 overflow-y-auto pr-1" : "space-y-3 h-48 min-h-0 overflow-y-auto pr-1"}>
         {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
         {status === "error" && (
           <p className="text-dash-critical text-xs">{error || "데이터를 불러오지 못했습니다."}</p>
@@ -1642,7 +1649,7 @@ const ACTIVITY_DIAGRAM_HEIGHT =
 // "이 로그가 어느 계층 로그인지"만 확실한 사실 기준으로 묶는다 - event.module
 // 4종 고정 분류라 왜곡 없이 보여줄 수 있다. useLiveAttackFeed(LiveTicker와 같은
 // 폴링, /events/recent 기반)를 재사용.
-export function LiveActivityTree() {
+export function LiveActivityTree({ fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { feed } = useLiveAttackFeed({ feedLimit: 80 });
@@ -1693,12 +1700,20 @@ export function LiveActivityTree() {
     }
   }, [layers]);
 
+  // 2026-07-23: ActivityLayerDiagram은 ACTIVITY_DIAGRAM_HEIGHT(고정 320px)
+  // SVG라 늘어나지 않는다 - Card에 높이 관련 className이 없어서 커스텀
+  // 대시보드 그리드 셀(activity-flow h:22 -> 실측 776px)이 이 고정 콘텐츠보다
+  // 훨씬 크면 그 차이가 그대로 아래쪽 빈 여백으로 남았다. fillHeight일 때는
+  // Card를 h-full flex-col로 채우고, 다이어그램 wrapper를 flex-1로 줘서 남는
+  // 세로 공간 안에서 고정 크기 SVG가 가운데 정렬되게 한다(ErrorRateGauge와
+  // 같은 방식 - 크기를 늘리는 대신 여백을 고르게 분산).
   return (
     <Card
       title="실시간 탐지"
       subtitle="WAF → WAS → K8s Audit → Falco, 건물 비유의 4단계 지하 구조 — 최근 1분 이내 로그만 점으로 표시"
+      className={fillHeight ? "h-full flex flex-col" : ""}
     >
-      <div className="overflow-x-auto">
+      <div className={fillHeight ? "flex-1 min-h-0 flex items-center overflow-x-auto" : "overflow-x-auto"}>
         <ActivityLayerDiagram layers={layers} C={C} />
       </div>
     </Card>
@@ -1845,7 +1860,7 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
       icon={Layers}
       subtitle={
         status === "ready"
-          ? `WAS / Falco / K8s Audit · 총 ${total}건${kpiFilter !== "ALL" ? ` · ${{ ERROR: "Errors", WARNING: "Warnings" }[kpiFilter] || kpiFilter} 필터` : ""}`
+          ? `WAS / WAF / Falco / K8s Audit · 총 ${total}건${kpiFilter !== "ALL" ? ` · ${{ ERROR: "Errors", WARNING: "Warnings" }[kpiFilter] || kpiFilter} 필터` : ""}`
           : "불러오는 중..."
       }
       action={
@@ -2429,7 +2444,7 @@ function LatencyStatValue({ value, tone }) {
   return <p className={`text-sm font-semibold ${tone}`}>{display}ms</p>;
 }
 
-export function LatencyStatsPanel({ events }) {
+export function LatencyStatsPanel({ events, fillHeight = false }) {
   const stats = useMemo(() => latencyStatsFor(events), [events]);
 
   const rows = stats
@@ -2442,10 +2457,21 @@ export function LatencyStatsPanel({ events }) {
       ]
     : [];
 
+  // 2026-07-23: 이 위젯도 Log Volume/Error Rate/GeoIP와 같은 문제 - Card에
+  // 높이 관련 className이 아예 없어서 커스텀 대시보드 그리드 셀(latency-stats
+  // h:6 -> 실측 200px)이 이 카드의 자연 높이보다 크면 그 차이만큼 빈 여백이
+  // 그대로 남았다. fillHeight일 때 h-full flex-col로 셀을 채우고, 5칸 그리드는
+  // flex-1로 감싸서 남는 세로 공간에서 가운데 정렬되게 한다(ErrorRateGauge와
+  // 같은 방식).
   return (
-    <Card title="API Latency" icon={Gauge} subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}>
+    <Card
+      title="API Latency"
+      icon={Gauge}
+      subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}
+      className={fillHeight ? "h-full flex flex-col" : ""}
+    >
       {stats ? (
-        <div className="grid grid-cols-5 gap-2">
+        <div className={fillHeight ? "flex-1 min-h-0 grid grid-cols-5 gap-2 content-center" : "grid grid-cols-5 gap-2"}>
           {rows.map((r) => (
             <div key={r.label} className="bg-dash-bg rounded-xl p-3 text-center">
               <p className="text-dash-muted text-[10px] uppercase tracking-wide mb-1">{r.label}</p>
@@ -3507,7 +3533,7 @@ export function DashboardContent() {
           />
         );
       case "latency-stats":
-        return <LatencyStatsPanel events={wasEventsForLatency} />;
+        return <LatencyStatsPanel events={wasEventsForLatency} fillHeight />;
       case "module-volume":
         return <ModuleVolumeStackedChart fillHeight />;
       case "recent-logs":
@@ -3522,6 +3548,7 @@ export function DashboardContent() {
             error={topIpsError}
             limit={kpiFilter === "SOURCES" ? 10 : 5}
             highlighted={kpiFilter === "SOURCES"}
+            fillHeight
           />
         );
       case "error-rate":
@@ -3529,7 +3556,7 @@ export function DashboardContent() {
       case "geo-summary":
         return <GeoSummaryCard fillHeight />;
       case "activity-flow":
-        return <LiveActivityTree />;
+        return <LiveActivityTree fillHeight />;
       default:
         return null;
     }

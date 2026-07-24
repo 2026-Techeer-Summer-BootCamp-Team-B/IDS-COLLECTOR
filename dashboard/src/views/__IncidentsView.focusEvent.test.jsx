@@ -4,7 +4,7 @@
 // 정리할 예정 (프로젝트에 원래 테스트 스위트가 없었음).
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, cleanup } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import IncidentsView from "./IncidentsView";
 import { ThemeProvider } from "../hooks/useTheme";
@@ -29,6 +29,9 @@ vi.mock("../lib/authApi", () => {
   return {
     apiGet: vi.fn(),
     apiGetAllPages: vi.fn(),
+    apiGetPaged: vi.fn(),
+    fetchIncidentSummary: vi.fn(),
+    fetchIncidentChanges: vi.fn().mockResolvedValue({ data: [], nextCursor: null, nextSince: "2026-07-16T07:00:00Z" }),
     apiPost: vi.fn().mockResolvedValue({}),
     apiPatch: vi.fn().mockResolvedValue({}),
     apiDelete: vi.fn().mockResolvedValue({}),
@@ -36,7 +39,7 @@ vi.mock("../lib/authApi", () => {
   };
 });
 
-import { apiGet, apiGetAllPages } from "../lib/authApi";
+import { apiGet, apiGetAllPages, apiGetPaged, fetchIncidentSummary } from "../lib/authApi";
 
 function incident(overrides) {
   return {
@@ -60,10 +63,9 @@ function incident(overrides) {
 // 그 event_id를 넣어줘야 매칭된다(2026-07-16, correlation_key만으론 여러 인시던트가
 // 같은 값(user.name="system:admin" 등)을 공유해서 부정확했던 걸 고친 부분).
 function mockApiGet(incidentsProvider, eventsByIncidentId = {}) {
-  apiGetAllPages.mockImplementation((path) => {
-    if (path === "/incidents") return Promise.resolve(incidentsProvider());
-    return Promise.resolve([]);
-  });
+  apiGetAllPages.mockImplementation((path) => path === "/incidents" ? Promise.resolve(incidentsProvider()) : Promise.resolve([]));
+  apiGetPaged.mockImplementation((path) => path.startsWith("/incidents?") ? Promise.resolve({ data: incidentsProvider(), nextCursor: null }) : Promise.resolve({ data: [], nextCursor: null }));
+  fetchIncidentSummary.mockResolvedValue({ total: incidentsProvider().length, by_status: { open: incidentsProvider().filter((item) => item.status === "open").length }, by_severity: {} });
   apiGet.mockImplementation((url) => {
     const eventsMatch = url.match(/^\/incidents\/([^/]+)\/events$/);
     if (eventsMatch) return Promise.resolve(eventsByIncidentId[eventsMatch[1]] || []);
@@ -78,7 +80,7 @@ function mockApiGet(incidentsProvider, eventsByIncidentId = {}) {
 function detailHeadingText() {
   // 상세 패널의 h2(선택된 인시던트 제목) - 목록 카드에도 title이 나오므로
   // heading 역할로 좁혀서 "지금 선택된 게 뭔지"를 명확히 잡는다.
-  return screen.getByRole("heading", { level: 2 }).textContent;
+  return screen.getAllByRole("heading", { level: 2 }).at(-1).textContent;
 }
 
 beforeEach(() => {
@@ -86,6 +88,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.useRealTimers();
   vi.clearAllMocks();
 });

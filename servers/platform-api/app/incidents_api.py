@@ -2,6 +2,7 @@
 incident_events 서브 리소스 + timeline(스토리라인) 서브 리소스.
 datastore/postgres/init/001-schema.sql의 incidents/incident_events/scenario_rules
 참고."""
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -45,6 +46,12 @@ class IncidentOut(BaseModel):
     verdict: Optional[str]
     verdict_note: Optional[str]
     verdict_at: Optional[str]
+
+
+class IncidentSummaryOut(BaseModel):
+    total: int
+    by_status: Dict[str, int]
+    by_severity: Dict[str, int]
 
 
 class IncidentEventOut(BaseModel):
@@ -135,6 +142,68 @@ async def get_incident_stats() -> Dict[str, Any]:
             {"status": row["status"], "severity": row["severity"], "count": row["cnt"]} for row in rows
         ],
     }
+
+
+@router.get("/summary", response_model=IncidentSummaryOut)
+async def get_incident_summary():
+    """Return exact aggregate counts without transferring incident history."""
+    async with pool().acquire() as conn:
+        total = await conn.fetchval("SELECT count(*) FROM incidents")
+        status_rows = await conn.fetch("SELECT status, count(*) AS count FROM incidents GROUP BY status")
+        severity_rows = await conn.fetch("SELECT severity, count(*) AS count FROM incidents GROUP BY severity")
+    return IncidentSummaryOut(
+        total=total,
+        by_status={row["status"]: row["count"] for row in status_rows},
+        by_severity={str(row["severity"]): row["count"] for row in severity_rows},
+    )
+
+
+@router.get("/changes", response_model=List[IncidentOut])
+async def list_incident_changes(
+    response: Response,
+    since: Optional[str] = None,
+    limit: int = 50,
+    cursor: Optional[str] = None,
+):
+    """Return created or changed incidents ordered by updated_at, oldest first.
+
+    This deliberately remains separate from ``/incidents?since=`` whose public
+    contract is creation-time based and is used by notification consumers.
+    ``X-Next-Since`` is emitted only after the last cursor page so callers do
+    not advance their watermark while a paged delta is still incomplete.
+    """
+    limit = min(max(limit, 1), 500)
+    clauses: List[str] = []
+    params: List[Any] = []
+    if since:
+        params.append(parse_iso8601(since))
+        clauses.append(f"updated_at > ${len(params)}")
+    if cursor:
+        cursor_value, cursor_id = decode_cursor(cursor)
+        params.append(parse_iso8601(cursor_value))
+        ts_param = len(params)
+        params.append(cursor_id)
+        id_param = len(params)
+        clauses.append(f"(updated_at, id) > (${ts_param}, ${id_param})")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT id, title, correlation_key_type, correlation_key_value, severity,
+                   status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,
+                   verdict, verdict_note, verdict_at
+            FROM incidents {where}
+            ORDER BY updated_at ASC, id ASC LIMIT ${len(params)}
+            """,
+            *params,
+        )
+    if len(rows) == limit:
+        last = rows[-1]
+        set_next_cursor_header(response, [last["updated_at"].isoformat(), str(last["id"])])
+    else:
+        response.headers["X-Next-Since"] = datetime.now(timezone.utc).isoformat()
+    return [_row_to_incident(row) for row in rows]
 
 
 @router.get("", response_model=List[IncidentOut])
@@ -392,7 +461,7 @@ async def update_verdict(incident_id: UUID, body: VerdictUpdate, request: Reques
         row = await conn.fetchrow(
             """
             UPDATE incidents
-            SET verdict = $2, verdict_note = $3, verdict_by = $4, verdict_at = now()
+            SET verdict = $2, verdict_note = $3, verdict_by = $4, verdict_at = now(), updated_at = now()
             WHERE id = $1
             RETURNING id, title, correlation_key_type, correlation_key_value, severity,
                       status, matched_scenario_rule_id, mitre_tactics, created_at, updated_at,

@@ -1,14 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { LayoutDashboard, AlertTriangle, Target, Server, ShieldCheck, Globe, Shield, Eye, Boxes, ArrowUp, Radar, Bell, Ban, Wifi, User, LogOut, Loader2, Construction } from "lucide-react";
-import { DashboardContent } from "./views/LogDashboard";
-import IncidentsView from "./views/IncidentsView";
-import AttackMatrixView from "./views/AttackMatrixView";
-import InfrastructureView from "./views/InfrastructureView";
-import AdminAuditView from "./views/AdminAuditView";
-import WASView from "./views/WASView";
-import WAFView from "./views/WAFView";
-import FalcoView from "./views/FalcoView";
-import K8sAuditView from "./views/K8sAuditView";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { LayoutDashboard, AlertTriangle, Target, Server, ShieldCheck, Globe, Shield, Eye, Boxes, ArrowUp, Wifi, User, LogOut, Loader2, Construction } from "lucide-react";
 import LiveTicker from "./components/LiveTicker";
 import ToastStack from "./components/ToastStack";
 import CriticalToastStack from "./components/CriticalToastStack";
@@ -20,6 +11,7 @@ import { DISPLAY_TIMEZONE } from "./lib/timezone";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { PollIntervalProvider } from "./context/PollIntervalContext";
 import { OverviewLayoutProvider } from "./context/OverviewLayoutContext";
+import { TabActivityProvider } from "./context/TabActivityContext";
 import {
   OverviewIcon,
   IncidentsIcon,
@@ -32,6 +24,39 @@ import {
   K8sAuditIcon,
   LogoMarkIcon,
 } from "./components/navIcons";
+
+// Views are loaded only on first visit, keeping the initial shell responsive.
+const DashboardContent = lazy(() => import("./views/LogDashboard").then((module) => ({ default: module.DashboardContent })));
+const IncidentsView = lazy(() => import("./views/IncidentsView"));
+const AttackMatrixView = lazy(() => import("./views/AttackMatrixView"));
+const InfrastructureView = lazy(() => import("./views/InfrastructureView"));
+const AdminAuditView = lazy(() => import("./views/AdminAuditView"));
+const WASView = lazy(() => import("./views/WASView"));
+const WAFView = lazy(() => import("./views/WAFView"));
+const FalcoView = lazy(() => import("./views/FalcoView"));
+const K8sAuditView = lazy(() => import("./views/K8sAuditView"));
+
+function ViewLoading() {
+  return <div className="min-h-48 grid place-items-center text-dash-muted text-sm"><Loader2 className="w-5 h-5 animate-spin" /> <span className="sr-only">화면을 불러오는 중</span></div>;
+}
+
+function KeepAliveTab({ active, children }) { return <section hidden={!active} aria-hidden={!active}><TabActivityProvider active={active}>{children}</TabActivityProvider></section>; }
+
+// Keep high-frequency event polling out of AppShell so a feed update does
+// not re-render the active, chart-heavy view.
+function LiveFeedLayer({ onInvestigate, onGoToIncident, safeTopRef, sidebarOpen }) {
+  const { feed, criticalEvents } = useLiveAttackFeed();
+  return <>
+    <LiveTicker feed={feed} />
+    <CriticalToastStack
+      events={criticalEvents}
+      onInvestigate={onInvestigate}
+      onGoToIncident={onGoToIncident}
+      safeTopRef={safeTopRef}
+      sidebarOpen={sidebarOpen}
+    />
+  </>;
+}
 
 /**
  * SENTINEL-OPS app shell — left sidebar switches between screens.
@@ -256,10 +281,10 @@ function TopBar({ sidebarOpen, onToggleSidebar, incidentStats }) {
   return (
     <header className="flex flex-wrap items-center gap-x-8 gap-y-2 px-6 py-4 border-b border-dash-surfaceAlt">
       <SidebarToggle open={sidebarOpen} onToggle={onToggleSidebar} />
-      <StatBlock label="진행중 INCIDENT" value={incidentStats.activeIncidents} valueClassName="text-dash-pink" icon={AlertTriangle} />
-      <StatBlock label="총 DETECTED" value={incidentStats.totalDetected.toLocaleString()} icon={Radar} />
-      <StatBlock label="오픈 ALERT" value={incidentStats.openAlerts} valueClassName="text-dash-mint" icon={Bell} />
-      <StatBlock label="총 BLOCKED" value={incidentStats.totalBlocked} icon={Ban} />
+      <StatBlock label="진행중 INCIDENT" value={incidentStats.activeIncidents} valueClassName="text-dash-pink" />
+      <StatBlock label="총 DETECTED" value={incidentStats.totalDetected.toLocaleString()} />
+      <StatBlock label="오픈 ALERT" value={incidentStats.openAlerts} valueClassName="text-dash-mint" />
+      <StatBlock label="총 BLOCKED" value={incidentStats.totalBlocked} />
 
       <div className="ml-auto flex items-center gap-3 text-xs text-dash-muted">
         <span className="flex items-center gap-1.5 text-dash-mint font-medium glow-mint">
@@ -314,6 +339,8 @@ function Placeholder({ label }) {
 // 감싼 채로만 마운트되므로 useAuth()가 항상 값을 갖는다.
 function AppShell() {
   const [active, setActive] = useState("overview");
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set(["overview"]));
+  useEffect(() => { setVisitedTabs((tabs) => tabs.has(active) ? tabs : new Set([...tabs, active])); }, [active]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const mainRef = useRef(null);
   // CRITICAL 알림은 이 메뉴 아래의 남는 세로 공간만 사용한다. 화면 높이가
@@ -332,13 +359,11 @@ function AppShell() {
     setPendingIncident({ id: incidentId, nonce: Date.now() });
     setActive("incidents");
   }
-  const { feed, criticalEvents } = useLiveAttackFeed();
-
   // Fake response actions live here (not inside IncidentsView) so they
   // survive switching tabs — IncidentsView unmounts when you navigate away,
   // so anything stored only in its local state would reset.
   const [toasts, setToasts] = useState([]);
-  const { stats: incidentStats } = useIncidentStats();
+  const { stats: incidentStats, summary: incidentSummary, reload: reloadIncidentStats } = useIncidentStats();
 
   function pushToast(message, tone = "success") {
     const toastId = Date.now() + Math.random();
@@ -367,29 +392,27 @@ function AppShell() {
         />
         <ConnectionBar />
         <main ref={mainRef} className="flex-1 p-6 overflow-y-auto">
-          {active === "overview" && <DashboardContent />}
-          {active === "incidents" && (
-            <IncidentsView pushToast={pushToast} pendingIncident={pendingIncident} />
-          )}
-          {active === "attack" && <AttackMatrixView onNavigateToIncident={goToIncident} />}
-          {active === "infra" && <InfrastructureView />}
-          {active === "admin" && <AdminAuditView pushToast={pushToast} />}
-          {active === "was" && <WASView />}
-          {active === "waf" && <WAFView />}
-          {active === "falco" && <FalcoView />}
-          {active === "k8s-audit" && <K8sAuditView />}
+          <Suspense fallback={<ViewLoading />}>
+            {visitedTabs.has("overview") && <KeepAliveTab active={active === "overview"}><DashboardContent /></KeepAliveTab>}
+            {visitedTabs.has("incidents") && <KeepAliveTab active={active === "incidents"}><IncidentsView pushToast={pushToast} pendingIncident={pendingIncident} summary={incidentSummary} reloadIncidentStats={reloadIncidentStats} /></KeepAliveTab>}
+            {visitedTabs.has("attack") && <KeepAliveTab active={active === "attack"}><AttackMatrixView onNavigateToIncident={goToIncident} /></KeepAliveTab>}
+            {visitedTabs.has("infra") && <KeepAliveTab active={active === "infra"}><InfrastructureView /></KeepAliveTab>}
+            {visitedTabs.has("admin") && <KeepAliveTab active={active === "admin"}><AdminAuditView pushToast={pushToast} /></KeepAliveTab>}
+            {visitedTabs.has("was") && <KeepAliveTab active={active === "was"}><WASView /></KeepAliveTab>}
+            {visitedTabs.has("waf") && <KeepAliveTab active={active === "waf"}><WAFView /></KeepAliveTab>}
+            {visitedTabs.has("falco") && <KeepAliveTab active={active === "falco"}><FalcoView /></KeepAliveTab>}
+            {visitedTabs.has("k8s-audit") && <KeepAliveTab active={active === "k8s-audit"}><K8sAuditView /></KeepAliveTab>}
+          </Suspense>
         </main>
-        <LiveTicker feed={feed} />
+        <LiveFeedLayer
+          onInvestigate={() => setActive("incidents")}
+          onGoToIncident={goToIncident}
+          safeTopRef={layerNavEndRef}
+          sidebarOpen={sidebarOpen}
+        />
       </div>
       <ScrollToTopButton scrollRef={mainRef} />
       <ToastStack toasts={toasts} />
-      <CriticalToastStack
-        events={criticalEvents}
-        onInvestigate={() => setActive("incidents")}
-        onGoToIncident={goToIncident}
-        safeTopRef={layerNavEndRef}
-        sidebarOpen={sidebarOpen}
-      />
     </div>
   );
 }

@@ -147,7 +147,7 @@ export async function exportIncidentPDF(incident) {
 
   doc.setFontSize(13);
   doc.setTextColor(20, 20, 20);
-  doc.text("Attack Storyline (WAS / Falco / K8s Audit)", PAGE_MARGIN, y);
+  doc.text("Attack Storyline (WAS / WAF / Falco / K8s Audit)", PAGE_MARGIN, y);
   y += 8;
 
   incident.storyline.forEach((entry, i) => {

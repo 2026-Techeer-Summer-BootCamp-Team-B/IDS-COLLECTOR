@@ -15,7 +15,7 @@ import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
 import { getRealSeverityMeta } from "../data/realSeverity";
-import { apiPatch, apiPost, ApiError } from "../lib/authApi";
+import { apiGet, apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { groupSimilarIncidents, isIpKeyType } from "../lib/incidentGrouping";
 import { ChartHoverPanel } from "../components/HoverPanel";
@@ -26,6 +26,13 @@ import { useAutoCycleIndex, useAnimatedFills, useGrowPulse, renderGlowActiveShap
 const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" };
 function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
+}
+function newestIncident(items) {
+  return items.reduce((latest, item) => {
+    if (!latest) return item;
+    if (item.updated_at > latest.updated_at) return item;
+    return item.updated_at === latest.updated_at && item.id.localeCompare(latest.id) < 0 ? item : latest;
+  }, null);
 }
 const BADGE_KEY_TO_SEVERITY = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
 
@@ -560,13 +567,22 @@ function StorylineEntry({ entry, isLast }) {
  *
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
-export default function IncidentsView({ pushToast, pendingIncident }) {
+export default function IncidentsView({ pushToast, pendingIncident, focusEvent, onFocusConsumed, reloadIncidentStats }) {
   const { incidents, status, error, hasMore, loadingMore, loadMore, reload } = useIncidents();
+  const incidentsRef = useRef(incidents);
+  incidentsRef.current = incidents;
   // KPI 행("Open"/"Investigating"/"Resolved"/"Total")과 "심각도 분포"/"상태별
   // 분포" 도넛은 전체 incidents 배열이 아니라 이 서버 집계를 쓴다(2026-07-24,
   // 위 useIncidents가 몇 초씩 걸리는 것과 별개로 개수 세 위젯만이라도 빠르게
   // 뜨게 하기 위함 - useIncidentCounts.js 참고).
   const counts = useIncidentCounts();
+  // 차트는 첫 화면의 카드 렌더링과 분리해 다음 프레임에 마운트한다. 무거운
+  // Recharts 초기화가 인시던트 목록의 최초 표시를 막지 않도록 한 기존 UX다.
+  const [showCharts, setShowCharts] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => requestAnimationFrame(() => setShowCharts(true)));
+    return () => cancelAnimationFrame(frame);
+  }, []);
   const { scenarios } = useScenarios();
   // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
   // 여기서는 "이미 차단됐는지" 판단(alreadyBanned)에만 bannedIps를 쓴다.
@@ -605,7 +621,7 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   useEffect(() => {
     const root = scrollBoxRef.current;
     const target = bottomSentinelRef.current;
-    if (!root || !target) return;
+    if (!root || !target || typeof IntersectionObserver === "undefined") return;
 
     function pump() {
       if (!isIntersectingRef.current) return;
@@ -655,11 +671,52 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   // 올리면 카드가 사라지고 화면이 멈춘다" 피드백).
   useIncidentsSocket(() => {
     counts.reload();
+    reloadIncidentStats?.().catch(() => {});
   });
 
   useEffect(() => {
-    if (!selectedId && incidents.length) setSelectedId(incidents[0].id);
+    const first = newestIncident(incidents);
+    if (!selectedId && first) setSelectedId(first.id);
   }, [incidents, selectedId]);
+
+  // 라이브 이벤트는 상관 엔진이 인시던트를 만들기 전에 도착할 수 있다. 같은
+  // correlation key 후보의 실제 event 소속을 확인하고, 잠깐 재시도한 뒤에도
+  // 없으면 일반 최신 항목으로 폴백한다. selectedId가 이미 있어도 새 이벤트는
+  // 반드시 처리해야 하므로 focusEvent 자체를 기준으로 실행한다.
+  useEffect(() => {
+    if (!focusEvent?.id) return undefined;
+    let cancelled = false;
+    let settled = false;
+    const deadline = Date.now() + 2000;
+    const finish = (id) => {
+      if (settled || cancelled) return;
+      settled = true;
+      if (id) setSelectedId(id);
+      onFocusConsumed?.(focusEvent.id);
+    };
+    const attempt = async () => {
+      const candidates = incidents.filter((item) => item.correlation_key_value === focusEvent.sourceIp);
+      for (const candidate of candidates) {
+        const events = await apiGet(`/incidents/${encodeURIComponent(candidate.id)}/events`);
+        if (events.some((event) => event.event_id === focusEvent.id)) return finish(candidate.id);
+      }
+      if (Date.now() >= deadline) return finish(newestIncident(incidents)?.id);
+    };
+    attempt().catch(() => {
+      if (Date.now() >= deadline) finish(newestIncident(incidentsRef.current)?.id);
+    });
+    // 재조회 결과가 incidents를 갱신하면 이 효과가 즉시 다시 후보를 검사한다.
+    // attempt 안에서 reload까지 호출하면 그 갱신이 다시 reload를 부르는 렌더
+    // 루프가 되므로, 0.5초 타이머만 재조회를 소유한다.
+    const timer = setInterval(() => {
+      attempt().catch(() => {});
+      reload();
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [focusEvent, incidents, onFocusConsumed, reload]);
 
   // ATT&CK 매트릭스의 "조치하러 가기" 버튼으로 들어온 경우 - App.jsx가
   // pendingIncident.nonce를 매번 새 값으로 넘겨주므로(같은 인시던트를 다시
@@ -738,6 +795,7 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
       await apiPatch(`/incidents/${selected.id}/status`, { status: nextStatus });
       toast(`인시던트 상태를 ${STATUS_LABEL[nextStatus]}(으)로 변경했습니다.`, "success");
       reload();
+      reloadIncidentStats?.().catch(() => {});
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "상태 변경에 실패했습니다.", "error");
     }
@@ -769,6 +827,7 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
       toast(`${RESOLUTION_CATEGORY_LABEL[categoryKey]} 조치 후 인시던트를 종결했습니다.`, "success");
       setShowCategoryPicker(false);
       reload();
+      reloadIncidentStats?.().catch(() => {});
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "조치 처리에 실패했습니다.", "error");
     } finally {
@@ -825,12 +884,18 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
 
       <TopSignalsCard topScenario={topScenario} topIp={topIps[0]} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <SeverityDonut bySeverity={counts.bySeverity} />
-        <StatusDonut byStatus={counts.byStatus} />
-      </div>
+      {showCharts ? (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <SeverityDonut bySeverity={counts.bySeverity} />
+            <StatusDonut byStatus={counts.byStatus} />
+          </div>
 
-      <TopAttackTypesBarChart scenarios={scenarios} />
+          <TopAttackTypesBarChart scenarios={scenarios} />
+        </>
+      ) : (
+        <div className="h-[360px] bg-dash-surface rounded-2xl animate-pulse" aria-label="차트 불러오는 중" />
+      )}
 
       {/* 좌측 폭을 320px -> 240px로 줄였다(2026-07-16) - 카드 내용을 핵심만
           남기고 나니 320px는 과하게 넓었고, 그만큼 우측 상세 패널이 좁았다.

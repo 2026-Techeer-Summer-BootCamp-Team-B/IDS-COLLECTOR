@@ -95,3 +95,28 @@ async def test_status_update_on_missing_incident_returns_404(client, auth_header
         headers=auth_headers,
     )
     assert resp.status_code == 404
+
+async def test_incident_summary_and_changes_include_verdict_updates(client, auth_headers, synthetic_incident):
+    summary = await client.get("/incidents/summary", headers=auth_headers)
+    assert summary.status_code == 200
+    assert summary.json()["total"] >= 1
+    assert "open" in summary.json()["by_status"]
+
+    before = "2000-01-01T00:00:00+00:00"
+    verdict = await client.patch(
+        f"/incidents/{synthetic_incident}/verdict",
+        json={"verdict": "true_positive", "note": "delta test"},
+        headers=auth_headers,
+    )
+    assert verdict.status_code == 200
+    changes = await client.get(f"/incidents/changes?since={before}", headers=auth_headers)
+    assert changes.status_code == 200
+    assert any(item["id"] == synthetic_incident and item["verdict"] == "true_positive" for item in changes.json())
+    assert changes.headers.get("X-Next-Since")
+
+
+async def test_legacy_incident_since_remains_creation_based(client, auth_headers, synthetic_incident):
+    baseline = "2100-01-01T00:00:00+00:00"
+    response = await client.get(f"/incidents?since={baseline}", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json() == []

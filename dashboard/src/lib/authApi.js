@@ -175,6 +175,22 @@ export function fetchIncidentsSince(since) {
   return apiGet(`/incidents${qs}`);
 }
 
+export const fetchIncidentSummary = () => apiGet("/incidents/summary");
+
+// Existing /incidents?since= is creation-only. The Incident page uses this
+// separate updated_at feed so remote status/verdict changes are not lost.
+export async function fetchIncidentChanges({ since, cursor, limit = 50 } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (since) params.set("since", since);
+  if (cursor) params.set("cursor", cursor);
+  const { body, res } = await apiFetchRaw(`/incidents/changes?${params}`);
+  return {
+    data: body ?? [],
+    nextCursor: res.headers.get("X-Next-Cursor"),
+    nextSince: res.headers.get("X-Next-Since"),
+  };
+}
+
 // ---- /events/recent (servers/platform-api/app/events_api.py) ----
 
 // 개별 정규화 이벤트 실시간 티커(LiveTicker/App.jsx의 SidebarCriticalAlert용) — 인시던트
