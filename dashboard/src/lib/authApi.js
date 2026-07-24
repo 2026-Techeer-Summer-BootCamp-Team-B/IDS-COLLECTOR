@@ -88,7 +88,26 @@ export async function apiFetch(path, opts) {
   return body;
 }
 
-export const apiGet = (path) => apiFetch(path);
+// GET 하나에 여러 위젯/훅이 동시에(같은 폴링 tick에) 동일한 경로를 요청하는 경우가
+// 있다(예: Overview의 "Log Levels"/"심각도 분포"가 둘 다 독립적으로 GET
+// /stats/levels?hours=24를 2초마다 부름, 2026-07-24 "심각도 분포만 유독 느리다"
+// 피드백으로 실측 확인 - 같은 URL로 동시에 여러 요청이 나가는 유일한 경로였음).
+// 이미 같은 경로로 나가 있는 요청이 있으면 새로 fetch를 또 열지 않고 그 Promise를
+// 그대로 공유한다 - GET은 멱등이라 안전하고, SWR/React Query 등이 기본으로 하는
+// in-flight 요청 중복 제거와 같은 패턴이다. 완전한 응답 캐싱은 아니다(settle되는
+// 즉시 맵에서 지워서 다음 폴링 tick은 새로 요청함) - 순수하게 "동시에 뜬 동일
+// 요청끼리만" 하나로 묶는다.
+const _inflightGets = new Map();
+
+export function apiGet(path) {
+  const existing = _inflightGets.get(path);
+  if (existing) return existing;
+  const promise = apiFetch(path).finally(() => {
+    _inflightGets.delete(path);
+  });
+  _inflightGets.set(path, promise);
+  return promise;
+}
 export const apiPost = (path, body) => apiFetch(path, { method: "POST", body });
 export const apiPatch = (path, body) => apiFetch(path, { method: "PATCH", body });
 export const apiDelete = (path) => apiFetch(path, { method: "DELETE" });
