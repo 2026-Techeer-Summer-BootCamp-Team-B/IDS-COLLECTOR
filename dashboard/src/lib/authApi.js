@@ -88,7 +88,26 @@ export async function apiFetch(path, opts) {
   return body;
 }
 
-export const apiGet = (path) => apiFetch(path);
+// GET 하나에 여러 위젯/훅이 동시에(같은 폴링 tick에) 동일한 경로를 요청하는 경우가
+// 있다(예: Overview의 "Log Levels"/"심각도 분포"가 둘 다 독립적으로 GET
+// /stats/levels?hours=24를 2초마다 부름, 2026-07-24 "심각도 분포만 유독 느리다"
+// 피드백으로 실측 확인 - 같은 URL로 동시에 여러 요청이 나가는 유일한 경로였음).
+// 이미 같은 경로로 나가 있는 요청이 있으면 새로 fetch를 또 열지 않고 그 Promise를
+// 그대로 공유한다 - GET은 멱등이라 안전하고, SWR/React Query 등이 기본으로 하는
+// in-flight 요청 중복 제거와 같은 패턴이다. 완전한 응답 캐싱은 아니다(settle되는
+// 즉시 맵에서 지워서 다음 폴링 tick은 새로 요청함) - 순수하게 "동시에 뜬 동일
+// 요청끼리만" 하나로 묶는다.
+const _inflightGets = new Map();
+
+export function apiGet(path) {
+  const existing = _inflightGets.get(path);
+  if (existing) return existing;
+  const promise = apiFetch(path).finally(() => {
+    _inflightGets.delete(path);
+  });
+  _inflightGets.set(path, promise);
+  return promise;
+}
 export const apiPost = (path, body) => apiFetch(path, { method: "POST", body });
 export const apiPatch = (path, body) => apiFetch(path, { method: "PATCH", body });
 export const apiDelete = (path) => apiFetch(path, { method: "DELETE" });
@@ -97,7 +116,11 @@ export const apiDelete = (path) => apiFetch(path, { method: "DELETE" });
 // apiGet과 달리 다음 페이지 커서(없으면 null)까지 같이 돌려준다.
 export async function apiGetPaged(path) {
   const { body, res } = await apiFetchRaw(path);
-  return { data: body ?? [], nextCursor: res.headers.get("X-Next-Cursor") };
+  return {
+    data: body ?? [],
+    nextCursor: res.headers.get("X-Next-Cursor"),
+    nextSince: res.headers.get("X-Next-Since"),
+  };
 }
 
 // X-Next-Cursor가 있는 동안 계속 다음 페이지를 이어 받아 전체 목록을 배열 하나로
@@ -154,6 +177,22 @@ export function logout() {
 export function fetchIncidentsSince(since) {
   const qs = since ? `?since=${encodeURIComponent(since)}` : "";
   return apiGet(`/incidents${qs}`);
+}
+
+export const fetchIncidentSummary = () => apiGet("/incidents/summary");
+
+// Existing /incidents?since= is creation-only. The Incident page uses this
+// separate updated_at feed so remote status/verdict changes are not lost.
+export async function fetchIncidentChanges({ since, cursor, limit = 50 } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (since) params.set("since", since);
+  if (cursor) params.set("cursor", cursor);
+  const { body, res } = await apiFetchRaw(`/incidents/changes?${params}`);
+  return {
+    data: body ?? [],
+    nextCursor: res.headers.get("X-Next-Cursor"),
+    nextSince: res.headers.get("X-Next-Since"),
+  };
 }
 
 // ---- /events/recent (servers/platform-api/app/events_api.py) ----

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Sector } from "recharts";
 import { BarChart3, PieChart as PieChartIcon, FileSpreadsheet, FileText, Search, CheckCircle2, Ban, Layers, ChevronUp, ChevronDown, AlertTriangle, AlertOctagon, Activity, Crosshair } from "lucide-react";
 import { SeverityBadge, SourceBadge, SEVERITY_META } from "../components/badges";
@@ -7,6 +7,7 @@ import { useTheme } from "../hooks/useTheme";
 import { usePersistedPreference } from "../hooks/usePersistedPreference";
 import { exportIncidentCSV, exportIncidentPDF } from "../lib/exportIncident";
 import { useIncidents } from "../hooks/useIncidents";
+import { useIncidentCounts } from "../hooks/useIncidentCounts";
 import { useIncidentsSocket } from "../hooks/useIncidentsSocket";
 import { useIncidentTimeline } from "../hooks/useIncidentTimeline";
 import { useScenarios } from "../hooks/useScenarios";
@@ -14,7 +15,7 @@ import { useBannedIps } from "../hooks/useBannedIps";
 import { useTopIps } from "../hooks/useTopIps";
 import { getModuleMeta } from "../data/moduleMeta";
 import { getRealSeverityMeta } from "../data/realSeverity";
-import { apiPatch, apiPost, ApiError } from "../lib/authApi";
+import { apiGet, apiPatch, apiPost, ApiError } from "../lib/authApi";
 import { DISPLAY_TIMEZONE } from "../lib/timezone";
 import { groupSimilarIncidents, isIpKeyType } from "../lib/incidentGrouping";
 import { ChartHoverPanel } from "../components/HoverPanel";
@@ -26,6 +27,14 @@ const SEVERITY_TO_BADGE_KEY = { 4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW" 
 function severityBadgeKey(sev) {
   return SEVERITY_TO_BADGE_KEY[sev] || "LOW";
 }
+function newestIncident(items) {
+  return items.reduce((latest, item) => {
+    if (!latest) return item;
+    if (item.updated_at > latest.updated_at) return item;
+    return item.updated_at === latest.updated_at && item.id.localeCompare(latest.id) < 0 ? item : latest;
+  }, null);
+}
+const BADGE_KEY_TO_SEVERITY = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
 
 // 2026-07-17(5차): "심각도 분포" 도넛이 REAL_SEVERITY_LEVELS 원래 라벨
 // (Critical/Major/Minor/Info)을 그대로 써서, 같은 화면의 공격 스토리라인
@@ -89,16 +98,20 @@ function MiniKpi({ label, value, sub, color, onClick, active = false, accent = "
   );
 }
 
-// 상태(open/investigating/closed) 필터 버튼 4개. GET /incidents로 받은 목록
-// 하나에서 전부 파생. Top 상관 규칙/Top 공격 IP는 클릭해도 필터링되지 않는
-// 순수 정보 카드라 이 버튼 그리드와 섞으면 "이것도 눌리나?" 하는 오해를 주고
-// 톤도 안 맞았다(2026-07-16) - TopSignalsCard로 완전히 분리했다.
-function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
+// 상태(open/investigating/closed) 필터 버튼 4개. 2026-07-24 이전엔 GET
+// /incidents로 받은 전체 목록에서 .filter()로 세었는데, 인시던트가 수천 건으로
+// 늘면서(더미 생성기가 계속 발화) 그 전체 fetch 자체가 느려져 이 카운트도 같이
+// 늦게 떴다(useIncidentCounts.js, GET /incidents/stats Postgres 집계로 분리 -
+// 카드 목록/그룹핑용 전체 fetch(useIncidents)와 개수는 이제 완전히 독립).
+// Top 상관 규칙/Top 공격 IP는 클릭해도 필터링되지 않는 순수 정보 카드라 이
+// 버튼 그리드와 섞으면 "이것도 눌리나?" 하는 오해를 주고 톤도 안 맞았다
+// (2026-07-16) - TopSignalsCard로 완전히 분리했다.
+function IncidentKpiRow({ counts, statusFilter, onFilterChange }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
-  const openCount = incidents.filter((i) => i.status === "open").length;
-  const investigatingCount = incidents.filter((i) => i.status === "investigating").length;
-  const closedCount = incidents.filter((i) => i.status === "closed").length;
+  const openCount = counts.byStatus.open ?? 0;
+  const investigatingCount = counts.byStatus.investigating ?? 0;
+  const closedCount = counts.byStatus.closed ?? 0;
 
   return (
     <div className="flex flex-wrap gap-4">
@@ -123,7 +136,7 @@ function IncidentKpiRow({ incidents, statusFilter, onFilterChange }) {
         onClick={() => onFilterChange("closed")}
         active={statusFilter === "closed"}
       />
-      <MiniKpi label="Total" value={incidents.length} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
+      <MiniKpi label="Total" value={counts.total} onClick={() => onFilterChange("ALL")} active={statusFilter === "ALL"} />
     </div>
   );
 }
@@ -180,15 +193,15 @@ function DistributionTypeToggle({ value, onChange }) {
   );
 }
 
-function SeverityDonut({ incidents }) {
+function SeverityDonut({ bySeverity }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const [chartType, setChartType] = usePersistedPreference("sentinel-ops:chart-type:incident-severity", "donut", ["donut", "bar"]);
   const data = useMemo(() => {
     const counts = {};
-    incidents.forEach((i) => {
-      const key = severityBadgeKey(i.severity);
-      counts[key] = (counts[key] || 0) + 1;
+    Object.entries(bySeverity).forEach(([sev, count]) => {
+      const key = severityBadgeKey(Number(sev));
+      counts[key] = (counts[key] || 0) + count;
     });
     // 공격 스토리라인 카드 배지(CRITICAL/HIGH/MEDIUM/LOW)와 같은 라벨을 쓴다 -
     // 예전엔 REAL_SEVERITY_LEVELS 원래 이름(Critical/Major/Minor/Info)을 써서
@@ -201,7 +214,7 @@ function SeverityDonut({ incidents }) {
       // 통일 - severity 배지 등 다른 곳의 의미색(빨강=critical 등)과는 별개.
       color: donutPalette(theme)[i % DONUT_PALETTE.length],
     }));
-  }, [incidents, theme]);
+  }, [bySeverity, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
   const targetFills = useMemo(() => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)), [data, highlighting, activeIndex, C.donutDim]);
@@ -271,24 +284,20 @@ function SeverityDonut({ incidents }) {
   );
 }
 
-function StatusDonut({ incidents }) {
+function StatusDonut({ byStatus }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const [chartType, setChartType] = usePersistedPreference("sentinel-ops:chart-type:incident-status", "donut", ["donut", "bar"]);
   const data = useMemo(() => {
-    const counts = {};
-    incidents.forEach((i) => {
-      counts[i.status] = (counts[i.status] || 0) + 1;
-    });
     return Object.entries(STATUS_META)
-      .filter(([key]) => counts[key])
+      .filter(([key]) => byStatus[key])
       .map(([key, meta], i) => ({
         key,
         label: meta.label,
-        count: counts[key],
+        count: byStatus[key],
         color: donutPalette(theme)[i % DONUT_PALETTE.length],
       }));
-  }, [incidents, theme]);
+  }, [byStatus, theme]);
   const total = data.reduce((s, d) => s + d.count, 0);
   const [activeIndex, setPaused, focusIndex, blurIndex, highlighting] = useAutoCycleIndex(chartType === "donut" ? data.length : 0);
   const targetFills = useMemo(() => data.map((d, i) => (!highlighting || i === activeIndex ? d.color : C.donutDim)), [data, highlighting, activeIndex, C.donutDim]);
@@ -558,8 +567,34 @@ function StorylineEntry({ entry, isLast }) {
  *
  * pushToast: App.jsx의 토스트 시스템(선택) — 없으면 조용히 동작.
  */
-export default function IncidentsView({ pushToast, pendingIncident }) {
-  const { incidents, status, error, reload } = useIncidents({ limit: 500 });
+export default function IncidentsView({ pushToast, pendingIncident, focusEvent, onFocusConsumed, reloadIncidentStats }) {
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const {
+    incidents,
+    status,
+    error,
+    hasMore,
+    loadingMore,
+    loadMore,
+    reload,
+    mergeChanges,
+    ensureIncident,
+    syncWatermark,
+  } = useIncidents({ statusFilter });
+  const incidentsRef = useRef(incidents);
+  incidentsRef.current = incidents;
+  // KPI 행("Open"/"Investigating"/"Resolved"/"Total")과 "심각도 분포"/"상태별
+  // 분포" 도넛은 전체 incidents 배열이 아니라 이 서버 집계를 쓴다(2026-07-24,
+  // 위 useIncidents가 몇 초씩 걸리는 것과 별개로 개수 세 위젯만이라도 빠르게
+  // 뜨게 하기 위함 - useIncidentCounts.js 참고).
+  const counts = useIncidentCounts();
+  // 차트는 첫 화면의 카드 렌더링과 분리해 다음 프레임에 마운트한다. 무거운
+  // Recharts 초기화가 인시던트 목록의 최초 표시를 막지 않도록 한 기존 UX다.
+  const [showCharts, setShowCharts] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => requestAnimationFrame(() => setShowCharts(true)));
+    return () => cancelAnimationFrame(frame);
+  }, []);
   const { scenarios } = useScenarios();
   // status/error는 이제 안 씀 - 목록 UI(BannedIpsTable)가 Admin으로 옮겨갔고
   // 여기서는 "이미 차단됐는지" 판단(alreadyBanned)에만 bannedIps를 쓴다.
@@ -568,8 +603,9 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   // 24h 위주 range와 다름 - 원래 mock의 "최근 7일" 문구를 그대로 이어받음).
   const { items: topIps } = useTopIps({ lookbackMs: 7 * 24 * 60 * 60 * 1000, limit: 1 });
 
-  const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedId, setSelectedId] = useState(null);
+  const [directIncident, setDirectIncident] = useState(null);
+  const [loadingDirectId, setLoadingDirectId] = useState(null);
   // 2026-07-17: "유사 항목 묶어보기" - 같은 상관 규칙 + 같은 상관 키(또는 비슷한
   // 대역의 IP)인 인시던트를 리스트에서 그룹 하나로 접어 보여준다. ipTolerance는
   // ipPrefixKey의 prefixBits와 같은 값(32=정확히 일치, 24=같은 /24 대역(기본,
@@ -584,6 +620,51 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   const [resolutionCategories, setResolutionCategories] = useState({});
   const [resolving, setResolving] = useState(false);
 
+  // 무한 스크롤 - AttackMatrixView.jsx의 pump() 체인과 같은 패턴. 카드 목록
+  // 스크롤 박스(아래 scrollBoxRef)가 IntersectionObserver의 root, 그 안 맨
+  // 아래 sentinel이 바닥에 걸리면 loadMore()를 부른다. 스크롤바를 드래그해서
+  // 단번에 바닥까지 내리면 관찰 콜백이 한 번만 불려도 여러 페이지를 연달아
+  // 이어받아야 해서, loadMore()가 돌려주는 hasMore로 재귀 체이닝한다.
+  const scrollBoxRef = useRef(null);
+  const bottomSentinelRef = useRef(null);
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  const isIntersectingRef = useRef(false);
+
+  useEffect(() => {
+    const root = scrollBoxRef.current;
+    const target = bottomSentinelRef.current;
+    if (!root || !target || typeof IntersectionObserver === "undefined") return;
+
+    function pump() {
+      if (!isIntersectingRef.current) return;
+      loadMoreRef.current().then((more) => more && pump());
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isIntersectingRef.current = entry.isIntersecting;
+        if (entry.isIntersecting) pump();
+      },
+      { root, rootMargin: "200px 0px" }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, []);
+
+  // 아직 안 불러온 나머지 행만큼 빈 공간을 미리 잡아둬서, 페이지를 이어받을
+  // 때마다 스크롤바 thumb 크기/위치가 툭툭 튀지 않게 한다(AttackMatrixView.jsx와
+  // 같은 기법) - counts.total(서버 집계, useIncidentCounts)이 "전체 몇 건인지"의
+  // 기준이고, 평균 행 높이는 실제 렌더링된 카드들에서 측정한다.
+  const rowsWrapperRef = useRef(null);
+  const [avgRowHeight, setAvgRowHeight] = useState(48);
+  useLayoutEffect(() => {
+    if (!rowsWrapperRef.current || incidents.length === 0) return;
+    const measured = rowsWrapperRef.current.scrollHeight / incidents.length;
+    if (measured > 0 && Math.abs(measured - avgRowHeight) > 1) setAvgRowHeight(measured);
+  }, [incidents.length]);
+  const estimatedRemaining = Math.max(0, (counts.total || incidents.length) - incidents.length);
+
   function toggleGroupExpanded(key) {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
@@ -593,11 +674,68 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
     });
   }
 
-  useIncidentsSocket(reload);
+  // 5초 폴링에서는 카드 목록(reload)은 더 이상 건드리지 않는다 - 개수/도넛은
+  // 실시간으로 갱신돼야 하지만, 스크롤로 페이지를 계속 이어 받는 카드 목록을
+  // 5초마다 통째로 다시 받아오면 그 사이 스크롤로 불러온 페이지와 경쟁해서
+  // (useIncidents.js epoch 가드로 데이터 꼬임 자체는 막았지만) 사용자가 한창
+  // 보고 있는 목록이 계속 리셋되는 건 막지 못한다 - 아예 안 건드리는 게 가장
+  // 안전하고, 상태 변경 등 사용자가 직접 조치를 취했을 때는 각 핸들러가 이미
+  // reload()를 따로 부른다(2026-07-24, "스크롤 내려도 안 불러와지고 위로
+  // 올리면 카드가 사라지고 화면이 멈춘다" 피드백).
+  useIncidentsSocket(syncWatermark, (changes) => {
+    mergeChanges(changes);
+    setDirectIncident((current) => changes.find((item) => item.id === current?.id) || current);
+    counts.reload();
+    reloadIncidentStats?.().catch(() => {});
+  });
 
   useEffect(() => {
-    if (!selectedId && incidents.length) setSelectedId(incidents[0].id);
-  }, [incidents, selectedId]);
+    const first = newestIncident(incidents);
+    const selectedIsAvailable =
+      incidents.some((item) => item.id === selectedId) ||
+      directIncident?.id === selectedId ||
+      loadingDirectId === selectedId;
+    if (!selectedId || !selectedIsAvailable) setSelectedId(first?.id || null);
+  }, [incidents, selectedId, directIncident, loadingDirectId]);
+
+  // 라이브 이벤트는 상관 엔진이 인시던트를 만들기 전에 도착할 수 있다. 같은
+  // correlation key 후보의 실제 event 소속을 확인하고, 잠깐 재시도한 뒤에도
+  // 없으면 일반 최신 항목으로 폴백한다. selectedId가 이미 있어도 새 이벤트는
+  // 반드시 처리해야 하므로 focusEvent 자체를 기준으로 실행한다.
+  useEffect(() => {
+    if (!focusEvent?.id) return undefined;
+    let cancelled = false;
+    let settled = false;
+    const deadline = Date.now() + 2000;
+    const finish = (id) => {
+      if (settled || cancelled) return;
+      settled = true;
+      if (id) setSelectedId(id);
+      onFocusConsumed?.(focusEvent.id);
+    };
+    const attempt = async () => {
+      const candidates = incidents.filter((item) => item.correlation_key_value === focusEvent.sourceIp);
+      for (const candidate of candidates) {
+        const events = await apiGet(`/incidents/${encodeURIComponent(candidate.id)}/events`);
+        if (events.some((event) => event.event_id === focusEvent.id)) return finish(candidate.id);
+      }
+      if (Date.now() >= deadline) return finish(newestIncident(incidents)?.id);
+    };
+    attempt().catch(() => {
+      if (Date.now() >= deadline) finish(newestIncident(incidentsRef.current)?.id);
+    });
+    // 재조회 결과가 incidents를 갱신하면 이 효과가 즉시 다시 후보를 검사한다.
+    // attempt 안에서 reload까지 호출하면 그 갱신이 다시 reload를 부르는 렌더
+    // 루프가 되므로, 0.5초 타이머만 재조회를 소유한다.
+    const timer = setInterval(() => {
+      attempt().catch(() => {});
+      reload();
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [focusEvent, incidents, onFocusConsumed, reload]);
 
   // ATT&CK 매트릭스의 "조치하러 가기" 버튼으로 들어온 경우 - App.jsx가
   // pendingIncident.nonce를 매번 새 값으로 넘겨주므로(같은 인시던트를 다시
@@ -607,8 +745,37 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   // /events/{event_id}/incident로 이미 정확한 incident_id를 들고 오므로, 여기서
   // 별도로 이벤트→인시던트 매칭을 할 필요가 없어졌다.
   useEffect(() => {
-    if (pendingIncident?.id) setSelectedId(pendingIncident.id);
-  }, [pendingIncident]);
+    if (!pendingIncident?.id) return undefined;
+    const incidentId = pendingIncident.id;
+    const existing = incidentsRef.current.find((item) => item.id === incidentId);
+    setSelectedId(incidentId);
+    if (existing) {
+      setDirectIncident(null);
+      setLoadingDirectId(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoadingDirectId(incidentId);
+    ensureIncident(incidentId)
+      .then((item) => {
+        if (!cancelled) setDirectIncident(item);
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          toast(
+            requestError instanceof ApiError ? requestError.message : "인시던트 상세를 불러오지 못했습니다.",
+            "error"
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingDirectId((current) => (current === incidentId ? null : current));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingIncident?.id, pendingIncident?.nonce]);
 
   // 다른 인시던트로 전환하면 이전에 펼쳐둔 조치 유형 선택 UI가 그대로 남아있지
   // 않도록 초기화.
@@ -630,16 +797,32 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   // 심각도가 뒤섞여 훑어보기 어렵다는 피드백 - CRITICAL/HIGH/MEDIUM/LOW
   // 섹션으로 나눠서 보여준다. 각 섹션 안에서는 기존 정렬(최신순, incidents가
   // updated_at DESC로 옴)을 그대로 유지.
+  //
+  // group.items는 "지금까지 스크롤로 불러온 것 중 이 심각도인 카드들"이라
+  // 무한 스크롤 도입(2026-07-24) 이후로는 전체 건수와 다르다(예: 5796건 중
+  // 100건만 로드된 시점엔 CRITICAL이 실제 2158건이어도 그중 39건만 보여서
+  // 섹션 헤더에 "CRITICAL · 39"처럼 실제보다 훨씬 작게 찍혔다 - 사용자 피드백으로
+  // 확인). 헤더에 보여줄 개수는 서버 집계(counts.severityCountsFor, GET
+  // /incidents/stats의 status x severity 조합 카운트)에서 현재 상태 필터
+  // 기준 진짜 총량을 따로 가져온다 - 카드 자체(group.items)는 여전히 로드된
+  // 만큼만 렌더링(무한 스크롤 그대로 유지).
+  const severityTotals = counts.severityCountsFor(statusFilter);
   const severityGroups = useMemo(() => {
     if (groupSimilar) return null;
     const buckets = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
     filteredIncidents.forEach((inc) => {
       buckets[severityBadgeKey(inc.severity)].push(inc);
     });
-    return SEVERITY_BADGE_ORDER.map((key) => ({ key, items: buckets[key] })).filter((g) => g.items.length > 0);
-  }, [groupSimilar, filteredIncidents]);
+    return SEVERITY_BADGE_ORDER.map((key) => ({
+      key,
+      items: buckets[key],
+      total: severityTotals[BADGE_KEY_TO_SEVERITY[key]] ?? buckets[key].length,
+    })).filter((g) => g.total > 0);
+  }, [groupSimilar, filteredIncidents, severityTotals]);
 
-  const selected = incidents.find((i) => i.id === selectedId) || null;
+  const selected =
+    incidents.find((i) => i.id === selectedId) ||
+    (directIncident?.id === selectedId ? directIncident : null);
   const { timeline, status: timelineStatus } = useIncidentTimeline(selected?.id);
 
   const topScenario = useMemo(() => scenarios.find((s) => s.hit_count > 0), [scenarios]);
@@ -659,9 +842,12 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
   async function handleAdvanceStatus(nextStatus) {
     if (!selected) return;
     try {
-      await apiPatch(`/incidents/${selected.id}/status`, { status: nextStatus });
+      const updated = await apiPatch(`/incidents/${selected.id}/status`, { status: nextStatus });
+      mergeChanges([updated]);
+      setDirectIncident((current) => (current?.id === updated.id ? updated : current));
       toast(`인시던트 상태를 ${STATUS_LABEL[nextStatus]}(으)로 변경했습니다.`, "success");
       reload();
+      reloadIncidentStats?.().catch(() => {});
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "상태 변경에 실패했습니다.", "error");
     }
@@ -688,11 +874,14 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
       if (categoryKey === "ip_ban" && isIpKeyType(selected.correlation_key_type) && !alreadyBanned) {
         await handleBanSourceIp();
       }
-      await apiPatch(`/incidents/${selected.id}/status`, { status: "closed" });
+      const updated = await apiPatch(`/incidents/${selected.id}/status`, { status: "closed" });
+      mergeChanges([updated]);
+      setDirectIncident((current) => (current?.id === updated.id ? updated : current));
       setResolutionCategories((prev) => ({ ...prev, [selected.id]: categoryKey }));
       toast(`${RESOLUTION_CATEGORY_LABEL[categoryKey]} 조치 후 인시던트를 종결했습니다.`, "success");
       setShowCategoryPicker(false);
       reload();
+      reloadIncidentStats?.().catch(() => {});
     } catch (e) {
       toast(e instanceof ApiError ? e.message : "조치 처리에 실패했습니다.", "error");
     } finally {
@@ -745,16 +934,22 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
 
       {status === "error" && <p className="text-dash-critical text-xs">{error}</p>}
 
-      <IncidentKpiRow incidents={incidents} statusFilter={statusFilter} onFilterChange={setStatusFilter} />
+      <IncidentKpiRow counts={counts} statusFilter={statusFilter} onFilterChange={setStatusFilter} />
 
       <TopSignalsCard topScenario={topScenario} topIp={topIps[0]} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <SeverityDonut incidents={incidents} />
-        <StatusDonut incidents={incidents} />
-      </div>
+      {showCharts ? (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <SeverityDonut bySeverity={counts.bySeverity} />
+            <StatusDonut byStatus={counts.byStatus} />
+          </div>
 
-      <TopAttackTypesBarChart scenarios={scenarios} />
+          <TopAttackTypesBarChart scenarios={scenarios} />
+        </>
+      ) : (
+        <div className="h-[360px] bg-dash-surface rounded-2xl animate-pulse" aria-label="차트 불러오는 중" />
+      )}
 
       {/* 좌측 폭을 320px -> 240px로 줄였다(2026-07-16) - 카드 내용을 핵심만
           남기고 나니 320px는 과하게 넓었고, 그만큼 우측 상세 패널이 좁았다.
@@ -795,40 +990,64 @@ export default function IncidentsView({ pushToast, pendingIncident }) {
             )}
           </div>
 
-          <div className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
+          <div ref={scrollBoxRef} className="space-y-2 max-h-[640px] overflow-y-auto pr-2">
             {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
             {status === "ready" && filteredIncidents.length === 0 && (
               <p className="text-dash-muted text-xs">조건에 맞는 인시던트가 없습니다.</p>
             )}
-            {!groupSimilar &&
-              severityGroups.map((group) => (
-                <div key={group.key}>
-                  <p className="text-dash-faint text-[10px] uppercase tracking-wide px-1 pt-2 pb-1 first:pt-0">
-                    {SEVERITY_META[group.key].label} · {group.items.length}
-                  </p>
-                  <div className="space-y-2">
-                    {group.items.map((inc) => (
-                      <IncidentCard
-                        key={inc.id}
-                        incident={inc}
-                        active={inc.id === selectedId}
-                        onClick={() => setSelectedId(inc.id)}
-                      />
-                    ))}
+            <div ref={rowsWrapperRef} className="space-y-2">
+              {!groupSimilar &&
+                severityGroups.map((group) => (
+                  <div key={group.key}>
+                    <p className="text-dash-faint text-[10px] uppercase tracking-wide px-1 pt-2 pb-1 first:pt-0">
+                      {SEVERITY_META[group.key].label} · {group.total}
+                    </p>
+                    <div className="space-y-2">
+                      {group.items.map((inc) => (
+                        <IncidentCard
+                          key={inc.id}
+                          incident={inc}
+                          active={inc.id === selectedId}
+                          onClick={() => setSelectedId(inc.id)}
+                        />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            {groupSimilar &&
-              incidentGroups.map((group) => (
-                <GroupedIncidentCard
-                  key={group.key}
-                  group={group}
-                  expanded={expandedGroups.has(group.key)}
-                  onToggleExpand={() => toggleGroupExpanded(group.key)}
-                  selectedId={selectedId}
-                  onSelectIncident={setSelectedId}
-                />
-              ))}
+                ))}
+              {groupSimilar &&
+                incidentGroups.map((group) => (
+                  <GroupedIncidentCard
+                    key={group.key}
+                    group={group}
+                    expanded={expandedGroups.has(group.key)}
+                    onToggleExpand={() => toggleGroupExpanded(group.key)}
+                    selectedId={selectedId}
+                    onSelectIncident={setSelectedId}
+                  />
+                ))}
+            </div>
+            {/* 스크롤 바닥 도달 감지용 sentinel - 높이 자체를 "아직 안 불러온
+                나머지 행 분량"으로 잡아서(스페이서를 별도 엘리먼트로 앞에
+                두지 않음) sentinel의 윗변이 실제로 불러온 행 바로 아래에 오게
+                한다. 스페이서를 sentinel과 분리해서 앞에 두면(첫 구현의 버그,
+                2026-07-24 "밑으로 내려도 안 불려와짐" 피드백) sentinel이 그
+                거대한 빈 공간 맨 아래로 밀려나서 실제로 그 끝까지 스크롤해야만
+                옵저버가 반응한다 - AttackMatrixView.jsx와 같은 방식으로
+                sentinel 자체를 그 공간만큼 늘려서, 로드된 행 바로 아래에
+                닿는 즉시(rootMargin 200px 여유까지 더해) 반응하게 한다.
+                statusFilter로 좁혀 보고 있을 때(filteredIncidents.length <
+                incidents.length)는 남은 분량을 정확히 추정할 수 없어 높이를
+                최소값(1px)으로 둔다. */}
+            <div
+              ref={bottomSentinelRef}
+              style={{
+                height:
+                  hasMore && statusFilter === "ALL" && !groupSimilar
+                    ? Math.max(1, Math.round(estimatedRemaining * avgRowHeight))
+                    : 1,
+              }}
+            />
+            {loadingMore && <p className="text-dash-muted text-[11px] text-center py-1">더 불러오는 중...</p>}
           </div>
         </div>
 

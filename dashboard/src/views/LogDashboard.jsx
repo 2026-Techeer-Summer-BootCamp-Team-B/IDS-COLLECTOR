@@ -6,7 +6,6 @@ import {
   BarChart,
   Bar,
   LineChart,
-  Line,
   ComposedChart,
   XAxis,
   YAxis,
@@ -375,7 +374,12 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
 
   const defaults = useMemo(
     () => ({
-      total: donutPalette(theme)[3],
+      // DONUT_PALETTE[0]("#C05B4D") - 이 파일의 LogVolumeChart(module 지정
+      // 버전)가 이미 errorColor로 쓰는 것과 같은 연한 빨강(테라코타) 톤. "전체"가
+      // 스틸블루(옛 [3])라 WAS/WAF/Falco/K8s Audit 사이에서 눈에 안 띈다는
+      // 피드백(2026-07-24)으로 톤을 바꿨다 - 새 hex를 만들지 않고 이미 테마별
+      // 라이트/다크 변형이 있는 팔레트 토큰을 재사용.
+      total: donutPalette(theme)[0],
       was: getModuleMeta("was").color,
       waf: getModuleMeta("waf").color,
       falco: getModuleMeta("falco").color,
@@ -423,12 +427,14 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
   const spike = useMemo(() => detectSpike(data.map((d) => d.total)), [data]);
   const spikePoint = spike ? data[spike.index] : null;
 
-  // was/waf/falco/k8s_audit 4개는 Infrastructure의 "모듈별 로그량 추이"와 같은
-  // 방식으로 그라디언트 채움 + 적층(stackId)해서 보여준다. total은 그 4개의
-  // 합이라 같이 쌓으면 높이가 두 배로 왜곡되므로 스택엔 안 넣고, 위에 얇은
-  // 오버레이 선(Line)으로만 그려서 급증 배지/기준선 역할을 유지한다
-  // (2026-07-16: Infrastructure 쪽 디자인이 더 낫다는 피드백으로 LineChart 5선
-  // → ComposedChart[stacked Area 4 + overlay Line 1]로 교체).
+  // was/waf/falco/k8s_audit 4개는 그라디언트 채움 Area로 각자 독립된(적층X)
+  // 자기 값만 그린다 - 2026-07-16엔 Infrastructure의 "모듈별 로그량 추이"처럼
+  // stackId로 누적시켰었는데, 그러면 예를 들어 WAS 영역의 윗변이 WAS+WAF+
+  // Falco+K8s Audit 누적값이 돼서 "각 모듈이 자기 로그가 아니라 서로 합쳐진
+  // 걸 보여준다"는 오해를 준다(2026-07-24 피드백) - 4개를 겹쳐 그리되 각자
+  // 0부터 시작하는 자기 값만 표시하도록 stackId를 뺐다. total은 그 4개의
+  // 합이라(적층 여부와 무관하게) 위에 얇은 오버레이 선(Line)으로만 그려서
+  // 급증 배지/기준선 역할을 유지한다.
   const stackSeries = [
     { key: "was", label: "WAS" },
     { key: "waf", label: "WAF" },
@@ -476,7 +482,7 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data}>
               <defs>
-                {stackSeries.map((s) => (
+                {series.map((s) => (
                   <linearGradient key={s.key} id={`logVolumeFill-${s.key}`} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={colors[s.key]} stopOpacity={0.55} />
                     <stop offset="100%" stopColor={colors[s.key]} stopOpacity={0.05} />
@@ -493,20 +499,23 @@ function LogVolumeBreakdownBody({ rangeKey, kpiFilter = "ALL", isControlled = fa
                   type="monotone"
                   dataKey={s.key}
                   name={s.label}
-                  stackId="module"
                   stroke={colors[s.key]}
                   fill={`url(#logVolumeFill-${s.key})`}
                   strokeWidth={1.5}
                 />
               ))}
-              <Line
+              {/* "전체"도 WAS/WAF/Falco/K8s Audit 4개와 같은 톤(그라디언트 채움
+                  Area)으로 통일 - 예전엔 이 4개 위에 얇은 점선(Line, 채움 없음)
+                  오버레이로만 그려서 "전체"만 색칠이 안 된 게 도드라져 보였다
+                  (2026-07-24 피드백). strokeWidth만 2.5로 나머지보다 굵게 둬서
+                  급증 배지/기준선 역할로 여전히 구분되게 한다. */}
+              <Area
                 type="monotone"
                 dataKey="total"
                 name="전체"
                 stroke={colors.total}
+                fill="url(#logVolumeFill-total)"
                 strokeWidth={2.5}
-                strokeDasharray="4 3"
-                dot={false}
                 isAnimationActive={false}
               />
               {spikePoint && (
@@ -702,12 +711,18 @@ export function LogVolumeChart({ rangeKey, module, kpiFilter = "ALL", chartType:
   );
 }
 
-// 모듈별(WAS/WAF/Falco/K8s Audit) 로그량 추이 적층 그래프 - Log Volume 차트는
-// 합산한 총량만 보여줘서 "지금 어느 소스가 볼륨을 주도하는지"가 안 보이던 문제.
+// 모듈별(WAS/WAF/Falco/K8s Audit) 로그량 추이 - Log Volume 차트는 합산한
+// 총량만 보여줘서 "지금 어느 소스가 볼륨을 주도하는지"가 안 보이던 문제.
 // /stats/volume을 module별로 호출하면 서버가 같은 date_histogram 경계를 쓰므로
 // 버킷 인덱스가 그대로 정렬돼 안전하게 합칠 수 있다. WAF는 2026-07-16 추가 -
 // WAF 백엔드가 실제로 트래픽을 받기 시작하면서 이 차트에서만 빠져있던 게
 // 눈에 띄어서 나머지 3개 모듈과 나란히 넣었다.
+//
+// 2026-07-16엔 4개를 stackId로 적층해서 그렸는데, 그러면 예를 들어 WAS
+// 영역의 윗변이 WAS+WAF+Falco+K8s Audit 누적값이라 "각 모듈이 자기 로그가
+// 아니라 서로 합쳐진 걸 보여준다"는 오해를 준다(LogVolumeBreakdownBody와
+// 같은 문제, 2026-07-24 피드백) - stackId를 빼서 4개가 각자 0부터 시작하는
+// 자기 값만 겹쳐 그리도록 수정.
 export function ModuleVolumeStackedChart({ fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
@@ -753,7 +768,7 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
     <Card
       title="모듈별 로그량 추이"
       icon={Layers}
-      subtitle={`Last ${preset.label} · WAS / WAF / Falco / K8s Audit 적층`}
+      subtitle={`Last ${preset.label} · WAS / WAF / Falco / K8s Audit 모듈별 구분`}
       action={<TimeRangePicker value={rangeKey} onChange={setRangeKey} />}
       className={fillHeight ? "min-h-80 h-full flex flex-col" : "h-80 flex flex-col"}
     >
@@ -796,7 +811,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="was"
                 name={metaWas.label}
-                stackId="module"
                 stroke={metaWas.color}
                 fill="url(#moduleWasFill)"
                 strokeWidth={1.5}
@@ -805,7 +819,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="waf"
                 name={metaWaf.label}
-                stackId="module"
                 stroke={metaWaf.color}
                 fill="url(#moduleWafFill)"
                 strokeWidth={1.5}
@@ -814,7 +827,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="falco"
                 name={metaFalco.label}
-                stackId="module"
                 stroke={metaFalco.color}
                 fill="url(#moduleFalcoFill)"
                 strokeWidth={1.5}
@@ -823,7 +835,6 @@ export function ModuleVolumeStackedChart({ fillHeight = false }) {
                 type="monotone"
                 dataKey="k8s_audit"
                 name={metaK8s.label}
-                stackId="module"
                 stroke={metaK8s.color}
                 fill="url(#moduleK8sFill)"
                 strokeWidth={1.5}
@@ -1074,7 +1085,7 @@ export function LevelDistributionChart({ events }) {
 // GET /stats/top-ips 연동 이후로 "소스"는 서비스 이름이 아니라 공격 발원지
 // IP다. status/error가 오면(useTopIps) 로딩/에러 문구를 보여주고, 안 넘어오면
 // (다른 호출부가 여전히 즉시 계산된 배열을 넘기는 경우) 예전처럼 바로 렌더.
-export function TopSources({ sources, limit = 5, highlighted = false, status = "ready", error = null }) {
+export function TopSources({ sources, limit = 5, highlighted = false, status = "ready", error = null, fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const max = sources[0]?.count || 1;
@@ -1082,15 +1093,22 @@ export function TopSources({ sources, limit = 5, highlighted = false, status = "
   // 내부 스크롤로만 보이게 한다. 이 카드는 오른쪽 컬럼(TopSources 위 +
   // ErrorRateGauge 아래)의 flex-col 안에서 자기 내용 높이만 차지하고, 남는
   // 세로 공간은 아래 ErrorRateGauge가 flex-1로 흡수해서 왼쪽 Recent Logs
-  // 높이와 맞춘다(아래 grid 행의 stretch + flex-col 구조 참고).
+  // 높이와 맞춘다(아래 grid 행의 stretch + flex-col 구조 참고) - 기본 모드
+  // 한정 이야기다.
+  // 2026-07-23: 커스텀 대시보드에서는 이 위젯 혼자 그리드 셀에 놓이므로 위
+  // 전제(아래 ErrorRateGauge가 남는 공간을 흡수)가 성립하지 않는다 - h-48
+  // 고정 목록 + 높이 미지정 Card라 그리드 셀(top-sources h:11 -> 실측 380px)
+  // 이 목록보다 크면 그 차이가 그대로 빈 여백으로 남았다. fillHeight일 때는
+  // Card를 h-full flex-col로, 목록을 h-48 대신 flex-1 min-h-0으로 바꿔서
+  // 셀 전체를 채우게 한다(줄 수가 넘치면 여전히 내부 스크롤).
   return (
     <Card
       title="Top Source IPs"
       icon={Crosshair}
       subtitle={highlighted ? `전체 ${sources.length}개 IP · 5개 이후 스크롤` : "선택 구간 기준"}
-      className={highlighted ? "glow-box-mint" : ""}
+      className={`${highlighted ? "glow-box-mint" : ""} ${fillHeight ? "h-full flex flex-col" : ""}`.trim()}
     >
-      <div className="space-y-3 h-48 min-h-0 overflow-y-auto pr-1">
+      <div className={fillHeight ? "space-y-3 flex-1 min-h-0 overflow-y-auto pr-1" : "space-y-3 h-48 min-h-0 overflow-y-auto pr-1"}>
         {status === "loading" && <p className="text-dash-muted text-xs">불러오는 중...</p>}
         {status === "error" && (
           <p className="text-dash-critical text-xs">{error || "데이터를 불러오지 못했습니다."}</p>
@@ -1631,7 +1649,7 @@ const ACTIVITY_DIAGRAM_HEIGHT =
 // "이 로그가 어느 계층 로그인지"만 확실한 사실 기준으로 묶는다 - event.module
 // 4종 고정 분류라 왜곡 없이 보여줄 수 있다. useLiveAttackFeed(LiveTicker와 같은
 // 폴링, /events/recent 기반)를 재사용.
-export function LiveActivityTree() {
+export function LiveActivityTree({ fillHeight = false }) {
   const { theme } = useTheme();
   const C = CHART_COLORS[theme];
   const { feed } = useLiveAttackFeed({ feedLimit: 80 });
@@ -1682,12 +1700,20 @@ export function LiveActivityTree() {
     }
   }, [layers]);
 
+  // 2026-07-23: ActivityLayerDiagram은 ACTIVITY_DIAGRAM_HEIGHT(고정 320px)
+  // SVG라 늘어나지 않는다 - Card에 높이 관련 className이 없어서 커스텀
+  // 대시보드 그리드 셀(activity-flow h:22 -> 실측 776px)이 이 고정 콘텐츠보다
+  // 훨씬 크면 그 차이가 그대로 아래쪽 빈 여백으로 남았다. fillHeight일 때는
+  // Card를 h-full flex-col로 채우고, 다이어그램 wrapper를 flex-1로 줘서 남는
+  // 세로 공간 안에서 고정 크기 SVG가 가운데 정렬되게 한다(ErrorRateGauge와
+  // 같은 방식 - 크기를 늘리는 대신 여백을 고르게 분산).
   return (
     <Card
       title="실시간 탐지"
       subtitle="WAF → WAS → K8s Audit → Falco, 건물 비유의 4단계 지하 구조 — 최근 1분 이내 로그만 점으로 표시"
+      className={fillHeight ? "h-full flex flex-col" : ""}
     >
-      <div className="overflow-x-auto">
+      <div className={fillHeight ? "flex-1 min-h-0 flex items-center overflow-x-auto" : "overflow-x-auto"}>
         <ActivityLayerDiagram layers={layers} C={C} />
       </div>
     </Card>
@@ -1834,7 +1860,7 @@ function DetectionSourceDonutCompact({ lookbackMs, kpiFilter = "ALL", chartType:
       icon={Layers}
       subtitle={
         status === "ready"
-          ? `WAS / Falco / K8s Audit · 총 ${total}건${kpiFilter !== "ALL" ? ` · ${{ ERROR: "Errors", WARNING: "Warnings" }[kpiFilter] || kpiFilter} 필터` : ""}`
+          ? `WAS / WAF / Falco / K8s Audit · 총 ${total}건${kpiFilter !== "ALL" ? ` · ${{ ERROR: "Errors", WARNING: "Warnings" }[kpiFilter] || kpiFilter} 필터` : ""}`
           : "불러오는 중..."
       }
       action={
@@ -2418,7 +2444,7 @@ function LatencyStatValue({ value, tone }) {
   return <p className={`text-sm font-semibold ${tone}`}>{display}ms</p>;
 }
 
-export function LatencyStatsPanel({ events }) {
+export function LatencyStatsPanel({ events, fillHeight = false }) {
   const stats = useMemo(() => latencyStatsFor(events), [events]);
 
   const rows = stats
@@ -2431,10 +2457,21 @@ export function LatencyStatsPanel({ events }) {
       ]
     : [];
 
+  // 2026-07-23: 이 위젯도 Log Volume/Error Rate/GeoIP와 같은 문제 - Card에
+  // 높이 관련 className이 아예 없어서 커스텀 대시보드 그리드 셀(latency-stats
+  // h:6 -> 실측 200px)이 이 카드의 자연 높이보다 크면 그 차이만큼 빈 여백이
+  // 그대로 남았다. fillHeight일 때 h-full flex-col로 셀을 채우고, 5칸 그리드는
+  // flex-1로 감싸서 남는 세로 공간에서 가운데 정렬되게 한다(ErrorRateGauge와
+  // 같은 방식).
   return (
-    <Card title="API Latency" icon={Gauge} subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}>
+    <Card
+      title="API Latency"
+      icon={Gauge}
+      subtitle={stats ? "요청이 처리되기까지 걸린 시간이에요 (숫자가 작을수록 빠른 거예요)" : "데이터 없음"}
+      className={fillHeight ? "h-full flex flex-col" : ""}
+    >
       {stats ? (
-        <div className="grid grid-cols-5 gap-2">
+        <div className={fillHeight ? "flex-1 min-h-0 grid grid-cols-5 gap-2 content-center" : "grid grid-cols-5 gap-2"}>
           {rows.map((r) => (
             <div key={r.label} className="bg-dash-bg rounded-xl p-3 text-center">
               <p className="text-dash-muted text-[10px] uppercase tracking-wide mb-1">{r.label}</p>
@@ -3496,7 +3533,7 @@ export function DashboardContent() {
           />
         );
       case "latency-stats":
-        return <LatencyStatsPanel events={wasEventsForLatency} />;
+        return <LatencyStatsPanel events={wasEventsForLatency} fillHeight />;
       case "module-volume":
         return <ModuleVolumeStackedChart fillHeight />;
       case "recent-logs":
@@ -3511,6 +3548,7 @@ export function DashboardContent() {
             error={topIpsError}
             limit={kpiFilter === "SOURCES" ? 10 : 5}
             highlighted={kpiFilter === "SOURCES"}
+            fillHeight
           />
         );
       case "error-rate":
@@ -3518,7 +3556,7 @@ export function DashboardContent() {
       case "geo-summary":
         return <GeoSummaryCard fillHeight />;
       case "activity-flow":
-        return <LiveActivityTree />;
+        return <LiveActivityTree fillHeight />;
       default:
         return null;
     }

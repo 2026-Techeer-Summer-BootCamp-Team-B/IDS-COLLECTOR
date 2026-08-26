@@ -4,7 +4,7 @@
 // 정리할 예정 (프로젝트에 원래 테스트 스위트가 없었음).
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, cleanup } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import IncidentsView from "./IncidentsView";
 import { ThemeProvider } from "../hooks/useTheme";
@@ -29,6 +29,9 @@ vi.mock("../lib/authApi", () => {
   return {
     apiGet: vi.fn(),
     apiGetAllPages: vi.fn(),
+    apiGetPaged: vi.fn(),
+    fetchIncidentSummary: vi.fn(),
+    fetchIncidentChanges: vi.fn().mockResolvedValue({ data: [], nextCursor: null, nextSince: "2026-07-16T07:00:00Z" }),
     apiPost: vi.fn().mockResolvedValue({}),
     apiPatch: vi.fn().mockResolvedValue({}),
     apiDelete: vi.fn().mockResolvedValue({}),
@@ -36,7 +39,13 @@ vi.mock("../lib/authApi", () => {
   };
 });
 
-import { apiGet, apiGetAllPages } from "../lib/authApi";
+import {
+  apiGet,
+  apiGetAllPages,
+  apiGetPaged,
+  fetchIncidentChanges,
+  fetchIncidentSummary,
+} from "../lib/authApi";
 
 function incident(overrides) {
   return {
@@ -59,15 +68,16 @@ function incident(overrides) {
 // 확인하므로, 후보 인시던트의 correlation_key만 맞추는 걸로는 안 되고 이 맵에도
 // 그 event_id를 넣어줘야 매칭된다(2026-07-16, correlation_key만으론 여러 인시던트가
 // 같은 값(user.name="system:admin" 등)을 공유해서 부정확했던 걸 고친 부분).
-function mockApiGet(incidentsProvider, eventsByIncidentId = {}) {
-  apiGetAllPages.mockImplementation((path) => {
-    if (path === "/incidents") return Promise.resolve(incidentsProvider());
-    return Promise.resolve([]);
-  });
+function mockApiGet(incidentsProvider, eventsByIncidentId = {}, incidentsById = {}) {
+  apiGetAllPages.mockImplementation((path) => path === "/incidents" ? Promise.resolve(incidentsProvider()) : Promise.resolve([]));
+  apiGetPaged.mockImplementation((path) => path.startsWith("/incidents?") ? Promise.resolve({ data: incidentsProvider(), nextCursor: null }) : Promise.resolve({ data: [], nextCursor: null }));
+  fetchIncidentSummary.mockResolvedValue({ total: incidentsProvider().length, by_status: { open: incidentsProvider().filter((item) => item.status === "open").length }, by_severity: {} });
   apiGet.mockImplementation((url) => {
     const eventsMatch = url.match(/^\/incidents\/([^/]+)\/events$/);
     if (eventsMatch) return Promise.resolve(eventsByIncidentId[eventsMatch[1]] || []);
     if (/^\/incidents\/[^/]+\/timeline$/.test(url)) return Promise.resolve([]);
+    const incidentMatch = url.match(/^\/incidents\/([^/]+)$/);
+    if (incidentMatch) return Promise.resolve(incidentsById[incidentMatch[1]]);
     if (url === "/scenarios") return Promise.resolve([]);
     if (url === "/banned-ips") return Promise.resolve([]);
     if (url.startsWith("/stats/top-ips")) return Promise.resolve([]);
@@ -78,7 +88,7 @@ function mockApiGet(incidentsProvider, eventsByIncidentId = {}) {
 function detailHeadingText() {
   // 상세 패널의 h2(선택된 인시던트 제목) - 목록 카드에도 title이 나오므로
   // heading 역할로 좁혀서 "지금 선택된 게 뭔지"를 명확히 잡는다.
-  return screen.getByRole("heading", { level: 2 }).textContent;
+  return screen.getAllByRole("heading", { level: 2 }).at(-1).textContent;
 }
 
 beforeEach(() => {
@@ -86,11 +96,60 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.useRealTimers();
   vi.clearAllMocks();
 });
 
 describe("IncidentsView focusEvent 선택 로직", () => {
+  it("초기 목록 watermark로 변경사항을 폴링하고 목록에 병합한다", async () => {
+    const listed = [
+      incident({ id: "initial", title: "기존 인시던트", updated_at: "2026-07-24T11:00:00Z" }),
+    ];
+    const changed = incident({
+      id: "changed",
+      title: "실시간 추가 인시던트",
+      updated_at: "2026-07-24T11:00:01Z",
+    });
+    mockApiGet(() => listed);
+    fetchIncidentChanges.mockResolvedValueOnce({
+      data: [changed],
+      nextCursor: null,
+      nextSince: "2026-07-24T11:00:02Z",
+    });
+
+    await act(async () => {
+      renderView({});
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(fetchIncidentChanges).toHaveBeenCalledWith({
+      since: "2026-07-24T11:00:00Z",
+      cursor: null,
+    });
+    expect(screen.getByText("실시간 추가 인시던트")).toBeInTheDocument();
+  });
+
+  it("현재 100개 목록 밖의 pending incident도 상세 API로 직접 연다", async () => {
+    const listed = [
+      incident({ id: "newest", title: "최신 인시던트", updated_at: "2026-07-24T12:00:00Z" }),
+    ];
+    const oldIncident = incident({
+      id: "old-direct",
+      title: "목록 밖 직접 조회 인시던트",
+      updated_at: "2026-07-01T00:00:00Z",
+    });
+    mockApiGet(() => listed, {}, { "old-direct": oldIncident });
+
+    await act(async () => {
+      renderView({ pendingIncident: { id: "old-direct", nonce: 1 } });
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(detailHeadingText()).toBe("목록 밖 직접 조회 인시던트");
+    expect(apiGet).toHaveBeenCalledWith("/incidents/old-direct");
+  });
+
   it("이미 매칭되는 인시던트가 있으면 즉시 그걸 선택한다", async () => {
     const incidents = [
       incident({ id: "newest", title: "최신 인시던트", correlation_key_value: "9.9.9.9", updated_at: "2026-07-16T07:10:00Z" }),

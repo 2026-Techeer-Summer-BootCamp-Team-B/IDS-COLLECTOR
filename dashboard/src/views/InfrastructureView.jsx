@@ -31,7 +31,7 @@ function formatSilence(ms) {
   return `${Math.floor(hours / 24)}일 전 마지막 수신`;
 }
 
-// absent_over_time 스타일 헬스체크 — WAS/Falco/K8s Audit 중 하나가 일정 시간
+// absent_over_time 스타일 헬스체크 — WAS/WAF/Falco/K8s Audit 중 하나가 일정 시간
 // 조용해지면(에이전트 다운, 파이프라인 장애 의심) 여기서 바로 드러남.
 function SourceHealthPanel() {
   const { theme } = useTheme();
@@ -43,11 +43,11 @@ function SourceHealthPanel() {
     <div className="bg-dash-surface rounded-2xl p-5">
       <h3 className="text-dash-fg text-sm font-semibold mb-1">소스 헬스체크</h3>
       <p className="text-dash-muted text-xs mb-4">
-        3계층(WAS / Falco / K8s Audit) 중 하나가 조용해지면 파이프라인 장애 신호로 간주
+        4계층(WAS / WAF / Falco / K8s Audit) 중 하나가 조용해지면 파이프라인 장애 신호로 간주
       </p>
       {status === "loading" && <p className="text-dash-muted text-xs py-2">불러오는 중...</p>}
       {status === "error" && <p className="text-dash-critical text-xs py-2">{error}</p>}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {status !== "loading" && health.map((h) => {
           const color = statusColor[h.status];
           return (

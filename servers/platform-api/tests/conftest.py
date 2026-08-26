@@ -86,6 +86,10 @@ os.environ.setdefault("CLICKHOUSE_USER", "admin")
 os.environ.setdefault("CLICKHOUSE_PASSWORD", "mypassword")
 os.environ.setdefault("KAFKA_BROKERS", "localhost:9094")
 os.environ.setdefault("GEMINI_API_KEY", "")  # /reports/trend가 외부 API 호출 없이 결정적으로 동작하게
+os.environ.setdefault(
+    "REPORT_TOKEN_ENCRYPTION_KEY",
+    "8yWaRahCNcYY6l5EmPqJtXtbaIdbpTkOGAZOFWU55Cw=",
+)
 # 게이트웨이 시크릿 강제(감사 S13, 2026-07-16, app/main.py의 GatewaySecretMiddleware) -
 # 이 테스트는 Traefik을 거치지 않고 app.main:app을 직접 ASGI로 구동하므로(모듈
 # docstring 참고) Traefik이 실제 요청에 주입해주는 X-Internal-Gateway-Secret 헤더가

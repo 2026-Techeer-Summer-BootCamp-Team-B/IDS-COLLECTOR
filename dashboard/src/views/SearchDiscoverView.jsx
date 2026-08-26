@@ -27,6 +27,7 @@ import { ChartHoverPanel } from "../components/HoverPanel";
 const MODULE_OPTIONS = [
   { key: "", label: "전체 소스" },
   { key: "was", label: MODULE_META.was.label },
+  { key: "waf", label: MODULE_META.waf.label },
   { key: "falco", label: MODULE_META.falco.label },
   { key: "k8s_audit", label: MODULE_META.k8s_audit.label },
 ];

@@ -65,11 +65,17 @@ const STORAGE_ACTIVE_KEY = "sentinelops_overview_active_v2";
 // 미리보기 아이콘을 그린다(실제 차트를 그대로 축소하는 대신, 종류를 대표하는
 // 간단한 도형 - 실제 위젯 렌더링은 데이터 fetch가 필요해서 팔레트 단계에선
 // 무겁고, chartTypeOptions가 있는 위젯은 그 중 첫 옵션 모양을 대표로 쓴다).
+// 2026-07-23: KPI 카드 4종의 minW를 3->2로 낮췄다 - KpiCard 자신이
+// min-w-[160px]를 하드코딩하고 있어서(LogDashboard.jsx) 그 아래로는 어차피
+// 라벨이 줄바꿈되기 전에 카드 자체가 WidgetFrame의 overflow-clip에 잘린다.
+// Playwright로 그리드 2칸(이 폭 기준 약 165px)까지 실측 확인 - 라벨/값/델타
+// 전부 한 줄 유지, 잘림 없음. 1칸(약 74px)은 160px 밑이라 카드가 잘린다 -
+// 그래서 2가 실제 하드 최솟값이다.
 export const WIDGET_CATALOG = [
-  { type: "kpi-total", label: "Total Logs", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
-  { type: "kpi-errors", label: "Errors", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
-  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
-  { type: "kpi-sources", label: "탐지 시나리오", w: 3, h: 6, minW: 3, minH: 4, icon: "number" },
+  { type: "kpi-total", label: "Total Logs", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
+  { type: "kpi-errors", label: "Errors", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
+  { type: "kpi-warnings", label: "Warnings", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
+  { type: "kpi-sources", label: "탐지 시나리오", w: 3, h: 6, minW: 2, minH: 4, icon: "number" },
   {
     type: "log-volume",
     label: "Log Volume",
@@ -141,14 +147,23 @@ export const WIDGET_CATALOG = [
     ],
   },
   { type: "latency-stats", label: "API Latency", w: 12, h: 6, minW: 8, minH: 6, icon: "gauge" },
-  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 23, minW: 6, minH: 23, icon: "area" },
-  { type: "recent-logs", label: "Recent Logs", w: 8, h: 20, minW: 6, minH: 20, icon: "list" },
+  // 2026-07-23: module-volume/recent-logs/activity-flow의 minH를 낮췄다 -
+  // Playwright로 각 위젯을 minW 폭(가장 좁은 허용 폭, 레이아웃이 가장 빡빡한
+  // 경우)에 놓고 h를 줄여가며 실제 콘텐츠(범례/마지막 행/마지막 계층 캡션)가
+  // WidgetFrame의 overflow-clip에 잘리기 직전 값을 이분탐색으로 재확인했다.
+  // module-volume: 308px 밑에서 잘림 -> grid 10칸(344px). recent-logs: 520px
+  // 밑에서 마지막 행 잘림 -> grid 15칸(524px). activity-flow: 376px 밑에서
+  // 마지막 계층(Falco) 캡션 잘림 -> grid 11칸(380px). 기본 배치 크기(h)는
+  // 그대로 뒀다 - 이번 요청은 "더 줄일 수 있게"였지 기본 크기를 바꿔달라는
+  // 요청이 아니었다.
+  { type: "module-volume", label: "모듈별 로그량 추이", w: 8, h: 23, minW: 6, minH: 10, icon: "area" },
+  { type: "recent-logs", label: "Recent Logs", w: 8, h: 20, minW: 6, minH: 15, icon: "list" },
   { type: "top-sources", label: "Top Sources", w: 4, h: 11, minW: 3, minH: 11, icon: "list" },
   { type: "error-rate", label: "Error Rate", w: 4, h: 8, minW: 3, minH: 8, icon: "gauge" },
   { type: "geo-summary", label: "지역별 분포", w: 12, h: 17, minW: 4, minH: 17, icon: "map" },
   // 2026-07-16(8차)에 기본 화면에서 뺐던 위젯 - 2026-07-18, "위젯 목록에 다시
   // 추가해달라"는 요청으로 선택적 위젯(카탈로그에만)으로 복원.
-  { type: "activity-flow", label: "실시간 탐지", w: 12, h: 22, minW: 6, minH: 22, icon: "pulse" },
+  { type: "activity-flow", label: "실시간 탐지", w: 12, h: 22, minW: 6, minH: 11, icon: "pulse" },
 ];
 
 const CATALOG_BY_TYPE = Object.fromEntries(WIDGET_CATALOG.map((w) => [w.type, w]));

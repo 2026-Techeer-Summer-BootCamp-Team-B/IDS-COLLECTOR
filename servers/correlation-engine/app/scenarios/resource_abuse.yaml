@@ -69,10 +69,10 @@ scenarios:
     type: sequence
     join_on: user_or_sa
     correlation_key_type: "user.name"
-    required_modules: [was, falco, k8s_audit]
+    required_modules: [was, waf, falco, k8s_audit]
     window_seconds: 300
     stage1:
-      event_module: was
+      event_module: [was, waf]
       url_path_prefix: "/file-upload"
       http_request_method: POST
       http_response_status_code: [200, 201, 204]

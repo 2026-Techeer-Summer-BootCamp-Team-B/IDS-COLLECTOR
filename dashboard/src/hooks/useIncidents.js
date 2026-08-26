@@ -1,45 +1,157 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiGetAllPages, ApiError } from "../lib/authApi";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiGet, apiGetPaged, ApiError } from "../lib/authApi";
 
-// GET /incidents (servers/platform-api/app/incidents_api.py) — IncidentsView의
-// 실데이터 소스, data/incidents.js의 mock incidents 배열을 대체. status 필터는
-// 안 걸고 커서로 전 페이지를 이어 받아(apiGetAllPages) 한 번에 다 받아와 클라이언트에서
-// 상태별로 좁힌다 — 목록 하나로 KPI 카운트/도넛/카드 리스트를 전부 파생시키는 게
-// 서버 요청 여러 번보다 간단하다. limit은 이제 "한 페이지 크기"일 뿐이라(2026-07-15
-// 페이지네이션 도입) 예전처럼 단일 페이지만 받아오면 그 이상 있는 인시던트가 조용히
-// 잘려서 Total 등이 실제보다 낮게 찍힌다(2026-07-23, 200건 상한 버그로 실측 확인) -
-// 커서가 남아있는 한 계속 이어 받아 전체를 채운다.
-export function useIncidents({ limit = 500 } = {}) {
+const PAGE_SIZE = 50;
+const MAX_RETAINED_INCIDENTS = 100;
+
+function uniqueById(items) {
+  const map = new Map();
+  items.forEach((item) => {
+    const current = map.get(item.id);
+    if (!current || item.updated_at > current.updated_at) map.set(item.id, item);
+  });
+  return [...map.values()]
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id))
+    .slice(0, MAX_RETAINED_INCIDENTS);
+}
+
+function latestUpdatedAt(items, fallback) {
+  return items.reduce(
+    (latest, item) => (!latest || new Date(item.updated_at) > new Date(latest) ? item.updated_at : latest),
+    fallback
+  );
+}
+
+// Keep a bounded, cursor-paged window. Aggregates deliberately live in
+// useIncidentStats: a rendered list must never be treated as global totals.
+export function useIncidents({ statusFilter = "ALL", limit = PAGE_SIZE } = {}) {
   const [incidents, setIncidents] = useState([]);
-  const [status, setStatus] = useState("loading"); // loading | ready | error
+  const [status, setStatus] = useState("loading");
   const [error, setError] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [syncWatermark, setSyncWatermark] = useState(null);
+  const cursorRef = useRef(null);
+  const loadingMoreRef = useRef(false);
+  const loadedCountRef = useRef(0);
+  const epochRef = useRef(0);
+  // 페이지 요청이 진행되는 동안 delta가 먼저 도착할 수 있다. 목록에서 빠진
+  // 항목까지 최신 updated_at을 기억해야 뒤늦게 온 오래된 페이지가 그 상태를
+  // 되돌려 넣지 못한다.
+  const liveUpdatedAtRef = useRef(new Map());
 
-  const reload = useCallback(() => setReloadToken((t) => t + 1), []);
+  const query = statusFilter === "ALL" ? "" : `&status=${encodeURIComponent(statusFilter)}`;
+  const reload = useCallback(() => setReloadToken((token) => token + 1), []);
 
   useEffect(() => {
     let cancelled = false;
-    // 리로드(재조회)일 땐 이미 ready 상태를 유지해서 목록이 깜빡이지 않게 한다 —
-    // 최초 로드일 때만 loading 문구를 보여준다.
-    setStatus((s) => (s === "ready" ? "ready" : "loading"));
+    const myEpoch = ++epochRef.current;
+    setStatus((current) => (current === "ready" ? "ready" : "loading"));
 
-    apiGetAllPages("/incidents", { limit: String(limit) })
-      .then((all) => {
-        if (cancelled) return;
-        setIncidents(all);
+    // Preserve the currently loaded window across a refresh, but never render
+    // more than the bounded client-side list permits.
+    const fetchLimit = Math.min(Math.max(limit, loadedCountRef.current), MAX_RETAINED_INCIDENTS);
+    apiGetPaged(`/incidents?limit=${fetchLimit}${query}`)
+      .then(({ data, nextCursor, nextSince }) => {
+        if (cancelled || myEpoch !== epochRef.current) return;
+        const freshData = data.filter((item) => {
+          const liveUpdatedAt = liveUpdatedAtRef.current.get(item.id);
+          return !liveUpdatedAt || item.updated_at >= liveUpdatedAt;
+        });
+        setIncidents((previous) => {
+          const preservedLiveItems = previous.filter((item) => {
+            const liveUpdatedAt = liveUpdatedAtRef.current.get(item.id);
+            if (liveUpdatedAt !== item.updated_at) return false;
+            if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+            const fetched = data.find((candidate) => candidate.id === item.id);
+            return !fetched || item.updated_at > fetched.updated_at;
+          });
+          const next = uniqueById([...freshData, ...preservedLiveItems]);
+          loadedCountRef.current = next.length;
+          return next;
+        });
+        cursorRef.current = nextCursor;
+        setHasMore(Boolean(nextCursor) && loadedCountRef.current < MAX_RETAINED_INCIDENTS);
+        setSyncWatermark(nextSince || latestUpdatedAt(freshData, null));
         setStatus("ready");
         setError(null);
       })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e instanceof ApiError ? e.message : "인시던트 목록을 불러오지 못했습니다.");
+      .catch((requestError) => {
+        if (cancelled || myEpoch !== epochRef.current) return;
+        setError(requestError instanceof ApiError ? requestError.message : "인시던트 목록을 불러오지 못했습니다.");
         setStatus("error");
       });
 
     return () => {
       cancelled = true;
     };
-  }, [limit, reloadToken]);
+  }, [limit, query, reloadToken]);
 
-  return { incidents, status, error, reload };
+  const loadMore = useCallback(() => {
+    if (!cursorRef.current || loadingMoreRef.current || loadedCountRef.current >= MAX_RETAINED_INCIDENTS) return Promise.resolve(false);
+    const myEpoch = epochRef.current;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const params = new URLSearchParams({ limit: String(Math.min(limit, MAX_RETAINED_INCIDENTS - loadedCountRef.current)), cursor: cursorRef.current });
+    if (statusFilter !== "ALL") params.set("status", statusFilter);
+
+    return apiGetPaged(`/incidents?${params}`)
+      .then(({ data, nextCursor }) => {
+        if (myEpoch !== epochRef.current) return false;
+        setIncidents((previous) => {
+          const freshData = data.filter((item) => {
+            const liveUpdatedAt = liveUpdatedAtRef.current.get(item.id);
+            const inFilter = statusFilter === "ALL" || item.status === statusFilter;
+            return inFilter && (!liveUpdatedAt || item.updated_at >= liveUpdatedAt);
+          });
+          const next = uniqueById([...previous, ...freshData]);
+          loadedCountRef.current = next.length;
+          return next;
+        });
+        cursorRef.current = nextCursor;
+        const canLoadMore = Boolean(nextCursor) && loadedCountRef.current < MAX_RETAINED_INCIDENTS;
+        setHasMore(canLoadMore);
+        return canLoadMore;
+      })
+      .catch((requestError) => {
+        setError(requestError instanceof ApiError ? requestError.message : "다음 페이지를 불러오지 못했습니다.");
+        return false;
+      })
+      .finally(() => {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      });
+  }, [limit, statusFilter]);
+
+  const mergeChanges = useCallback((changes) => {
+    if (!changes?.length) return;
+    const freshChanges = changes.filter((item) => {
+      const current = liveUpdatedAtRef.current.get(item.id);
+      return !current || item.updated_at >= current;
+    });
+    if (!freshChanges.length) return;
+    freshChanges.forEach((item) => {
+      liveUpdatedAtRef.current.set(item.id, item.updated_at);
+    });
+    setIncidents((previous) => {
+      const inFilter = (item) => statusFilter === "ALL" || item.status === statusFilter;
+      const next = uniqueById([
+        ...previous.filter(
+          (item) => !freshChanges.some((change) => change.id === item.id)
+        ),
+        ...freshChanges.filter(inFilter),
+      ]);
+      loadedCountRef.current = next.length;
+      return next;
+    });
+  }, [statusFilter]);
+
+  const ensureIncident = useCallback(async (id) => {
+    const item = await apiGet(`/incidents/${encodeURIComponent(id)}`);
+    mergeChanges([item]);
+    return item;
+  }, [mergeChanges]);
+
+  return { incidents, status, error, hasMore, loadingMore, loadMore, reload, mergeChanges, ensureIncident, syncWatermark };
 }
