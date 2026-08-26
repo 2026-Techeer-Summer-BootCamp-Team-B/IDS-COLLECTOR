@@ -69,7 +69,9 @@ services:
       - |
         # 계약 문서 §1 공통 설정: partitions=1, replication=1, retention 24h,
         # cleanup.policy=delete (retention이 트리밍 정책을 대체 - 별도 정리 job 없음).
-        for topic in events.was events.waf events.falco events.audit events.normalized; do
+        # events.cloud(P7-1, cloud-forwarder가 GCP Cloud Audit Logs를 발행)도 원본
+        # 소스 토픽이라 나머지 4개(was/waf/falco/audit)와 같은 보존 정책을 쓴다.
+        for topic in events.was events.waf events.falco events.audit events.cloud events.normalized; do
           /opt/kafka/bin/kafka-topics.sh --create \
             --bootstrap-server kafka:9092 \
             --topic "$$topic" \

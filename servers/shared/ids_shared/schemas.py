@@ -27,7 +27,9 @@ class NormalizedEvent(BaseModel):
     timestamp: datetime = Field(alias="@timestamp")  # 사건 실제 발생 시각(UTC)
     event_ingested: datetime = Field(alias="event.ingested")  # 파이프라인 수신 시각(UTC)
     event_id: str = Field(alias="event.id")  # dedupe 키 (was/waf/falco=해시, audit=auditID)
-    event_module: Literal["was", "waf", "falco", "k8s_audit"] = Field(alias="event.module")
+    event_module: Literal["was", "waf", "falco", "k8s_audit", "cloud_audit"] = Field(
+        alias="event.module"
+    )
     event_dataset: str = Field(alias="event.dataset")  # 예: "was.access", "waf.alert"
     event_kind: str = Field(default="event", alias="event.kind")
     event_action: Optional[str] = Field(default=None, alias="event.action")
@@ -156,6 +158,16 @@ class NormalizedEvent(BaseModel):
     geo_city_name: Optional[str] = Field(default=None, alias="source.geo.city_name")
     geo_lat: Optional[float] = Field(default=None, alias="source.geo.location.lat")
     geo_lon: Optional[float] = Field(default=None, alias="source.geo.location.lon")
+
+    # Cloud Audit (GCP Cloud Audit Logs, 5번째 소스 - P7-1) - protoPayload.serviceName/
+    # 프로젝트 ID는 다른 4개 소스에는 없는 "어떤 클라우드 리소스/서비스에 대한
+    # 조작인지" 축이라 기존 필드로는 못 담아서 전용 필드로 뺀다. event.action에는
+    # methodName(예: "SetIamPolicy")을, source.ip에는 requestMetadata.callerIp를,
+    # user.name에는 authenticationInfo.principalEmail을 그대로 재사용한다(normalizer.py
+    # normalize_cloud_audit 참고) - 굳이 새 필드를 안 만들고 기존 스키마에 맞는 건
+    # 최대한 재사용해서 대시보드/상관분석 쪽 필드 수를 늘리지 않는다.
+    cloud_service_name: Optional[str] = Field(default=None, alias="cloud.service.name")
+    cloud_project_id: Optional[str] = Field(default=None, alias="cloud.project.id")
 
     class Config:
         populate_by_name = True

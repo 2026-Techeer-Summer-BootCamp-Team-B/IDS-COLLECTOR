@@ -124,3 +124,27 @@ audit:
     - match: { verb: [get, list, watch] }
       severity: 1
   default: 2
+
+cloud_audit:
+  # GCP Cloud Audit Logs(protoPayload.methodName) 기준 심각도 매핑 (P7-1). K8s Audit의
+  # verb/resource 조합과 달리 GCP API는 메서드명 자체가 이미 "무엇을 했는지"를
+  # 특정하므로(예: SetIamPolicy) 메서드명 단일 키로 매칭한다. 여기 없는 메서드는
+  # default(2) - 이후 실사용하면서 위험한 메서드가 더 나오면 이 목록에 추가할 것.
+  method_name:
+    # 4 critical: IAM 정책 자체를 바꾸는 행위 - 권한상승의 정점(K8s Audit의 RBAC
+    # 변경과 같은 급으로 취급).
+    "SetIamPolicy": 4
+    # 4 critical: 서비스 계정 키 발급 - 장기 자격증명 하나가 새로 생기는 것이라 그
+    # 계정 전체를 훔친 것과 다를 바 없다.
+    "google.iam.admin.v1.CreateServiceAccountKey": 4
+    # 4 critical: 방화벽 규칙 신설 - 클러스터 밖에서 새로 열리는 경로가 생길 수 있다.
+    "v1.compute.firewalls.insert": 4
+    # 3 high: 기존 방화벽 규칙 변경/삭제 - 신설보다는 급이 낮지만 여전히 노출 범위에
+    # 영향을 준다.
+    "v1.compute.firewalls.patch": 3
+    "v1.compute.firewalls.delete": 3
+    # 3 high: 서비스 계정 신설 - 그 자체로는 키 발급보다 위험도가 낮지만 후속 권한
+    # 부여의 시작점이라 K8s Audit의 SA 생성(severity 4, 시스템 네임스페이스 한정)보다는
+    # 낮게, 일반 SA 신설과 같은 급으로 둔다.
+    "google.iam.admin.v1.CreateServiceAccount": 3
+  default: 2

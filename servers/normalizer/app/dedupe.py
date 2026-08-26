@@ -1,4 +1,4 @@
-"""dedupe (P3-2). audit=auditID / was·waf·falco=sha256(observedTimeUnixNano + "|" +
+"""dedupe (P3-2). audit=auditID / cloud_audit=insertId / was·waf·falco=sha256(observedTimeUnixNano + "|" +
 원본 body). Redis SETNX TTL 1h.
 
 observedTimeUnixNano는 otel-collector가 로그 레코드 관측 시점에 부여하는 OTLP 표준
@@ -29,6 +29,13 @@ def compute_dedupe_key(
         audit_id = payload.get("auditID")
         if audit_id:
             return audit_id
+    # GCP Cloud Audit Logs의 insertId는 auditID와 같은 역할(로그 항목별 고유 ID, GCP가
+    # 부여) - Pub/Sub 재전송(at-least-once 계약)으로 같은 메시지가 두 번 와도 insertId는
+    # 불변이라 이 값으로 dedupe하면 observedTimeUnixNano 기반 해시보다 더 정확하다.
+    if source == "cloud_audit":
+        insert_id = payload.get("insertId")
+        if insert_id:
+            return insert_id
     return hashlib.sha256(f"{observed_time_unix_nano}|{original}".encode("utf-8")).hexdigest()
 
 

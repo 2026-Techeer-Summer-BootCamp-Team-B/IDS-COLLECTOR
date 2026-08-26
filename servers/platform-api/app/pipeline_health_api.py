@@ -83,7 +83,11 @@ def _admin_client() -> AIOKafkaAdminClient:
 # 컨슈머)은 2026-07-14 계약 v1.1 §7에 따라 제거됨 - 더 이상 존재하지 않는 컨슈머
 # 그룹의 lag을 모니터링하면 커밋이 영원히 안 되는 허수 lag만 나오므로 목록에서 뺐다.
 _MONITORED_GROUPS: Dict[str, List[str]] = {
-    "normalizer-workers": ["events.was", "events.waf", "events.falco", "events.audit"],
+    # events.cloud(P7-1) - GCP Cloud Audit Logs를 cloud-forwarder가 발행하는 5번째
+    # 원본 토픽. 여기 안 넣으면 normalizer-workers 그룹의 lag 계산에서 이 토픽만
+    # 조용히 빠져서, cloud-forwarder가 죽어 있어도 파이프라인 헬스 화면은 "정상"으로
+    # 보이는 사각지대가 생긴다.
+    "normalizer-workers": ["events.was", "events.waf", "events.falco", "events.audit", "events.cloud"],
     "correlation-engine": ["events.normalized"],
 }
 
@@ -91,8 +95,8 @@ _MONITORED_GROUPS: Dict[str, List[str]] = {
 # "소비"하는 컨슈머 그룹은 없으므로 lag이 아니라 절대 적재량(깊이)만 의미가 있다.
 DLQ_TOPIC = "events.dlq"
 
-# otel-collector의 routing 커넥터가 log.source가 알려진 4종(was/waf/falco/
-# k8s-audit) 중 어디에도 안 걸리는 이벤트를 조용히 버리지 않고 보내는 토픽
+# otel-collector의 routing 커넥터가 log.source가 알려진 5종(was/waf/falco/
+# k8s-audit/cloud-audit, P7-1) 중 어디에도 안 걸리는 이벤트를 조용히 버리지 않고 보내는 토픽
 # (servers/otel/config/otel-config.yaml, README "조용히 버려지지 않게" 참고).
 # events.dlq와 마찬가지로 "소비"하는 컨슈머 그룹이 없어서(2026-07-15까지는 깊이
 # 조회조차 없어서 사실상 완전히 안 보이는 상태였음 - events.dlq는 최소한

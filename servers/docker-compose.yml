@@ -39,7 +39,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       KAFKA_BROKERS: kafka:9092
-      KAFKA_SOURCE_TOPICS: events.was,events.waf,events.falco,events.audit
+      KAFKA_SOURCE_TOPICS: events.was,events.waf,events.falco,events.audit,events.cloud
       KAFKA_CONSUMER_GROUP: normalizer-workers
       KAFKA_NORMALIZED_TOPIC: events.normalized
       KAFKA_DLQ_TOPIC: events.dlq
@@ -66,6 +66,47 @@ services:
     # 태스크 죽음) 이 커맨드도 실패해서 그대로 unhealthy로 잡힌다.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8200/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # P7-1: GCP Cloud Audit Logs를 Pub/Sub 구독에서 pull해 OTel Collector로 전달하는
+  # 5번째 소스 포워더. WAS/WAF/Falco/K8s Audit와 달리 Target 서버에 우리가 만든
+  # 센서가 없다(GCP가 감사 로그를 직접 만든다) - 그래서 이 서비스가 대신 "Target
+  # 쪽 otel-collector" 역할을 한다. GCP 프로젝트에 Cloud Audit Logs -> Pub/Sub
+  # 로그 라우터 싱크가 이미 구성돼 있어야 동작한다(이 compose가 싱크를 만들진
+  # 않음 - gcloud/Terraform으로 별도 구성).
+  cloud-forwarder:
+    build:
+      context: cloud-forwarder
+      dockerfile: Dockerfile
+    image: ghcr.io/2026-techeer-summer-bootcamp-team-b/ids-collector-cloud-forwarder:${TAG:-latest}
+    container_name: cloud-forwarder
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+      GCP_PUBSUB_SUBSCRIPTION: ${GCP_PUBSUB_SUBSCRIPTION:-cloud-audit-logs-sub}
+      OTLP_HTTP_ENDPOINT: http://otel-collector:4318/v1/logs
+      LOG_SOURCE_TAG: cloud-audit
+      # GCP 서비스계정 키(JSON) - 아래 volumes로 컨테이너 안 이 경로에 read-only
+      # 마운트한다. google-cloud-pubsub 클라이언트가 이 표준 env var를 자동으로 읽는다.
+      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-service-account.json
+    volumes:
+      # 리포에 커밋하지 않는다(.gitignore 참고) - 배포 서버에 별도로 올려둘 것.
+      - ./cloud-forwarder/gcp-service-account.json:/app/gcp-service-account.json:ro
+    ports:
+      - "127.0.0.1:8500:8500" # 로컬 디버깅용 - 호스트 루프백에만 바인딩(Traefik 단일 진입점 원칙)
+    networks:
+      - siem-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8500/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5

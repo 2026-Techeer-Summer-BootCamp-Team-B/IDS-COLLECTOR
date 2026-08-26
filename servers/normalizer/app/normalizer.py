@@ -523,11 +523,69 @@ def normalize_audit(payload: Dict[str, Any], event_id: str, original: str) -> No
     )
 
 
+# ---------------------------------------------------------------------------
+# Cloud Audit (GCP Cloud Audit Logs, P7-1)
+# ---------------------------------------------------------------------------
+
+
+def normalize_cloud_audit(payload: Dict[str, Any], event_id: str, original: str) -> NormalizedEvent:
+    """GCP Cloud Audit Log 항목(LogEntry, protoPayload가 AuditLog) 한 건을
+    NormalizedEvent로 변환.
+
+    servers/cloud-forwarder가 Pub/Sub 구독에서 그대로 pull한 LogEntry JSON을
+    body(str)로 흘려보내므로, 여기 오는 payload는 GCP가 실제로 내보내는 형태
+    그대로다 - was/waf처럼 우리가 만든 센서가 아니라 GCP가 wire 포맷을 정하므로
+    필드명이 GCP 표준(protoPayload.*)을 그대로 따른다. 자세한 필드 설명은
+    https://cloud.google.com/logging/docs/audit#audit_log_entry_structure 참고.
+    """
+    proto_payload = payload.get("protoPayload") or {}
+    auth_info = proto_payload.get("authenticationInfo") or {}
+    request_metadata = proto_payload.get("requestMetadata") or {}
+    resource = payload.get("resource") or {}
+    resource_labels = resource.get("labels") or {}
+
+    method_name = proto_payload.get("methodName")
+
+    return NormalizedEvent(
+        **{
+            "@timestamp": _parse_timestamp(payload.get("timestamp")),
+            "event.ingested": _now_utc(),
+            "event.id": event_id,
+            "event.module": "cloud_audit",
+            "event.dataset": "cloud_audit.activity",
+            "event.kind": "event",
+            "event.action": method_name,
+            # AuditLog.status가 있으면 code!=0이 실패(gRPC status code 관례) - status
+            # 자체가 없는 항목(대부분의 성공 케이스, GCP가 실패 시에만 채우는 경우가
+            # 많음)은 outcome을 단정하지 않고 생략한다.
+            "event.outcome": (
+                "failure"
+                if (proto_payload.get("status") or {}).get("code")
+                else ("success" if "status" in proto_payload else None)
+            ),
+            "event.severity": get_severity("cloud_audit", payload),
+            "event.original": original,
+            "source.ip": request_metadata.get("callerIp"),
+            "user.name": auth_info.get("principalEmail"),
+            # K8s Audit의 orchestrator.*(네임스페이스/리소스)와 개념은 같지만 GCP
+            # 리소스는 네임스페이스가 없다 - resource.type(예: "gcs_bucket",
+            # "service_account")을 resource.type에, resourceName의 마지막 세그먼트를
+            # resource.name에 담아 "무엇을 대상으로 한 조작인지"를 동일한 필드로
+            # 조회할 수 있게 한다.
+            "orchestrator.resource.type": resource.get("type"),
+            "orchestrator.resource.name": (proto_payload.get("resourceName") or "").split("/")[-1] or None,
+            "cloud.service.name": proto_payload.get("serviceName"),
+            "cloud.project.id": resource_labels.get("project_id"),
+        }
+    )
+
+
 _PARSERS = {
     "was": normalize_was,
     "waf": normalize_waf,
     "falco": normalize_falco,
     "audit": normalize_audit,
+    "cloud_audit": normalize_cloud_audit,
 }
 
 

@@ -151,4 +151,10 @@ def get_severity(
             return rule.get("severity", rules.get("default", 2))
         return rules.get("default", 2)
 
+    if source == "cloud_audit":
+        # GCP Cloud Audit Log 원문(JSON) 그대로 들어온다 - protoPayload.methodName만
+        # 보고 판단한다(위 audit 분기처럼 request body 세부 필드까지는 아직 안 봄).
+        method_name = (payload.get("protoPayload") or {}).get("methodName") or ""
+        return rules.get("method_name", {}).get(method_name, rules.get("default", 2))
+
     return 1

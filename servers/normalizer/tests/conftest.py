@@ -89,6 +89,33 @@ def base_falco_event():
 
 
 @pytest.fixture
+def base_cloud_audit_log():
+    """GCP Cloud Audit Log(LogEntry, protoPayload=AuditLog) 최소 골격 (P7-1).
+    실제 필드 구조: https://cloud.google.com/logging/docs/audit#audit_log_entry_structure"""
+
+    def _make(**overrides: Any) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "insertId": "abcd1234",
+            "timestamp": "2026-07-15T10:00:00.000000Z",
+            "resource": {
+                "type": "gce_firewall_rule",
+                "labels": {"project_id": "sentinel-ops-demo"},
+            },
+            "protoPayload": {
+                "methodName": "v1.compute.firewalls.insert",
+                "serviceName": "compute.googleapis.com",
+                "resourceName": "projects/sentinel-ops-demo/global/firewalls/allow-all",
+                "authenticationInfo": {"principalEmail": "attacker@example.com"},
+                "requestMetadata": {"callerIp": "203.0.113.10"},
+            },
+        }
+        payload.update(overrides)
+        return payload
+
+    return _make
+
+
+@pytest.fixture
 def base_audit_event():
     """kube-apiserver audit 이벤트(audit.k8s.io/v1) 최소 골격 - main.py가 이미
     stage=="ResponseComplete"만 골라 normalize_audit까지 보내주므로 그 상태를

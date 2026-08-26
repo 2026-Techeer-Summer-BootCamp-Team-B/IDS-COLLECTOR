@@ -1,8 +1,8 @@
 """
 정규화 워커 서비스 (P3).
 
-역할: Kafka 소스별 원본 토픽(events.was/waf/falco/audit)을 하나의 consumer group으로
-      같이 구독해서 계속 꺼내와서
+역할: Kafka 소스별 원본 토픽(events.was/waf/falco/audit/cloud - cloud는 P7-1,
+      cloud-forwarder가 발행)을 하나의 consumer group으로 같이 구독해서 계속 꺼내와서
       1) dedupe (Redis SETNX, TTL 1h) - 중복이면 스킵
       2) parse (소스별 파서 4종 - 토픽 이름 자체가 소스를 알려준다)
       3) normalize (NormalizedEvent, ECS 서브셋)
@@ -82,6 +82,9 @@ _TOPIC_TO_SOURCE = {
     "events.waf": "waf",
     "events.falco": "falco",
     "events.audit": "audit",
+    # P7-1: cloud-forwarder(Pub/Sub 구독자)가 발행하는 토픽. dispatch 값과 저장되는
+    # event.module 값이 동일한 유일한 소스다(audit는 "audit"->"k8s_audit"로 다름).
+    "events.cloud": "cloud_audit",
 }
 
 _consumer: Optional[AIOKafkaConsumer] = None

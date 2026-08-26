@@ -23,6 +23,11 @@ otel-logs-raw-pipeline:
         - name: "events.audit"
           group_id: "opensearch-raw-consumer-group"
           serde_format: "json"
+        # P7-1: cloud-forwarder가 발행하는 5번째 소스(GCP Cloud Audit Logs) - 나머지
+        # 4개와 동일하게 원본 사본을 그대로 색인한다.
+        - name: "events.cloud"
+          group_id: "opensearch-raw-consumer-group"
+          serde_format: "json"
   processor:
     - date:
         from_time_received: true

@@ -12,7 +12,8 @@ class Settings(BaseSettings):
 
     # P2-1 토픽 분리 이후 소스별 원본 토픽을 전부 구독한다. 토픽 이름 자체가 소스를
     # 알려주므로 더 이상 log.source resource attribute에 의존하지 않는다.
-    kafka_source_topics: str = "events.was,events.waf,events.falco,events.audit"
+    # events.cloud(P7-1, cloud-forwarder가 발행)도 같은 컨슈머 그룹으로 같이 구독한다.
+    kafka_source_topics: str = "events.was,events.waf,events.falco,events.audit,events.cloud"
     kafka_consumer_group: str = "normalizer-workers"
 
     # 정규화 결과 재적재 토픽 (Data Prepper가 구독해서 OpenSearch에 색인 - P6-4).
