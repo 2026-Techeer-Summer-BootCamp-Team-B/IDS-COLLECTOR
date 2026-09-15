@@ -24,6 +24,7 @@ jobs:
       normalizer: ${{ steps.filter.outputs.normalizer }}
       correlation_engine: ${{ steps.filter.outputs.correlation_engine }}
       platform_api: ${{ steps.filter.outputs.platform_api }}
+      cloud_forwarder: ${{ steps.filter.outputs.cloud_forwarder }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -38,6 +39,11 @@ jobs:
               - 'servers/correlation-engine/**'
             platform_api:
               - 'servers/platform-api/**'
+            # cloud-forwarder는 ids_shared(shared)를 안 쓰는 독립 서비스라(P7-1,
+            # forwarder.py 모듈 docstring 참고) shared 변경에 딸려 다시 빌드할
+            # 필요가 없다 - 다른 3개 서비스와 달리 shared를 여기 안 넣는다.
+            cloud_forwarder:
+              - 'servers/cloud-forwarder/**'
 
   # platform-api는 CI 테스트 대상에서는 빠지지만(실제 인프라 필요, ci.yml 참고)
   # 이미지 빌드/배포까지 제외하는 건 아니다 - 여기서는 세 서비스 다 그대로 빌드한다.
@@ -119,8 +125,43 @@ jobs:
           cache-from: type=gha,scope=platform-api
           cache-to: type=gha,mode=max,scope=platform-api
 
+  build-push-cloud-forwarder:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.cloud_forwarder == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          # 다른 3개 서비스와 달리 shared 패키지를 안 써서 빌드 컨텍스트가 servers/
+          # 전체가 아니라 servers/cloud-forwarder 자기 자신으로 충분하다
+          # (Dockerfile의 COPY 경로가 이 컨텍스트 기준으로 맞춰져 있음).
+          context: servers/cloud-forwarder
+          file: servers/cloud-forwarder/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-cloud-forwarder:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/ids-collector-cloud-forwarder:${{ github.sha }}
+          cache-from: type=gha,scope=cloud-forwarder
+          cache-to: type=gha,mode=max,scope=cloud-forwarder
+
   deploy:
-    needs: [build-push-normalizer, build-push-correlation-engine, build-push-platform-api]
+    needs:
+      [
+        build-push-normalizer,
+        build-push-correlation-engine,
+        build-push-platform-api,
+        build-push-cloud-forwarder,
+      ]
     if: always() && !contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     steps:

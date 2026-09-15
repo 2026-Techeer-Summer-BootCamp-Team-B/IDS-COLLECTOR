@@ -39,6 +39,7 @@ from app.config import settings
 from app.rules import ScenarioEngine
 from ids_shared import mitre_mapping
 from ids_shared.schemas import NormalizedEvent
+from app.redis_circuit_breaker import RedisCircuitBreaker
 
 app = FastAPI(title="IDS Correlation Engine")
 
@@ -191,8 +192,14 @@ async def _consume_loop():
     global _consumer, _engine, _redis, _allow_list_task, _scenario_reload_task
     global _consecutive_drop_count, _last_drop_error
 
-    _redis = redis.from_url(settings.redis_url, decode_responses=True)
+    _redis_raw = redis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+    socket_connect_timeout=3.0,
+    socket_timeout=3.0,
+    )
     scenarios = _load_scenarios()
+    _redis = RedisCircuitBreaker(_redis_raw)
     _engine = ScenarioEngine(scenarios, _redis)
 
     _consumer = AIOKafkaConsumer(
