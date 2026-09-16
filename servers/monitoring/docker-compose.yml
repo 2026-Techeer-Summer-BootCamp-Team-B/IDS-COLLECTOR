@@ -3,8 +3,14 @@
 # 기존 siem-net(otel-collector/OpenSearch/Kafka/Postgres/ClickHouse/platform-api가
 # 붙어 있는 네트워크)은 절대 건드리지 않는다 - 여기서는 external: true로 "참조"만
 # 하고, 이 스택 자신의 서비스 간 통신은 별도의 monitoring 네트워크를 쓴다.
-# siem-net에 join하는 건 기존 컨테이너를 이름으로 찾아가야 하는 서비스(현재는
-# kafka-exporter, 나중엔 postgres/opensearch/clickhouse-exporter)뿐이다.
+# siem-net에 join하는 건 기존 컨테이너를 이름으로 찾아가야 하는 서비스
+# (kafka/postgres/opensearch/clickhouse/redis-exporter)와, 2026-09-16부터는
+# prometheus 자신도 포함된다 - platform-api가 자체 /metrics(app/http_metrics.py,
+# prometheus_client)를 갖게 되면서, 그건 다른 데이터스토어들과 달리 "포맷을
+# 번역해주는 별도 exporter"가 필요 없는 네이티브 Prometheus 타겟이라 Prometheus가
+# 직접 platform-api:8400/metrics로 스크레이프해야 한다. Prometheus는 스크레이프
+# "요청"만 보내는 쪽이라 siem-net에 있어도 그 자체가 새 진입점이 되진 않는다는
+# 점에서 다른 join들과 위험 성격이 다르다(수신이 아니라 발신 전용).
 #
 # 모든 내부 전용 포트(9090/9100/8080/9308 등)는 ${HOST_INTERNAL_IP}(VM의 사설 IP)
 # 로만 게시한다 - GCP 방화벽 규칙이 유일한 방어선이 되지 않도록 바인딩 자체를
@@ -38,6 +44,7 @@ services:
       - "${HOST_INTERNAL_IP}:9090:9090" # 내부망 전용
     networks:
       - monitoring
+      - siem-net # platform-api:8400/metrics를 직접 스크레이프하기 위함(위 상단 주석 참고)
     logging:
       driver: json-file
       options:
@@ -224,6 +231,30 @@ services:
     networks:
       - monitoring
       - siem-net # clickhouse:8123에 도달하기 위함 (기존 네트워크, 참조만 함)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------------------------
+  # Redis Exporter - "살아있지만 느리다"를 지표로 보기 위해 추가(2026-09-16,
+  # SENTINEL-OPS 블로그 시리즈 ⑦ toxiproxy 드릴 후속 조치). 그 전까지는 redis-cli
+  # ping 성공 여부(살았는지)만 볼 수 있었고 커맨드 지연/커넥션 수 같은 "느려지는
+  # 중"을 보여주는 지표가 전혀 없었다.
+  # ------------------------------------------------------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: ${REDIS_EXPORTER_ADDR}
+      REDIS_PASSWORD: ${REDIS_EXPORTER_PASSWORD}
+    ports:
+      - "${HOST_INTERNAL_IP}:9121:9121" # 내부망 전용
+    networks:
+      - monitoring
+      - siem-net # redis:6379에 도달하기 위함 (기존 네트워크, 참조만 함)
     logging:
       driver: json-file
       options:

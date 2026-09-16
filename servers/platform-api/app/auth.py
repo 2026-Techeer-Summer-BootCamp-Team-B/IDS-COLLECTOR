@@ -17,6 +17,7 @@ from uuid import UUID
 
 import redis.asyncio as redis
 from fastapi import APIRouter, Header, HTTPException, Request, Response
+from ids_shared.redis_circuit_breaker import CircuitOpenError, RedisCircuitBreaker
 from pydantic import BaseModel
 
 from app.audit import record_action
@@ -25,7 +26,23 @@ from app.db import pool
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-_redis = redis.from_url(settings.redis_url, decode_responses=True)
+# socket_connect_timeout/socket_timeout 없이 redis.from_url()만 쓰면 기본값이 None -
+# Redis가 응답을 아예 안 주는 상황에서 이 커넥션을 쓰는 모든 요청(로그인, 세션
+# 검증)이 무한 대기한다(SENTINEL-OPS 블로그 시리즈 ⑦ toxiproxy 드릴에서 실측:
+# curl --max-time 15로 강제로 끊을 때까지 15초 내내 무응답). normalizer/
+# correlation-engine은 이미 3.0초로 맞춰뒀는데(2026-07-21) 이 파일만 빠져 있었다.
+_redis_raw = redis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+    socket_connect_timeout=3.0,
+    socket_timeout=3.0,
+)
+# correlation-engine에 이미 있던 서킷브레이커(P8-1)를 platform-api에도 붙였다
+# (2026-09-16, toxiproxy 드릴에서 실측된 "Redis 무응답 시 로그인/세션검증 무한대기"
+# 위험에 대한 근본조치). socket_timeout=3.0이 있어도 요청 하나당 3초씩 걸리는 건
+# 여전히 나쁘고, Redis가 계속 무응답이면 매 요청이 그 3초를 반복해서 허비한다 -
+# 서킷이 열리면 0.5초 안에 바로 실패시켜 재시도 폭풍을 막는다.
+_redis = RedisCircuitBreaker(_redis_raw)
 
 
 async def stop() -> None:
@@ -34,8 +51,10 @@ async def stop() -> None:
     모듈은 그 목록에서 빠져 있었다. redis.from_url()이 지연 연결이라 당장 눈에
     띄는 장애로 이어지진 않지만(다른 서비스와 달리 시작 시점에 연결을 안 맺음),
     컨테이너 재시작/재배포마다(주로 dev 환경에서 hot-reload 시) 열린 소켓을
-    반납하지 않고 그냥 프로세스만 죽는 게 반복된다."""
-    await _redis.aclose()
+    반납하지 않고 그냥 프로세스만 죽는 게 반복된다. RedisCircuitBreaker는 aclose()를
+    흉내내지 않으므로(rules.py/이 파일이 실제 쓰는 명령만 감쌈) 원본 클라이언트인
+    _redis_raw에 직접 호출한다."""
+    await _redis_raw.aclose()
 
 
 class Session(BaseModel):
@@ -49,7 +68,16 @@ def _session_key(token: str) -> str:
 
 
 async def _get_session(token: str) -> Optional[Session]:
-    raw = await _redis.get(_session_key(token))
+    try:
+        raw = await _redis.get(_session_key(token))
+    except CircuitOpenError:
+        # Redis가 무응답이면 세션이 진짜 유효한지 확인할 방법이 없다. verify()는
+        # Traefik forwardAuth의 인증 게이트웨이라 "모르면 통과"는 보안 구멍이 된다 -
+        # 세션이 없는 것과 동일하게 fail closed로 처리해 기존 401/valid=False 분기를
+        # 그대로 타게 한다. Redis 장애 중엔 전체 로그인이 막히는 셈이지만, 이건
+        # "장애 중엔 아무도 못 들어온다"는 안전한 실패지 "장애 중엔 아무나 들어온다"는
+        # 위험한 실패가 아니다.
+        return None
     return Session.model_validate_json(raw) if raw else None
 
 
@@ -95,7 +123,14 @@ async def login(body: LoginRequest, request: Request):
 
     token = secrets.token_urlsafe(32)
     session_data = Session(user_id=row["id"], username=row["username"], role=row["role"])
-    await _redis.set(_session_key(token), session_data.model_dump_json(), ex=settings.session_ttl_seconds)
+    try:
+        await _redis.set(_session_key(token), session_data.model_dump_json(), ex=settings.session_ttl_seconds)
+    except CircuitOpenError:
+        # 비밀번호는 맞았지만 세션을 저장할 곳이 없다 - 무한 대기 대신 바로 503으로
+        # 알린다. 여기서 조용히 넘어가면 로그인 응답은 200인데 세션이 실제로는
+        # 저장 안 된 상태가 돼서, 바로 다음 요청의 /auth/verify에서 401을 받는
+        # 더 헷갈리는 실패로 이어진다.
+        raise HTTPException(status_code=503, detail="session store unavailable") from None
     await record_action(
         "LOGIN",
         "users",
@@ -111,7 +146,14 @@ async def login(body: LoginRequest, request: Request):
 async def logout(request: Request, authorization: Optional[str] = Header(default=None)):
     token = _extract_token(authorization)
     active_session = await _get_session(token)
-    await _redis.delete(_session_key(token))
+    try:
+        await _redis.delete(_session_key(token))
+    except CircuitOpenError:
+        # 세션 키는 어차피 TTL(settings.session_ttl_seconds)로 언젠가 만료되므로,
+        # 삭제 실패가 로그아웃 자체를 막을 이유는 없다 - 사용자 입장에서는 "로그아웃
+        # 됐다"가 맞고, 다만 Redis가 복구되기 전까지는 같은 토큰이 이론상 TTL이
+        # 끝날 때까지 유효 상태로 남아있을 수 있다는 점만 다르다.
+        pass
     await record_action(
         "LOGOUT",
         "users",

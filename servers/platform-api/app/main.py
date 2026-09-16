@@ -88,7 +88,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from app import clickhouse_client, db, opensearch_client, pipeline_health_api
@@ -104,6 +104,7 @@ from app.banned_ips_api import router as banned_ips_router
 from app.config import settings
 from app.data_policy_api import router_log_policies
 from app.events_api import router as events_router
+from app.http_metrics import RequestMetricsMiddleware, render_metrics
 from app.incident_alerts import poll_loop as incident_alerts_poll_loop
 from app.incidents_api import router as incidents_router
 from app.log_retention import poll_loop as log_retention_poll_loop
@@ -154,7 +155,11 @@ app.add_middleware(
 #     클라이언트로 직접 호출) 자체가 라우터/미들웨어 체인을 안 거쳐서 게이트웨이
 #     시크릿을 실어줄 방법이 없다 - verify()는 X-Auth-*를 입력으로 신뢰하는
 #     게 아니라 세션 토큰으로 직접 판단하므로 이 검증 대상이 아니다.
-_GATEWAY_SECRET_EXEMPT_PATHS = {"/health", "/auth/verify"}
+#   - "/metrics": Prometheus가 siem-net 안에서 platform-api:8400/metrics를 직접
+#     스크레이프한다(servers/monitoring/prometheus/prometheus.yml, 2026-09-16 추가) -
+#     /health와 마찬가지로 Traefik을 거치지 않는 siem-net 내부 경로라 게이트웨이
+#     시크릿을 실어줄 방법이 없다.
+_GATEWAY_SECRET_EXEMPT_PATHS = {"/health", "/auth/verify", "/metrics"}
 
 
 class GatewaySecretMiddleware:
@@ -194,6 +199,7 @@ class GatewaySecretMiddleware:
 
 
 app.add_middleware(GatewaySecretMiddleware)
+app.add_middleware(RequestMetricsMiddleware)
 
 
 app.include_router(incidents_router)
@@ -271,6 +277,15 @@ def health_check():
     if reason:
         return JSONResponse(status_code=503, content={"status": "unhealthy", "reason": reason})
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus 스크레이프 대상(app/http_metrics.py의 RequestMetricsMiddleware가
+    쌓는 http_request_duration_seconds 히스토그램). GatewaySecretMiddleware의
+    _GATEWAY_SECRET_EXEMPT_PATHS에도 포함돼 있어야 한다(위 참고)."""
+    body, content_type = render_metrics()
+    return Response(content=body, media_type=content_type)
 
 
 @app.get("/reports/trend")

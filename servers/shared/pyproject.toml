@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ids-shared"
 version = "0.1.0"
-description = "normalizer/correlation-engine이 공유하는 NormalizedEvent 스키마"
+description = "normalizer/correlation-engine/platform-api가 공유하는 NormalizedEvent 스키마와 Redis 서킷브레이커"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2"]
+dependencies = ["pydantic>=2", "redis>=5.0"]
 
 [tool.setuptools]
 packages = ["ids_shared"]
